@@ -17,6 +17,7 @@ data/
   episodes/YYYY/MM/*.jsonl
   turn_flags/YYYY/MM/*.jsonl
   trends/*.json
+  manifests/YYYY/MM/*.json
 schemas/
   session-retrospective-v1.schema.json
 ```
@@ -28,6 +29,7 @@ Commit only redacted retrospective artifacts:
 - episode/topic summaries
 - flagged turn summaries
 - trend JSON
+- redacted source manifests
 - daily, weekly, and baseline reports
 - schemas and repo documentation
 
