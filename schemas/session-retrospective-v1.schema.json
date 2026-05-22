@@ -75,7 +75,7 @@
         },
         "friction_flags": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/safe_token"
           },
           "type": "array"
         },
@@ -83,7 +83,7 @@
           "$ref": "#/$defs/safe_token"
         },
         "model_era": {
-          "type": "string"
+          "$ref": "#/$defs/safe_token"
         },
         "outcome": {
           "enum": ["needs_review", "no_issue_observed"]
@@ -366,7 +366,7 @@
         },
         "issue_flags": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/safe_token"
           },
           "minItems": 1,
           "type": "array"
@@ -375,7 +375,7 @@
           "type": ["string", "null"]
         },
         "model_era": {
-          "type": "string"
+          "$ref": "#/$defs/safe_token"
         },
         "prompt_improvement": {
           "type": ["string", "null"]
