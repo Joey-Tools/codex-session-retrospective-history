@@ -13,7 +13,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Validate JSON schemas
+      - name: Validate JSON syntax
         run: |
           python -m json.tool schemas/session-retrospective-v1.schema.json >/dev/null
           python -m json.tool schemas/retained-manifest-v1.schema.json >/dev/null

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -60,6 +61,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "reports/weekly/fullprompt.md",
             "reports/weekly/promptlog.md",
             "reports/weekly/rawTranscript.md",
+            "reports/weekly/rawdata.md",
+            "reports/weekly/rawdump.md",
+            "reports/weekly/rawcopy.md",
+            "reports/weekly/raw.transcript.md",
+            "reports/weekly/full.prompt.md",
+            "reports/weekly/tool.output.md",
+            "reports/weekly/turn.summaries.jsonl",
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
@@ -69,6 +77,64 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     artifact.write_text("Summarized text.\n", encoding="utf-8")
 
                     self.assertIn("forbidden raw/transient artifact", "\n".join(MODULE.validate_root(root)))
+
+    def test_manifest_extra_risky_fields_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = {
+                "schema_version": 1,
+                "mode": "daily",
+                "window": {
+                    "mode": "daily",
+                    "start": "2026-05-21T00:00:00Z",
+                    "end": "2026-05-22T00:00:00Z",
+                },
+                "sources": [
+                    {
+                        "host": "local",
+                        "root_ref": "path_ref_v1:aaaaaaaaaaaaaaaa",
+                        "status": "ready",
+                        "rollout_count": 1,
+                        "summary_count": 0,
+                    }
+                ],
+                "coverage_gaps": [],
+                "redaction_policy_version": 1,
+                "retention_note": "Derived retained manifest; raw location fields removed and opaque refs preserved.",
+                "retention_safe": True,
+                "worklist": ["/Users/hoteng/.codex/sessions/2026/05/22/rollout.jsonl"],
+            }
+            path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("unexpected field: worklist", issues)
+            self.assertIn("manifest retained text contains raw/sensitive evidence", issues)
+
+    def test_jsonl_extra_raw_fields_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = {
+                "episode_id": "episode_ref_v1:" + "a" * 20,
+                "host": "local",
+                "session_id": "session_ref_v1:" + "b" * 20,
+                "start": "2026-05-21T00:00:00Z",
+                "end": "2026-05-21T01:00:00Z",
+                "cwd": None,
+                "model_era": "unknown",
+                "topic": "Redacted topic",
+                "turn_count": 1,
+                "friction_flags": [],
+                "outcome": "needs_review",
+                "work_report_hint": None,
+                "raw_path": "/Users/hoteng/.codex/sessions/2026/05/22/rollout.jsonl",
+            }
+            path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            self.assertIn("unexpected field: raw_path", "\n".join(MODULE.validate_root(root)))
 
     def test_git_ignored_local_temp_dirs_are_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
