@@ -6,6 +6,9 @@
         "minimum": 0,
         "type": "integer"
       },
+      "propertyNames": {
+        "$ref": "#/$defs/safe_token"
+      },
       "type": "object"
     },
     "coverage_gap": {
@@ -55,7 +58,14 @@
       "additionalProperties": false,
       "properties": {
         "cwd": {
-          "type": ["string", "null"]
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/path_ref"
+            }
+          ]
         },
         "end": {
           "$ref": "#/$defs/timestamp_or_null"
@@ -180,6 +190,59 @@
     },
     "source_summary": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "ready"
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "rollout_count": {
+                    "minimum": 1
+                  }
+                },
+                "required": ["rollout_count"]
+              },
+              {
+                "properties": {
+                  "summary_count": {
+                    "minimum": 1
+                  }
+                },
+                "required": ["summary_count"]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": ["empty", "missing"]
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "rollout_count": {
+                "const": 0
+              },
+              "summary_count": {
+                "const": 0
+              }
+            },
+            "required": ["rollout_count", "summary_count"]
+          }
+        }
+      ],
       "not": {
         "anyOf": [
           {
@@ -218,11 +281,14 @@
           "type": "null"
         },
         {
-          "format": "date-time",
-          "pattern": "^\\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\\d|30)|02-(?:0[1-9]|1\\d|2[0-9]))T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\dZ$",
-          "type": "string"
+          "$ref": "#/$defs/timestamp_required"
         }
       ]
+    },
+    "timestamp_required": {
+      "format": "date-time",
+      "pattern": "^\\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\\d|30)|02-(?:0[1-9]|1\\d|2[0-9]))T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\dZ$",
+      "type": "string"
     },
     "trend": {
       "additionalProperties": false,
@@ -282,7 +348,14 @@
           "type": "string"
         },
         "cwd": {
-          "type": ["string", "null"]
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/path_ref"
+            }
+          ]
         },
         "episode_id": {
           "type": "string"
@@ -348,13 +421,13 @@
       "additionalProperties": false,
       "properties": {
         "end": {
-          "$ref": "#/$defs/timestamp_or_null"
+          "$ref": "#/$defs/timestamp_required"
         },
         "mode": {
           "$ref": "#/$defs/safe_token"
         },
         "start": {
-          "$ref": "#/$defs/timestamp_or_null"
+          "$ref": "#/$defs/timestamp_required"
         }
       },
       "required": ["mode", "start", "end"],
