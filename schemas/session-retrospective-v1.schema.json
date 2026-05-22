@@ -1,14 +1,64 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
+    "count_map": {
+      "additionalProperties": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "type": "object"
+    },
+    "coverage_gap": {
+      "additionalProperties": false,
+      "not": {
+        "anyOf": [
+          {
+            "required": ["root"]
+          },
+          {
+            "required": ["path"]
+          }
+        ]
+      },
+      "properties": {
+        "bytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "host": {
+          "$ref": "#/$defs/safe_token"
+        },
+        "reason": {
+          "enum": [
+            "auth_gated",
+            "history_missing",
+            "history_unreadable",
+            "host_unreachable",
+            "invalid_jsonl",
+            "no_rollout_or_summary_files",
+            "oversized_rollout_skipped",
+            "remote_source_not_materialized",
+            "session_index_missing",
+            "session_index_unreadable",
+            "source_root_missing",
+            "stale_host"
+          ]
+        },
+        "root_ref": {
+          "$ref": "#/$defs/path_ref"
+        }
+      },
+      "required": ["host", "reason"],
+      "type": "object"
+    },
     "episode": {
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "cwd": {
           "type": ["string", "null"]
         },
         "end": {
-          "type": ["string", "null"]
+          "$ref": "#/$defs/timestamp_or_null"
         },
         "episode_id": {
           "type": "string"
@@ -20,19 +70,19 @@
           "type": "array"
         },
         "host": {
-          "type": "string"
+          "$ref": "#/$defs/safe_token"
         },
         "model_era": {
           "type": "string"
         },
         "outcome": {
-          "type": "string"
+          "enum": ["needs_review", "no_issue_observed"]
         },
         "session_id": {
           "type": "string"
         },
         "start": {
-          "type": ["string", "null"]
+          "$ref": "#/$defs/timestamp_or_null"
         },
         "topic": {
           "type": "string"
@@ -49,9 +99,15 @@
         "episode_id",
         "host",
         "session_id",
+        "start",
+        "end",
+        "cwd",
+        "model_era",
         "topic",
+        "turn_count",
         "friction_flags",
-        "outcome"
+        "outcome",
+        "work_report_hint"
       ],
       "type": "object"
     },
@@ -70,47 +126,7 @@
       "properties": {
         "coverage_gaps": {
           "items": {
-            "additionalProperties": false,
-            "not": {
-              "anyOf": [
-                {
-                  "required": ["root"]
-                },
-                {
-                  "required": ["path"]
-                }
-              ]
-            },
-            "properties": {
-              "bytes": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "host": {
-                "$ref": "#/$defs/safe_token"
-              },
-              "reason": {
-                "enum": [
-                  "auth_gated",
-                  "history_missing",
-                  "history_unreadable",
-                  "host_unreachable",
-                  "invalid_jsonl",
-                  "no_rollout_or_summary_files",
-                  "oversized_rollout_skipped",
-                  "remote_source_not_materialized",
-                  "session_index_missing",
-                  "session_index_unreadable",
-                  "source_root_missing",
-                  "stale_host"
-                ]
-              },
-              "root_ref": {
-                "$ref": "#/$defs/path_ref"
-              }
-            },
-            "required": ["host", "reason"],
-            "type": "object"
+            "$ref": "#/$defs/coverage_gap"
           },
           "maxItems": 100,
           "type": "array"
@@ -121,69 +137,25 @@
         "redaction_policy_version": {
           "const": 1
         },
-        "retention_safe": {
-          "const": true
-        },
         "retention_note": {
           "const": "Derived retained manifest; raw location fields removed and opaque refs preserved."
+        },
+        "retention_safe": {
+          "const": true
         },
         "schema_version": {
           "const": 1
         },
         "sources": {
           "items": {
-            "additionalProperties": false,
-            "not": {
-              "anyOf": [
-                {
-                  "required": ["root"]
-                },
-                {
-                  "required": ["path"]
-                }
-              ]
-            },
-            "properties": {
-              "host": {
-                "$ref": "#/$defs/safe_token"
-              },
-              "root_ref": {
-                "$ref": "#/$defs/path_ref"
-              },
-              "rollout_count": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "status": {
-                "enum": ["empty", "missing", "ready"]
-              },
-              "summary_count": {
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": ["host", "root_ref", "status"],
-            "type": "object"
+            "$ref": "#/$defs/source_summary"
           },
           "maxItems": 16,
           "minItems": 1,
           "type": "array"
         },
         "window": {
-          "additionalProperties": false,
-          "properties": {
-            "end": {
-              "$ref": "#/$defs/timestamp_or_null"
-            },
-            "mode": {
-              "$ref": "#/$defs/safe_token"
-            },
-            "start": {
-              "$ref": "#/$defs/timestamp_or_null"
-            }
-          },
-          "required": ["mode", "start", "end"],
-          "type": "object"
+          "$ref": "#/$defs/window"
         }
       },
       "required": [
@@ -206,20 +178,62 @@
       "pattern": "^[A-Za-z0-9_.-]+$",
       "type": "string"
     },
+    "source_summary": {
+      "additionalProperties": false,
+      "not": {
+        "anyOf": [
+          {
+            "required": ["root"]
+          },
+          {
+            "required": ["path"]
+          }
+        ]
+      },
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/safe_token"
+        },
+        "rollout_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "root_ref": {
+          "$ref": "#/$defs/path_ref"
+        },
+        "status": {
+          "enum": ["empty", "missing", "ready"]
+        },
+        "summary_count": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": ["host", "root_ref", "status", "rollout_count", "summary_count"],
+      "type": "object"
+    },
     "timestamp_or_null": {
       "anyOf": [
         {
           "type": "null"
         },
         {
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+          "format": "date-time",
+          "pattern": "^\\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\\d|30)|02-(?:0[1-9]|1\\d|2[0-9]))T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\dZ$",
           "type": "string"
         }
       ]
     },
     "trend": {
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
+        "coverage_gaps": {
+          "items": {
+            "$ref": "#/$defs/coverage_gap"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
         "episode_count": {
           "minimum": 0,
           "type": "integer"
@@ -229,22 +243,13 @@
           "type": "integer"
         },
         "flags": {
-          "additionalProperties": {
-            "type": "integer"
-          },
-          "type": "object"
+          "$ref": "#/$defs/count_map"
         },
         "hosts": {
-          "additionalProperties": {
-            "type": "integer"
-          },
-          "type": "object"
+          "$ref": "#/$defs/count_map"
         },
         "model_eras": {
-          "additionalProperties": {
-            "type": "integer"
-          },
-          "type": "object"
+          "$ref": "#/$defs/count_map"
         },
         "schema_version": {
           "const": 1
@@ -254,7 +259,7 @@
           "type": "integer"
         },
         "window": {
-          "type": "object"
+          "$ref": "#/$defs/window"
         }
       },
       "required": [
@@ -262,12 +267,16 @@
         "window",
         "turn_count",
         "flagged_turn_count",
-        "episode_count"
+        "episode_count",
+        "flags",
+        "hosts",
+        "model_eras",
+        "coverage_gaps"
       ],
       "type": "object"
     },
     "turn_flag": {
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "assistant_action_summary": {
           "type": "string"
@@ -279,7 +288,7 @@
           "type": "string"
         },
         "host": {
-          "type": "string"
+          "$ref": "#/$defs/safe_token"
         },
         "issue_flags": {
           "items": {
@@ -304,13 +313,14 @@
           "type": "string"
         },
         "source_hash": {
+          "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
         "source_path": {
-          "type": "string"
+          "$ref": "#/$defs/path_ref"
         },
         "timestamp": {
-          "type": ["string", "null"]
+          "$ref": "#/$defs/timestamp_or_null"
         },
         "turn_id": {
           "type": "string"
@@ -321,10 +331,33 @@
         "episode_id",
         "host",
         "session_id",
+        "source_path",
         "source_hash",
+        "timestamp",
+        "cwd",
+        "model",
+        "model_era",
         "redacted_user_prompt_summary",
-        "issue_flags"
+        "assistant_action_summary",
+        "issue_flags",
+        "prompt_improvement"
       ],
+      "type": "object"
+    },
+    "window": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "$ref": "#/$defs/timestamp_or_null"
+        },
+        "mode": {
+          "$ref": "#/$defs/safe_token"
+        },
+        "start": {
+          "$ref": "#/$defs/timestamp_or_null"
+        }
+      },
+      "required": ["mode", "start", "end"],
       "type": "object"
     }
   },
