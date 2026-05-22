@@ -216,19 +216,28 @@
             "pattern": "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
           },
           {
-            "pattern": "(^|\\s)(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/"
+            "pattern": "(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/"
           },
           {
-            "pattern": "\\b(?:password|passwd|credential|secret|token|api[_-]?key|authorization)\\s*[:=]"
+            "pattern": "\\b(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn])\\s*[:=]"
           },
           {
-            "pattern": "\\bBearer\\s+[A-Za-z0-9._~+/=-]{12,}\\b"
+            "pattern": "\\b[Bb][Ee][Aa][Rr][Ee][Rr]\\s+[A-Za-z0-9._~+/=-]{12,}\\b"
           },
           {
             "pattern": "\\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\\b"
           },
           {
             "pattern": "(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)"
+          },
+          {
+            "pattern": "\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b"
+          },
+          {
+            "pattern": "\\brollout(?:-summary)?-[A-Za-z0-9_.-]+\\.jsonl\\b"
+          },
+          {
+            "pattern": "\\b(?:session_id|turn_id|episode_id)\\s*[:=]\\s*(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\\b"
           }
         ]
       },
