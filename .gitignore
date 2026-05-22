@@ -1,10 +1,15 @@
 .codex-local/
 .codex-tmp/
+.codex/
+archived_sessions/
+sessions/
 __pycache__/
 *.pyc
 .DS_Store
 
 # Raw or transient Codex evidence must not be retained here.
+auth.json
+config.toml
 history.jsonl
 session_index.jsonl
 rollout-*.jsonl
