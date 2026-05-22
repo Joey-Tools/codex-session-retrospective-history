@@ -36,3 +36,9 @@ Commit only redacted retrospective artifacts:
 
 Do not commit raw rollout JSONL, full prompts, internal URLs, secrets, customer
 data, proprietary code snippets, or unredacted tool output.
+
+Before committing retained artifacts, run:
+
+```bash
+python scripts/validate_retained_history.py --root .
+```

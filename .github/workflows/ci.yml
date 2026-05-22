@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate JSON schemas
+        run: |
+          python -m json.tool schemas/session-retrospective-v1.schema.json >/dev/null
+          python -m json.tool schemas/retained-manifest-v1.schema.json >/dev/null
+      - name: Run tests
+        run: python -m unittest discover -s tests
+      - name: Validate retained history tree
+        run: python scripts/validate_retained_history.py --root .
