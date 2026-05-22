@@ -24,17 +24,21 @@
         "reason": {
           "enum": [
             "auth_gated",
+            "codex_missing",
             "history_missing",
             "history_unreadable",
             "host_unreachable",
             "invalid_jsonl",
+            "missing_codex",
             "no_rollout_or_summary_files",
             "oversized_rollout_skipped",
+            "partial_host_scope",
             "remote_source_not_materialized",
             "session_index_missing",
             "session_index_unreadable",
             "source_root_missing",
-            "stale_host"
+            "stale_host",
+            "unreachable"
           ]
         },
         "root_ref": {
@@ -90,7 +94,7 @@
           "if": {
             "properties": {
               "status": {
-                "enum": ["empty", "missing"]
+                "enum": ["empty", "missing", "stale"]
               }
             },
             "required": ["status"]
@@ -130,7 +134,7 @@
           "$ref": "#/$defs/path_ref"
         },
         "status": {
-          "enum": ["empty", "missing", "ready"]
+          "enum": ["empty", "missing", "ready", "stale"]
         },
         "summary_count": {
           "minimum": 0,

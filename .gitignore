@@ -3,3 +3,13 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Raw or transient Codex evidence must not be retained here.
+history.jsonl
+session_index.jsonl
+rollout-*.jsonl
+rollout-summary*.jsonl
+source_metadata.json
+shard_manifest.json
+shards.jsonl
+turn_summaries.jsonl
