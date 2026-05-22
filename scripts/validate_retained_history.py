@@ -129,6 +129,8 @@ COVERAGE_REASONS = frozenset(
         "unreachable",
     }
 )
+MAX_MANIFEST_SOURCES = 16
+MAX_COVERAGE_GAPS = 100
 RISK_PATTERNS = (
     re.compile(r"\b(?:https?|ssh)://", re.I),
     re.compile(r"\bgit@[A-Za-z0-9_.-]+:"),
@@ -212,7 +214,7 @@ def forbidden_name(name: str) -> bool:
 
 
 def forbidden_path(relative: Path) -> bool:
-    if any(part in FORBIDDEN_COMPONENTS for part in relative.parts):
+    if any(part in FORBIDDEN_COMPONENTS or forbidden_name(part) for part in relative.parts[:-1]):
         return True
     name = relative.name
     return name in FORBIDDEN_FILENAMES or forbidden_name(name) or (name.startswith("rollout") and name.endswith(".jsonl"))
@@ -269,7 +271,7 @@ def valid_timestamp_or_null(value: Any) -> bool:
 
 
 def valid_non_negative_int(value: Any) -> bool:
-    return isinstance(value, int) and value >= 0
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def valid_safe_token(value: Any) -> bool:
@@ -320,6 +322,8 @@ def validate_coverage_gaps(value: Any) -> list[str]:
     if not isinstance(value, list):
         return ["coverage_gaps must be an array"]
     issues: list[str] = []
+    if len(value) > MAX_COVERAGE_GAPS:
+        issues.append(f"coverage_gaps must contain at most {MAX_COVERAGE_GAPS} items")
     for index, gap in enumerate(value, 1):
         issues.extend(f"coverage_gaps[{index}]: {issue}" for issue in validate_coverage_gap(gap))
     return issues
@@ -461,6 +465,8 @@ def validate_manifest(data: Any) -> list[str]:
     if not isinstance(data.get("sources"), list) or not data.get("sources"):
         issues.append("manifest sources must be a non-empty array")
     else:
+        if len(data["sources"]) > MAX_MANIFEST_SOURCES:
+            issues.append(f"manifest sources must contain at most {MAX_MANIFEST_SOURCES} items")
         for index, source in enumerate(data.get("sources", []), 1):
             issues.extend(f"sources[{index}]: {issue}" for issue in validate_source_summary(source))
     issues.extend(validate_coverage_gaps(data.get("coverage_gaps")))
@@ -488,8 +494,10 @@ def validate_root(root: Path) -> list[str]:
                     issues.extend(f"{relative}: {issue}" for issue in validate_manifest(data))
                 elif relative.parts[:2] == ("data", "trends"):
                     issues.extend(f"{relative}: {issue}" for issue in validate_trend(data))
-                elif relative.parts[0] in {"data", "reports"} and contains_risky_text(data):
-                    issues.append(f"{relative}: retained text contains raw/sensitive evidence")
+                elif relative.parts[0] in {"data", "reports"}:
+                    issues.append(f"{relative}: unexpected JSON artifact")
+                    if contains_risky_text(data):
+                        issues.append(f"{relative}: retained text contains raw/sensitive evidence")
             elif relative.suffix == ".jsonl":
                 rows = parse_jsonl(path)
                 validator = validate_episode if relative.parts[:2] == ("data", "episodes") else validate_turn_flag if relative.parts[:2] == ("data", "turn_flags") else None

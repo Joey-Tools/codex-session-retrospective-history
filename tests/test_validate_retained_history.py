@@ -18,6 +18,31 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
+def valid_manifest() -> dict:
+    return {
+        "schema_version": 1,
+        "mode": "daily",
+        "window": {
+            "mode": "daily",
+            "start": "2026-05-21T00:00:00Z",
+            "end": "2026-05-22T00:00:00Z",
+        },
+        "sources": [
+            {
+                "host": "local",
+                "root_ref": "path_ref_v1:aaaaaaaaaaaaaaaa",
+                "status": "ready",
+                "rollout_count": 1,
+                "summary_count": 0,
+            }
+        ],
+        "coverage_gaps": [],
+        "redaction_policy_version": 1,
+        "retention_note": "Derived retained manifest; raw location fields removed and opaque refs preserved.",
+        "retention_safe": True,
+    }
+
+
 class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_clean_report_passes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -68,6 +93,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "reports/weekly/full.prompt.md",
             "reports/weekly/tool.output.md",
             "reports/weekly/turn.summaries.jsonl",
+            "reports/raw.transcripts/summary.md",
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
@@ -81,29 +107,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_manifest_extra_risky_fields_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            manifest = {
-                "schema_version": 1,
-                "mode": "daily",
-                "window": {
-                    "mode": "daily",
-                    "start": "2026-05-21T00:00:00Z",
-                    "end": "2026-05-22T00:00:00Z",
-                },
-                "sources": [
-                    {
-                        "host": "local",
-                        "root_ref": "path_ref_v1:aaaaaaaaaaaaaaaa",
-                        "status": "ready",
-                        "rollout_count": 1,
-                        "summary_count": 0,
-                    }
-                ],
-                "coverage_gaps": [],
-                "redaction_policy_version": 1,
-                "retention_note": "Derived retained manifest; raw location fields removed and opaque refs preserved.",
-                "retention_safe": True,
-                "worklist": ["/Users/hoteng/.codex/sessions/2026/05/22/rollout.jsonl"],
-            }
+            manifest = valid_manifest() | {"worklist": ["/Users/hoteng/.codex/sessions/2026/05/22/rollout.jsonl"]}
             path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -135,6 +139,66 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
             self.assertIn("unexpected field: raw_path", "\n".join(MODULE.validate_root(root)))
+
+    def test_unknown_json_artifacts_are_rejected(self) -> None:
+        for relative_path in ("data/worklist.json", "data/source-map.json", "reports/weekly/notes.json"):
+            with self.subTest(relative_path=relative_path):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    artifact = root / relative_path
+                    artifact.parent.mkdir(parents=True)
+                    artifact.write_text(json.dumps({"items": [{"source": "opaque"}]}), encoding="utf-8")
+
+                    self.assertIn("unexpected JSON artifact", "\n".join(MODULE.validate_root(root)))
+
+    def test_boolean_count_fields_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = {
+                "episode_id": "episode_ref_v1:" + "a" * 20,
+                "host": "local",
+                "session_id": "session_ref_v1:" + "b" * 20,
+                "start": "2026-05-21T00:00:00Z",
+                "end": "2026-05-21T01:00:00Z",
+                "cwd": None,
+                "model_era": "unknown",
+                "topic": "Redacted topic",
+                "turn_count": True,
+                "friction_flags": [],
+                "outcome": "needs_review",
+                "work_report_hint": None,
+            }
+            path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            self.assertIn("turn_count must be a non-negative integer", "\n".join(MODULE.validate_root(root)))
+
+    def test_manifest_max_item_limits_are_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = valid_manifest()
+            manifest["sources"] = [
+                {
+                    "host": f"host{index}",
+                    "root_ref": f"path_ref_v1:{index:016x}",
+                    "status": "ready",
+                    "rollout_count": 1,
+                    "summary_count": 0,
+                }
+                for index in range(17)
+            ]
+            manifest["coverage_gaps"] = [
+                {"host": "local", "reason": "unreachable"}
+                for _index in range(101)
+            ]
+            path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("manifest sources must contain at most 16 items", issues)
+            self.assertIn("coverage_gaps must contain at most 100 items", issues)
 
     def test_git_ignored_local_temp_dirs_are_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
