@@ -16,5 +16,5 @@ against `schemas/retained-manifest-v1.schema.json`; validating a manifest
 against the generic bundle schema is not sufficient.
 
 Manifest validation is part of the privacy gate: raw path fields, path-like
-free text, full worklists, and non-hash `*_ref` values are invalid retained
-artifacts.
+free text, per-shard path lists, full worklists, and non-hash `*_ref` values
+are invalid retained artifacts.

@@ -89,9 +89,6 @@
               "host": {
                 "$ref": "#/$defs/safe_token"
               },
-              "path_ref": {
-                "$ref": "#/$defs/path_ref"
-              },
               "reason": {
                 "enum": [
                   "auth_gated",
@@ -115,6 +112,7 @@
             "required": ["host", "reason"],
             "type": "object"
           },
+          "maxItems": 100,
           "type": "array"
         },
         "mode": {
@@ -173,12 +171,14 @@
           "additionalProperties": false,
           "properties": {
             "end": {
+              "format": "date-time",
               "type": ["string", "null"]
             },
             "mode": {
               "$ref": "#/$defs/safe_token"
             },
             "start": {
+              "format": "date-time",
               "type": ["string", "null"]
             }
           },
