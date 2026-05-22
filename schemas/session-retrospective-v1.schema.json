@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "episode": {
+      "additionalProperties": true,
+      "properties": {
+        "cwd": {
+          "type": ["string", "null"]
+        },
+        "end": {
+          "type": ["string", "null"]
+        },
+        "episode_id": {
+          "type": "string"
+        },
+        "friction_flags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "host": {
+          "type": "string"
+        },
+        "model_era": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "start": {
+          "type": ["string", "null"]
+        },
+        "topic": {
+          "type": "string"
+        },
+        "turn_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "work_report_hint": {
+          "type": ["string", "null"]
+        }
+      },
+      "required": [
+        "episode_id",
+        "host",
+        "session_id",
+        "topic",
+        "friction_flags",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "trend": {
+      "additionalProperties": true,
+      "properties": {
+        "episode_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "flagged_turn_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "flags": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "hosts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "model_eras": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "turn_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "window",
+        "turn_count",
+        "flagged_turn_count",
+        "episode_count"
+      ],
+      "type": "object"
+    },
+    "turn_flag": {
+      "additionalProperties": true,
+      "properties": {
+        "assistant_action_summary": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": ["string", "null"]
+        },
+        "episode_id": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "issue_flags": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "model": {
+          "type": ["string", "null"]
+        },
+        "model_era": {
+          "type": "string"
+        },
+        "prompt_improvement": {
+          "type": ["string", "null"]
+        },
+        "redacted_user_prompt_summary": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "source_hash": {
+          "type": "string"
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": ["string", "null"]
+        },
+        "turn_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "episode_id",
+        "host",
+        "session_id",
+        "source_hash",
+        "redacted_user_prompt_summary",
+        "issue_flags"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Schema bundle for redacted Codex session retrospective artifacts.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/episode"
+    },
+    {
+      "$ref": "#/$defs/turn_flag"
+    },
+    {
+      "$ref": "#/$defs/trend"
+    }
+  ],
+  "title": "Session Retrospective v1"
+}
