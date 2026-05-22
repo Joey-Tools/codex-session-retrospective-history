@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "path_ref": {
+      "pattern": "^path_hash:[0-9a-f]{16}$",
+      "type": "string"
+    },
+    "safe_token": {
+      "pattern": "^[A-Za-z0-9_.-]+$",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Privacy gate schema for retained Codex session retrospective source manifests.",
+  "not": {
+    "anyOf": [
+      {
+        "required": ["root"]
+      },
+      {
+        "required": ["path"]
+      }
+    ]
+  },
+  "properties": {
+    "coverage_gaps": {
+      "items": {
+        "additionalProperties": false,
+        "not": {
+          "anyOf": [
+            {
+              "required": ["root"]
+            },
+            {
+              "required": ["path"]
+            }
+          ]
+        },
+        "properties": {
+          "bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "host": {
+            "$ref": "#/$defs/safe_token"
+          },
+          "path_ref": {
+            "$ref": "#/$defs/path_ref"
+          },
+          "reason": {
+            "enum": [
+              "auth_gated",
+              "history_missing",
+              "history_unreadable",
+              "host_unreachable",
+              "invalid_jsonl",
+              "no_rollout_or_summary_files",
+              "oversized_rollout_skipped",
+              "remote_source_not_materialized",
+              "session_index_missing",
+              "session_index_unreadable",
+              "source_root_missing",
+              "stale_host"
+            ]
+          },
+          "root_ref": {
+            "$ref": "#/$defs/path_ref"
+          }
+        },
+        "required": ["host", "reason"],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "mode": {
+      "$ref": "#/$defs/safe_token"
+    },
+    "redaction_policy_version": {
+      "type": "integer"
+    },
+    "retention_safe": {
+      "const": true
+    },
+    "retention_note": {
+      "const": "Derived retained manifest; raw root/path fields removed and path refs preserved."
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "sources": {
+      "items": {
+        "additionalProperties": false,
+        "not": {
+          "anyOf": [
+            {
+              "required": ["root"]
+            },
+            {
+              "required": ["path"]
+            }
+          ]
+        },
+        "properties": {
+          "host": {
+            "$ref": "#/$defs/safe_token"
+          },
+          "root_ref": {
+            "$ref": "#/$defs/path_ref"
+          },
+          "rollout_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "enum": ["empty", "missing", "ready"]
+          },
+          "summary_count": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": ["host", "root_ref", "status"],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "window": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "type": ["string", "null"]
+        },
+        "mode": {
+          "$ref": "#/$defs/safe_token"
+        },
+        "start": {
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["mode", "start", "end"],
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "mode",
+    "window",
+    "sources",
+    "retention_safe"
+  ],
+  "title": "Retained Session Retrospective Manifest v1",
+  "type": "object"
+}

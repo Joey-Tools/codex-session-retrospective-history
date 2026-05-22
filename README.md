@@ -20,6 +20,7 @@ data/
   manifests/YYYY/MM/*.json
 schemas/
   session-retrospective-v1.schema.json
+  retained-manifest-v1.schema.json
 ```
 
 ## Data Policy

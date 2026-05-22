@@ -10,7 +10,11 @@ This directory contains redacted machine-readable retrospective artifacts.
   remote paths, or full shard worklists; keep `*_ref` hashes and coverage/status
   metadata only.
 
-All JSONL records and `manifests/**/*.json` files must conform to
-`schemas/session-retrospective-v1.schema.json` where applicable. Manifest
-validation is part of the privacy gate: raw path fields, full worklists, and
-non-hash `*_ref` values are invalid retained artifacts.
+JSONL records must conform to `schemas/session-retrospective-v1.schema.json`
+where applicable. `manifests/**/*.json` files must be validated specifically
+against `schemas/retained-manifest-v1.schema.json`; validating a manifest
+against the generic bundle schema is not sufficient.
+
+Manifest validation is part of the privacy gate: raw path fields, path-like
+free text, full worklists, and non-hash `*_ref` values are invalid retained
+artifacts.

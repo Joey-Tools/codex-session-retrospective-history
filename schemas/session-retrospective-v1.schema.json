@@ -87,13 +87,26 @@
                 "type": "integer"
               },
               "host": {
-                "type": "string"
+                "$ref": "#/$defs/safe_token"
               },
               "path_ref": {
                 "$ref": "#/$defs/path_ref"
               },
               "reason": {
-                "type": "string"
+                "enum": [
+                  "auth_gated",
+                  "history_missing",
+                  "history_unreadable",
+                  "host_unreachable",
+                  "invalid_jsonl",
+                  "no_rollout_or_summary_files",
+                  "oversized_rollout_skipped",
+                  "remote_source_not_materialized",
+                  "session_index_missing",
+                  "session_index_unreadable",
+                  "source_root_missing",
+                  "stale_host"
+                ]
               },
               "root_ref": {
                 "$ref": "#/$defs/path_ref"
@@ -105,7 +118,7 @@
           "type": "array"
         },
         "mode": {
-          "type": "string"
+          "$ref": "#/$defs/safe_token"
         },
         "redaction_policy_version": {
           "type": "integer"
@@ -114,7 +127,7 @@
           "const": true
         },
         "retention_note": {
-          "type": "string"
+          "const": "Derived retained manifest; raw root/path fields removed and path refs preserved."
         },
         "schema_version": {
           "const": 1
@@ -134,7 +147,7 @@
             },
             "properties": {
               "host": {
-                "type": "string"
+                "$ref": "#/$defs/safe_token"
               },
               "root_ref": {
                 "$ref": "#/$defs/path_ref"
@@ -144,7 +157,7 @@
                 "type": "integer"
               },
               "status": {
-                "type": "string"
+                "enum": ["empty", "missing", "ready"]
               },
               "summary_count": {
                 "minimum": 0,
@@ -163,7 +176,7 @@
               "type": ["string", "null"]
             },
             "mode": {
-              "type": "string"
+              "$ref": "#/$defs/safe_token"
             },
             "start": {
               "type": ["string", "null"]
@@ -184,6 +197,10 @@
     },
     "path_ref": {
       "pattern": "^path_hash:[0-9a-f]{16}$",
+      "type": "string"
+    },
+    "safe_token": {
+      "pattern": "^[A-Za-z0-9_.-]+$",
       "type": "string"
     },
     "trend": {
@@ -304,9 +321,6 @@
     },
     {
       "$ref": "#/$defs/turn_flag"
-    },
-    {
-      "$ref": "#/$defs/manifest"
     },
     {
       "$ref": "#/$defs/trend"
