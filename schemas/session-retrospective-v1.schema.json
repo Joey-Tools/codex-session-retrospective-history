@@ -55,6 +55,71 @@
       ],
       "type": "object"
     },
+    "manifest": {
+      "additionalProperties": true,
+      "properties": {
+        "coverage_gaps": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "redaction_policy_version": {
+          "type": "integer"
+        },
+        "retention_safe": {
+          "const": true
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "sources": {
+          "items": {
+            "additionalProperties": true,
+            "not": {
+              "required": ["root"]
+            },
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "root_ref": {
+                "pattern": "^path_hash:",
+                "type": "string"
+              },
+              "rollout_count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "type": "string"
+              },
+              "summary_count": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": ["host", "root_ref", "status"],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "window": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "mode",
+        "window",
+        "sources",
+        "retention_safe"
+      ],
+      "type": "object"
+    },
     "trend": {
       "additionalProperties": true,
       "properties": {
@@ -173,6 +238,9 @@
     },
     {
       "$ref": "#/$defs/turn_flag"
+    },
+    {
+      "$ref": "#/$defs/manifest"
     },
     {
       "$ref": "#/$defs/trend"
