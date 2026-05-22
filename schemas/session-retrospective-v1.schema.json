@@ -56,7 +56,7 @@
       "type": "object"
     },
     "manifest": {
-      "additionalProperties": true,
+      "additionalProperties": false,
       "not": {
         "anyOf": [
           {
@@ -70,7 +70,7 @@
       "properties": {
         "coverage_gaps": {
           "items": {
-            "additionalProperties": true,
+            "additionalProperties": false,
             "not": {
               "anyOf": [
                 {
@@ -81,6 +81,25 @@
                 }
               ]
             },
+            "properties": {
+              "bytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "host": {
+                "type": "string"
+              },
+              "path_ref": {
+                "$ref": "#/$defs/path_ref"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "root_ref": {
+                "$ref": "#/$defs/path_ref"
+              }
+            },
+            "required": ["host", "reason"],
             "type": "object"
           },
           "type": "array"
@@ -94,12 +113,15 @@
         "retention_safe": {
           "const": true
         },
+        "retention_note": {
+          "type": "string"
+        },
         "schema_version": {
           "const": 1
         },
         "sources": {
           "items": {
-            "additionalProperties": true,
+            "additionalProperties": false,
             "not": {
               "anyOf": [
                 {
@@ -115,8 +137,7 @@
                 "type": "string"
               },
               "root_ref": {
-                "pattern": "^path_hash:",
-                "type": "string"
+                "$ref": "#/$defs/path_ref"
               },
               "rollout_count": {
                 "minimum": 0,
@@ -136,6 +157,19 @@
           "type": "array"
         },
         "window": {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "type": ["string", "null"]
+            },
+            "mode": {
+              "type": "string"
+            },
+            "start": {
+              "type": ["string", "null"]
+            }
+          },
+          "required": ["mode", "start", "end"],
           "type": "object"
         }
       },
@@ -147,6 +181,10 @@
         "retention_safe"
       ],
       "type": "object"
+    },
+    "path_ref": {
+      "pattern": "^path_hash:[0-9a-f]{16}$",
+      "type": "string"
     },
     "trend": {
       "additionalProperties": true,
