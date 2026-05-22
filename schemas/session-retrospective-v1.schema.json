@@ -60,6 +60,17 @@
       "properties": {
         "coverage_gaps": {
           "items": {
+            "additionalProperties": true,
+            "not": {
+              "anyOf": [
+                {
+                  "required": ["root"]
+                },
+                {
+                  "required": ["path"]
+                }
+              ]
+            },
             "type": "object"
           },
           "type": "array"
@@ -80,7 +91,14 @@
           "items": {
             "additionalProperties": true,
             "not": {
-              "required": ["root"]
+              "anyOf": [
+                {
+                  "required": ["root"]
+                },
+                {
+                  "required": ["path"]
+                }
+              ]
             },
             "properties": {
               "host": {
