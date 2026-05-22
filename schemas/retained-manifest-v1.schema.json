@@ -221,6 +221,7 @@
     "mode",
     "window",
     "sources",
+    "coverage_gaps",
     "redaction_policy_version",
     "retention_note",
     "retention_safe"
