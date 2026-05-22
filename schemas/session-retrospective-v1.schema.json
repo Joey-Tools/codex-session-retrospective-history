@@ -57,6 +57,16 @@
     },
     "manifest": {
       "additionalProperties": true,
+      "not": {
+        "anyOf": [
+          {
+            "required": ["root"]
+          },
+          {
+            "required": ["path"]
+          }
+        ]
+      },
       "properties": {
         "coverage_gaps": {
           "items": {
