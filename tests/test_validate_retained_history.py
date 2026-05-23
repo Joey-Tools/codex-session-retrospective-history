@@ -141,6 +141,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("[Uu][Ss][Ee][Rr][Ss]", patterns)
         self.assertIn("[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]", patterns)
 
+    def test_schema_safe_token_patterns_cover_compound_secret_names(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        manifest_schema = json.loads(MANIFEST_SCHEMA.read_text(encoding="utf-8"))
+        patterns = "\n".join(item["pattern"] for item in schema["$defs"]["safe_token"]["not"]["anyOf"])
+        manifest_patterns = "\n".join(item["pattern"] for item in manifest_schema["$defs"]["safe_token"]["not"]["anyOf"])
+
+        self.assertIn("[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?", patterns)
+        self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy]", patterns)
+        self.assertIn("[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?", manifest_patterns)
+        self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy]", manifest_patterns)
+
     def test_clean_report_passes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -512,6 +523,40 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
             self.assertIn("issue_flags must be safe-token array", "\n".join(MODULE.validate_root(root)))
+
+    def test_safe_tokens_reject_compound_secret_names(self) -> None:
+        for token in ("client_secret", "refresh-token", "private_key", "db_password", "OPENAI_API_KEY"):
+            with self.subTest(token=token):
+                self.assertFalse(MODULE.valid_safe_token(token))
+
+    def test_window_start_must_be_before_end(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            trend = valid_trend()
+            trend["window"] = {
+                "mode": "daily",
+                "start": "2026-05-22T00:00:00Z",
+                "end": "2026-05-21T00:00:00Z",
+            }
+            path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(trend), encoding="utf-8")
+
+            self.assertIn("window.start must be before window.end", "\n".join(MODULE.validate_root(root)))
+
+    def test_root_docs_and_workflows_are_content_scanned(self) -> None:
+        for relative_path, text in (
+            ("README.md", "Leaked URL HTTPS://internal.example/path\n"),
+            (".github/workflows/ci.yml", "name: CI\n# /Users/hoteng/project\n"),
+        ):
+            with self.subTest(relative_path=relative_path):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    path = root / relative_path
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(text, encoding="utf-8")
+
+                    self.assertIn("infrastructure text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
 
     def test_safe_tokens_reject_risky_structured_values(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

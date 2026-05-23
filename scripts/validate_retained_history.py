@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 from pathlib import Path
 import re
@@ -54,6 +55,10 @@ EPISODE_REF_RE = re.compile(r"^episode_ref_v1:[0-9a-f]{20}$")
 TURN_REF_RE = re.compile(r"^turn_ref_v1:[0-9a-f]{20}$")
 SOURCE_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+SENSITIVE_TOKEN_RE = re.compile(
+    r"(^|[._-])(?:password|passwd|pwd|credentials?|secret|token|api[._-]?key|authorization|private[._-]?key)($|[._-])",
+    re.I,
+)
 TIMESTAMP_RE = re.compile(
     r"^\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9]))T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$"
 )
@@ -282,10 +287,14 @@ def contains_risky_text(value: Any) -> bool:
     return False
 
 
+def contains_risky_token(value: Any) -> bool:
+    return isinstance(value, str) and SENSITIVE_TOKEN_RE.search(value) is not None
+
+
 def contains_risky_key(value: Any) -> bool:
     if isinstance(value, dict):
         for key, child in value.items():
-            if isinstance(key, str) and contains_risky_text(key):
+            if isinstance(key, str) and (contains_risky_text(key) or contains_risky_token(key)):
                 return True
             if contains_risky_key(child):
                 return True
@@ -327,6 +336,7 @@ def valid_safe_token(value: Any) -> bool:
         isinstance(value, str)
         and len(value) <= MAX_SAFE_TOKEN_LENGTH
         and SAFE_TOKEN_RE.fullmatch(value) is not None
+        and not contains_risky_token(value)
         and not contains_risky_text(value)
     )
 
@@ -355,6 +365,14 @@ def allowed_infrastructure_artifact(relative: Path) -> bool:
     if parts[0] == "tests":
         return len(parts) == 2 and relative.suffix.lower() == ".py"
     return False
+
+
+def content_scanned_infrastructure_artifact(relative: Path) -> bool:
+    path_text = relative.as_posix()
+    if path_text in {"AGENTS.md", "README.md"}:
+        return True
+    parts = relative.parts
+    return bool(len(parts) >= 3 and parts[0] == ".github" and parts[1] == "workflows" and relative.suffix.lower() in WORKFLOW_SUFFIXES)
 
 
 def allowed_retained_text_artifact(relative: Path) -> bool:
@@ -440,10 +458,19 @@ def validate_window(value: Any) -> list[str]:
     issues = unexpected_keys(value, WINDOW_KEYS) + missing_keys(value, WINDOW_KEYS)
     if not valid_safe_token(value.get("mode")):
         issues.append("window.mode must be a safe token")
-    if not isinstance(value.get("start"), str) or TIMESTAMP_RE.fullmatch(value.get("start", "")) is None:
+    start_value = value.get("start")
+    end_value = value.get("end")
+    start_valid = isinstance(start_value, str) and TIMESTAMP_RE.fullmatch(start_value) is not None
+    end_valid = isinstance(end_value, str) and TIMESTAMP_RE.fullmatch(end_value) is not None
+    if not start_valid:
         issues.append("window.start must be timestamp")
-    if not isinstance(value.get("end"), str) or TIMESTAMP_RE.fullmatch(value.get("end", "")) is None:
+    if not end_valid:
         issues.append("window.end must be timestamp")
+    if start_valid and end_valid:
+        start = dt.datetime.fromisoformat(start_value.replace("Z", "+00:00"))
+        end = dt.datetime.fromisoformat(end_value.replace("Z", "+00:00"))
+        if start >= end:
+            issues.append("window.start must be before window.end")
     return issues
 
 
@@ -650,6 +677,9 @@ def validate_root(root: Path) -> list[str]:
             continue
         suffix = relative.suffix.lower()
         try:
+            if content_scanned_infrastructure_artifact(relative):
+                if contains_risky_text(path.read_text(encoding="utf-8")):
+                    issues.append(f"{relative}: infrastructure text contains raw/sensitive evidence")
             if suffix == ".json":
                 data = parse_json(path)
                 json_kind = allowed_retained_json_artifact(relative)
