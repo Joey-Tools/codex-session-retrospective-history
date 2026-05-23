@@ -61,16 +61,25 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertIn("forbidden raw/transient artifact", "\n".join(MODULE.validate_root(root)))
 
     def test_forced_raw_session_directories_are_rejected(self) -> None:
-        for relative_path in ("sessions/prompt.txt", "archived_sessions/raw.txt"):
+        for relative_path in ("sessions/prompt.txt", "archived_sessions/raw.txt", "Sessions/prompt.txt"):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
                     root = Path(raw)
                     subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.DEVNULL)
-                    (root / ".gitignore").write_text("sessions/\narchived_sessions/\n", encoding="utf-8")
+                    (root / ".gitignore").write_text("sessions/\narchived_sessions/\nSessions/\n", encoding="utf-8")
                     artifact = root / relative_path
                     artifact.parent.mkdir(parents=True)
                     artifact.write_text("raw prompt text\n", encoding="utf-8")
                     subprocess.run(["git", "add", "-f", relative_path], cwd=root, check=True)
+
+                    self.assertIn("forbidden raw/transient artifact", "\n".join(MODULE.validate_root(root)))
+
+    def test_compressed_raw_artifact_names_are_rejected(self) -> None:
+        for relative_path in ("rollout-2026-05-22.jsonl.gz", "session_index.jsonl.gz"):
+            with self.subTest(relative_path=relative_path):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    (root / relative_path).write_text("raw prompt text\n", encoding="utf-8")
 
                     self.assertIn("forbidden raw/transient artifact", "\n".join(MODULE.validate_root(root)))
 
@@ -157,6 +166,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
             self.assertIn("unexpected field: raw_path", "\n".join(MODULE.validate_root(root)))
+
+    def test_unexpected_text_artifact_locations_are_rejected_and_scanned(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            artifact = root / "evidence" / "notes.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("/Users/hoteng/.codex/sessions/2026/05/22/rollout.jsonl\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("unexpected retained artifact location", issues)
+            self.assertIn("retained text contains raw/sensitive evidence", issues)
 
     def test_unknown_json_artifacts_are_rejected(self) -> None:
         for relative_path in ("data/worklist.json", "data/source-map.JSON", "reports/weekly/notes.json"):
@@ -250,6 +270,57 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
             self.assertIn("issue_flags must be safe-token array", "\n".join(MODULE.validate_root(root)))
+
+    def test_safe_tokens_reject_risky_structured_values(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = {
+                "episode_id": "episode_ref_v1:" + "a" * 20,
+                "host": "jira.cisco.example",
+                "session_id": "session_ref_v1:" + "b" * 20,
+                "start": "2026-05-21T00:00:00Z",
+                "end": "2026-05-21T01:00:00Z",
+                "cwd": None,
+                "model_era": "unknown",
+                "topic": "Redacted topic",
+                "turn_count": 1,
+                "friction_flags": [],
+                "outcome": "needs_review",
+                "work_report_hint": None,
+            }
+            episode_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            episode_path.parent.mkdir(parents=True)
+            episode_path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+            trend = {
+                "schema_version": 1,
+                "window": {
+                    "mode": "daily",
+                    "start": "2026-05-21T00:00:00Z",
+                    "end": "2026-05-22T00:00:00Z",
+                },
+                "turn_count": 1,
+                "flagged_turn_count": 1,
+                "episode_count": 1,
+                "flags": {"sk-proj-abcdefghijklmnop123456": 1},
+                "hosts": {"jira.cisco.example": 1},
+                "model_eras": {"a" * 64: 1},
+                "coverage_gaps": [],
+            }
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+            manifest = valid_manifest()
+            manifest["sources"][0]["host"] = "jira.cisco.example"
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("host must be a safe token", issues)
+            self.assertIn("flags key must be a safe token", issues)
+            self.assertIn("hosts key must be a safe token", issues)
+            self.assertIn("model_eras key must be a safe token", issues)
+            self.assertIn("source host must be a safe token", issues)
 
     def test_count_maps_are_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

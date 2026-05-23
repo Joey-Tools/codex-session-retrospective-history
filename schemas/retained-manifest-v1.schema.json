@@ -56,6 +56,19 @@
     },
     "safe_token": {
       "maxLength": 64,
+      "not": {
+        "anyOf": [
+          {
+            "pattern": "\\b(?:[A-Za-z0-9-]+\\.)+(?:[Ii][Nn][Tt][Ee][Rr][Nn][Aa][Ll]|[Cc][Oo][Rr][Pp]|[Ll][Oo][Cc][Aa][Ll]|[Ll][Aa][Nn]|[Ee][Xx][Aa][Mm][Pp][Ll][Ee]|[Ii][Nn][Vv][Aa][Ll][Ii][Dd]|[Tt][Ee][Ss][Tt])\\b"
+          },
+          {
+            "pattern": "\\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\\b"
+          },
+          {
+            "pattern": "^[0-9a-fA-F]{64}$"
+          }
+        ]
+      },
       "pattern": "^[A-Za-z0-9_.-]+$",
       "type": "string"
     },

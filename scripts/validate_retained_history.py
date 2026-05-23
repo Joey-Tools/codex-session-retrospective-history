@@ -37,6 +37,17 @@ FORBIDDEN_COMPACT_NAME_PARTS = frozenset(
     }
 )
 FORBIDDEN_COMPACT_NAME_PREFIXES = frozenset({"raw"})
+FORBIDDEN_NAME_STEMS = frozenset(
+    {
+        "history",
+        "session_index",
+        "shard_manifest",
+        "shards",
+        "source_metadata",
+        "turn_summaries",
+    }
+)
+COMPRESSED_ARTIFACT_SUFFIXES = frozenset({".bz2", ".gz", ".xz", ".zip", ".zst"})
 PATH_REF_RE = re.compile(r"^path_ref_v1:[0-9a-f]{16}$")
 SESSION_REF_RE = re.compile(r"^session_ref_v1:[0-9a-f]{20}$")
 EPISODE_REF_RE = re.compile(r"^episode_ref_v1:[0-9a-f]{20}$")
@@ -48,6 +59,9 @@ TIMESTAMP_RE = re.compile(
 )
 TEXT_ARTIFACT_SUFFIXES = frozenset({".json", ".jsonl", ".md", ".txt"})
 VALID_RETAINED_SUFFIXES = TEXT_ARTIFACT_SUFFIXES
+STRIPPABLE_ARTIFACT_SUFFIXES = TEXT_ARTIFACT_SUFFIXES | COMPRESSED_ARTIFACT_SUFFIXES
+ROOT_DOC_FILES = frozenset({".gitignore", "AGENTS.md", "README.md", "data/README.md", "reports/README.md"})
+INFRASTRUCTURE_TOP_LEVELS = frozenset({".github", "scripts", "schemas", "tests"})
 EPISODE_KEYS = frozenset(
     {
         "episode_id",
@@ -208,13 +222,16 @@ def iter_files(root: Path) -> list[Path]:
 
 def forbidden_name(name: str) -> bool:
     stem = name
-    while Path(stem).suffix.lower() in TEXT_ARTIFACT_SUFFIXES:
+    while Path(stem).suffix.lower() in STRIPPABLE_ARTIFACT_SUFFIXES:
         next_stem = Path(stem).with_suffix("").name
         if next_stem == stem:
             break
         stem = next_stem
     separated = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", stem)
     tokens = [token for token in re.split(r"[^a-z0-9]+", separated.lower()) if token]
+    normalized = "_".join(tokens)
+    if normalized in FORBIDDEN_NAME_STEMS:
+        return True
     compacted = "".join(tokens)
     if any(compacted.startswith(prefix) for prefix in FORBIDDEN_COMPACT_NAME_PREFIXES):
         return True
@@ -222,10 +239,11 @@ def forbidden_name(name: str) -> bool:
 
 
 def forbidden_path(relative: Path) -> bool:
-    if any(part in FORBIDDEN_COMPONENTS or forbidden_name(part) for part in relative.parts[:-1]):
+    parts = tuple(part.lower() for part in relative.parts)
+    if any(part in FORBIDDEN_COMPONENTS or forbidden_name(part) for part in parts[:-1]):
         return True
-    name = relative.name
-    return name in FORBIDDEN_FILENAMES or forbidden_name(name) or (name.startswith("rollout") and name.endswith(".jsonl"))
+    name = relative.name.lower()
+    return name in FORBIDDEN_FILENAMES or forbidden_name(name) or name.startswith("rollout")
 
 
 def parse_json(path: Path) -> Any:
@@ -287,7 +305,13 @@ def valid_safe_token(value: Any) -> bool:
         isinstance(value, str)
         and len(value) <= MAX_SAFE_TOKEN_LENGTH
         and SAFE_TOKEN_RE.fullmatch(value) is not None
+        and not contains_risky_text(value)
     )
+
+
+def allowed_infrastructure_artifact(relative: Path) -> bool:
+    path_text = relative.as_posix()
+    return path_text in ROOT_DOC_FILES or relative.parts[0] in INFRASTRUCTURE_TOP_LEVELS
 
 
 def validate_safe_token_array(value: Any, label: str, *, min_items: int = 0) -> list[str]:
@@ -525,7 +549,7 @@ def validate_root(root: Path) -> list[str]:
                     issues.extend(f"{relative}: {issue}" for issue in validate_manifest(data))
                 elif relative.parts[:2] == ("data", "trends"):
                     issues.extend(f"{relative}: {issue}" for issue in validate_trend(data))
-                elif relative.parts[0] in {"data", "reports"}:
+                elif relative.parts[0] in {"data", "reports"} or not allowed_infrastructure_artifact(relative):
                     issues.append(f"{relative}: unexpected JSON artifact")
                     if contains_risky_text(data):
                         issues.append(f"{relative}: retained text contains raw/sensitive evidence")
@@ -547,6 +571,14 @@ def validate_root(root: Path) -> list[str]:
                         issues.append(f"{relative}: retained text contains raw/sensitive evidence")
                 except UnicodeDecodeError:
                     pass
+            elif not allowed_infrastructure_artifact(relative):
+                issues.append(f"{relative}: unexpected retained artifact location")
+                if suffix in TEXT_ARTIFACT_SUFFIXES:
+                    try:
+                        if contains_risky_text(path.read_text(encoding="utf-8")):
+                            issues.append(f"{relative}: retained text contains raw/sensitive evidence")
+                    except UnicodeDecodeError:
+                        pass
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             issues.append(f"{relative}: {exc}")
     return issues
