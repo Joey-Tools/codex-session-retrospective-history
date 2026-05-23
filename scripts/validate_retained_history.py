@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import json
 from pathlib import Path
 import re
@@ -379,6 +378,19 @@ def valid_timestamp_or_null(value: Any) -> bool:
     return value is None or (isinstance(value, str) and TIMESTAMP_RE.fullmatch(value) is not None)
 
 
+def timestamp_order_key(value: str) -> tuple[int, int, int, int, int, int, int]:
+    main = value.removesuffix("Z")
+    if "." in main:
+        main, fraction = main.split(".", 1)
+    else:
+        fraction = ""
+    date_part, time_part = main.split("T", 1)
+    year, month, day = (int(part) for part in date_part.split("-", 2))
+    hour, minute, second = (int(part) for part in time_part.split(":", 2))
+    nanosecond = int(fraction.ljust(9, "0") or "0")
+    return (year, month, day, hour, minute, second, nanosecond)
+
+
 def valid_non_negative_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_COUNT
 
@@ -529,9 +541,7 @@ def validate_window(value: Any) -> list[str]:
     if not end_valid:
         issues.append("window.end must be timestamp")
     if start_valid and end_valid:
-        start = dt.datetime.fromisoformat(start_value.replace("Z", "+00:00"))
-        end = dt.datetime.fromisoformat(end_value.replace("Z", "+00:00"))
-        if start >= end:
+        if timestamp_order_key(start_value) >= timestamp_order_key(end_value):
             issues.append("window.start must be before window.end")
     return issues
 

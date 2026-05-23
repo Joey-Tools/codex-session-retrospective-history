@@ -610,6 +610,21 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             self.assertIn("window.start must be before window.end", "\n".join(MODULE.validate_root(root)))
 
+    def test_window_accepts_nanosecond_precision_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            trend = valid_trend()
+            trend["window"] = {
+                "mode": "daily",
+                "start": "2026-05-21T00:00:00.123456789Z",
+                "end": "2026-05-21T00:00:00.123456790Z",
+            }
+            path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(trend), encoding="utf-8")
+
+            self.assertEqual(MODULE.validate_root(root), [])
+
     def test_retained_mode_allows_daily_weekly_and_baseline_windows(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
