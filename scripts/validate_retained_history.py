@@ -60,7 +60,7 @@ SENSITIVE_TOKEN_RE = re.compile(
 )
 BASELINE_MODE_RE = re.compile(r"^baseline-[1-9][0-9]{0,3}d$")
 TIMESTAMP_RE = re.compile(
-    r"^\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9]))T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$"
+    r"^(?:(?:\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-8])))|(?:(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29))T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$"
 )
 TEXT_ARTIFACT_SUFFIXES = frozenset({".json", ".jsonl", ".md", ".txt"})
 VALID_RETAINED_SUFFIXES = TEXT_ARTIFACT_SUFFIXES
@@ -191,6 +191,10 @@ RISK_PATTERNS = (
 )
 INFRASTRUCTURE_RISK_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", re.I),
+    re.compile(
+        r"\bhttps?://(?:localhost|miku-bot-dev|hoteng-srv-01|(?:10|127)(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})(?::\d{1,5})?(?:[/?#]|$)",
+        re.I,
+    ),
     re.compile(r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/", re.I),
     re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)", re.I),
     re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
@@ -375,7 +379,11 @@ def missing_keys(row: dict[str, Any], required: frozenset[str]) -> list[str]:
 
 
 def valid_timestamp_or_null(value: Any) -> bool:
-    return value is None or (isinstance(value, str) and TIMESTAMP_RE.fullmatch(value) is not None)
+    return value is None or valid_timestamp(value)
+
+
+def valid_timestamp(value: Any) -> bool:
+    return isinstance(value, str) and TIMESTAMP_RE.fullmatch(value) is not None
 
 
 def timestamp_order_key(value: str) -> tuple[int, int, int, int, int, int, int]:
@@ -534,8 +542,8 @@ def validate_window(value: Any) -> list[str]:
         issues.append("window.mode must be an allowed retained mode")
     start_value = value.get("start")
     end_value = value.get("end")
-    start_valid = isinstance(start_value, str) and TIMESTAMP_RE.fullmatch(start_value) is not None
-    end_valid = isinstance(end_value, str) and TIMESTAMP_RE.fullmatch(end_value) is not None
+    start_valid = valid_timestamp(start_value)
+    end_valid = valid_timestamp(end_value)
     if not start_valid:
         issues.append("window.start must be timestamp")
     if not end_valid:

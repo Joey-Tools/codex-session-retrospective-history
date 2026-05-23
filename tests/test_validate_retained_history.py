@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -120,6 +121,18 @@ def risky_internal_url() -> str:
     return "HTTPS://internal" + ".example/path"
 
 
+def risky_localhost_url() -> str:
+    return "http" + "://localhost:3000/status"
+
+
+def risky_private_ip_url() -> str:
+    return "http" + "://10.0.0.5:8080/status"
+
+
+def risky_short_host_url() -> str:
+    return "http" + "://miku-bot-dev:8080/status"
+
+
 def risky_ssh_url() -> str:
     return "ssh" + "://git@" + "example" + ".internal/repo"
 
@@ -181,6 +194,25 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("[Uu][Ss][Ee][Rr][Ss]", patterns)
         self.assertIn("[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]", patterns)
 
+    def test_schema_raw_id_pattern_is_fully_case_insensitive(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        raw_id_pattern = next(
+            item["pattern"]
+            for item in schema["$defs"]["retained_text"]["not"]["anyOf"]
+            if "session_ref_v1" in item["pattern"]
+        )
+        raw_id_re = re.compile(raw_id_pattern)
+
+        for text in (
+            "SESS" + "ION_ID: abc123456",
+            "TURN" + "_ID=abc123456",
+            "EPIS" + "ODE ID: abc123456",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNotNone(raw_id_re.search(text))
+
+        self.assertIsNone(raw_id_re.search("session_id: session_ref_v1:" + "a" * 20))
+
     def test_schema_safe_token_patterns_cover_compound_secret_names(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
         manifest_schema = json.loads(MANIFEST_SCHEMA.read_text(encoding="utf-8"))
@@ -209,6 +241,20 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(schema["$defs"]["trend"]["properties"]["window"], {"$ref": "#/$defs/window"})
         self.assertEqual(schema["$defs"]["manifest"]["properties"]["mode"], {"$ref": "#/$defs/retained_mode"})
         self.assertEqual(manifest_schema["properties"]["mode"], {"$ref": "#/$defs/retained_mode"})
+
+    def test_schema_timestamp_patterns_reject_non_calendar_dates(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        manifest_schema = json.loads(MANIFEST_SCHEMA.read_text(encoding="utf-8"))
+
+        for pattern in (
+            schema["$defs"]["timestamp_required"]["pattern"],
+            manifest_schema["$defs"]["timestamp_required"]["pattern"],
+        ):
+            timestamp_re = re.compile(pattern)
+            with self.subTest(pattern=pattern[:40]):
+                self.assertIsNone(timestamp_re.fullmatch("2025-02-29T00:00:00Z"))
+                self.assertIsNone(timestamp_re.fullmatch("2026-04-31T00:00:00Z"))
+                self.assertIsNotNone(timestamp_re.fullmatch("2024-02-29T00:00:00.123456789Z"))
 
     def test_clean_report_passes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -625,6 +671,31 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             self.assertEqual(MODULE.validate_root(root), [])
 
+    def test_timestamps_reject_non_calendar_dates(self) -> None:
+        self.assertFalse(MODULE.valid_timestamp("2025-02-29T00:00:00Z"))
+        self.assertFalse(MODULE.valid_timestamp("2026-04-31T00:00:00Z"))
+        self.assertTrue(MODULE.valid_timestamp("2024-02-29T00:00:00.123456789Z"))
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            trend = valid_trend()
+            trend["window"]["start"] = "2025-02-29T00:00:00Z"
+            path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(trend), encoding="utf-8")
+
+            self.assertIn("window.start must be timestamp", "\n".join(MODULE.validate_root(root)))
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = valid_episode()
+            episode["start"] = "2026-04-31T00:00:00Z"
+            path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+
+            self.assertIn("start must be timestamp or null", "\n".join(MODULE.validate_root(root)))
+
     def test_retained_mode_allows_daily_weekly_and_baseline_windows(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -711,6 +782,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             (".gitignore", ".codex" + "-tmp/\n# " + risky_project_path() + "\n"),
             ("README.md", "Raw pointer " + risky_session_pointer() + "\n"),
             ("scripts/probe.py", "# " + risky_rollout_filename() + "\n"),
+            ("README.md", "Internal localhost URL " + risky_localhost_url() + "\n"),
+            ("README.md", "Internal private IP URL " + risky_private_ip_url() + "\n"),
+            ("README.md", "Internal short host URL " + risky_short_host_url() + "\n"),
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
