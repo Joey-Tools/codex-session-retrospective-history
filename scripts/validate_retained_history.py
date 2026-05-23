@@ -68,7 +68,11 @@ RAW_ID_VALUE_RE = re.compile(
 )
 BASELINE_MODE_RE = re.compile(r"^baseline-90d$")
 PRIVATE_IPV4_RE = re.compile(
-    r"(?<![\d.])(?:10(?:\.\d{1,3}){3}|127(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})(?![\d.])"
+    r"(?<![\d.])(?:10(?:\.\d{1,3}){3}|100\.(?:6[4-9]|[78]\d|9\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}|127(?:\.\d{1,3}){3}|169\.254(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})(?![\d.])"
+)
+PRIVATE_IPV6_RE = re.compile(
+    r"(?<![0-9A-Fa-f:])(?:::1|f[cd][0-9A-Fa-f]{0,2}(?::[0-9A-Fa-f]{0,4}){1,7}|fe[89abAB][0-9A-Fa-f]?(?::[0-9A-Fa-f]{0,4}){1,7})(?![0-9A-Fa-f:])",
+    re.I,
 )
 TIMESTAMP_RE = re.compile(
     r"^(?:(?:\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-8])))|(?:(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29))T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$"
@@ -212,6 +216,7 @@ RISK_PATTERNS = (
     re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
     PRIVATE_IPV4_RE,
+    PRIVATE_IPV6_RE,
     RAW_ID_VALUE_RE,
     RAW_ID_TOKEN_RE,
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
@@ -245,6 +250,7 @@ INFRASTRUCTURE_RISK_PATTERNS = (
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
     PRIVATE_IPV4_RE,
+    PRIVATE_IPV6_RE,
     RAW_ID_VALUE_RE,
     RAW_ID_TOKEN_RE,
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
@@ -560,8 +566,19 @@ def allowed_retained_text_artifact(relative: Path) -> bool:
 def valid_year_month(parts: tuple[str, ...], start: int) -> bool:
     if len(parts) <= start + 1 or re.fullmatch(r"\d{4}", parts[start]) is None or re.fullmatch(r"\d{2}", parts[start + 1]) is None:
         return False
+    year = int(parts[start])
     month = int(parts[start + 1])
-    return 1 <= month <= 12
+    if not 1 <= month <= 12:
+        return False
+    try:
+        dt.date(year, month, 1)
+        if month == 12:
+            dt.date(year + 1, 1, 1)
+        else:
+            dt.date(year, month + 1, 1)
+    except ValueError:
+        return False
+    return True
 
 
 def data_month_window(data_month: tuple[str, str, str]) -> tuple[

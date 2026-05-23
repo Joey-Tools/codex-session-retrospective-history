@@ -166,6 +166,26 @@ def risky_bare_private_lan_ip() -> str:
     return "192" + ".168.1.4"
 
 
+def risky_link_local_ip() -> str:
+    return "169" + ".254.169.254"
+
+
+def risky_cgnat_ip() -> str:
+    return "100" + ".64.0.1"
+
+
+def risky_private_ipv6() -> str:
+    return "fc00" + ":" + ":1"
+
+
+def risky_link_local_ipv6() -> str:
+    return "fe80" + ":" + ":1"
+
+
+def risky_loopback_ipv6() -> str:
+    return "::" + "1"
+
+
 def risky_short_host_url() -> str:
     return "http" + "://miku-bot-dev:8080/status"
 
@@ -287,7 +307,15 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         for sample in ("api " + "key: abc", "secret " + "key: abc", "private " + "key: abc"):
             with self.subTest(sample=sample):
                 self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
-        for sample in (risky_bare_private_ip(), risky_bare_private_lan_ip()):
+        for sample in (
+            risky_bare_private_ip(),
+            risky_bare_private_lan_ip(),
+            risky_link_local_ip(),
+            risky_cgnat_ip(),
+            risky_private_ipv6(),
+            risky_link_local_ipv6(),
+            risky_loopback_ipv6(),
+        ):
             with self.subTest(sample=sample):
                 self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
 
@@ -581,6 +609,21 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("data/trends/2026/05/trend_report.json: window must overlap data month", issues)
         self.assertIn("data/manifests/2026/05/retained_manifest.json: window must overlap data month", issues)
 
+    def test_invalid_data_month_paths_report_errors_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode_path = root / "data" / "episodes" / "0000" / "05" / "episodes.jsonl"
+            episode_path.parent.mkdir(parents=True)
+            episode_path.write_text(json.dumps(valid_episode()) + "\n", encoding="utf-8")
+            trend_path = root / "data" / "trends" / "9999" / "12" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(valid_trend()), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("data/episodes/0000/05/episodes.jsonl: unexpected JSONL artifact", issues)
+        self.assertIn("data/trends/9999/12/trend_report.json: unexpected JSON artifact", issues)
+
     def test_monthly_turn_flags_check_episode_refs_without_trend(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -743,6 +786,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "Windows path C:\\Users\\hoteng\\project",
             "Lower-case Windows path C:\\users\\hoteng\\project",
             "Internal hostname " + risky_internal_host(),
+            "Link local IP " + risky_link_local_ip(),
+            "CGNAT IP " + risky_cgnat_ip(),
+            "Private IPv6 " + risky_private_ipv6(),
+            "Link local IPv6 " + risky_link_local_ipv6(),
+            "Loopback IPv6 " + risky_loopback_ipv6(),
             "Rollout file " + risky_rollout_filename(),
         )
         for text in risky_examples:
@@ -1497,6 +1545,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("scripts/probe.py", "# " + risky_rollout_filename() + "\n"),
             ("README.md", "Internal localhost URL " + risky_localhost_url() + "\n"),
             ("README.md", "Internal private IP URL " + risky_private_ip_url() + "\n"),
+            ("README.md", "Internal metadata URL http://" + risky_link_local_ip() + "/latest/meta-data\n"),
+            ("README.md", "Internal IPv6 URL http://[" + risky_private_ipv6() + "]/status\n"),
             ("README.md", "Internal short host URL " + risky_short_host_url() + "\n"),
             ("README.md", "Internal SSH URL " + risky_private_ip_ssh_url() + "\n"),
             ("README.md", "Internal Git remote " + risky_short_host_git_remote() + "\n"),
@@ -1513,25 +1563,32 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     self.assertIn("infrastructure text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
 
     def test_retained_text_rejects_bare_private_ip_addresses(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            report = root / "reports" / "daily" / "2026" / "05" / "22.md"
-            report.parent.mkdir(parents=True)
-            report.write_text("Investigated host " + risky_bare_private_ip() + "\n", encoding="utf-8")
+        for report_sample, row_sample in (
+            (risky_bare_private_ip(), risky_bare_private_lan_ip()),
+            (risky_link_local_ip(), risky_cgnat_ip()),
+            (risky_private_ipv6(), risky_link_local_ipv6()),
+            (risky_loopback_ipv6(), risky_bare_private_ip()),
+        ):
+            with self.subTest(report_sample=report_sample, row_sample=row_sample):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    report = root / "reports" / "daily" / "2026" / "05" / "22.md"
+                    report.parent.mkdir(parents=True)
+                    report.write_text("Investigated host " + report_sample + "\n", encoding="utf-8")
 
-            turn = valid_turn_flag()
-            turn["redacted_user_prompt_summary"] = "Investigated host " + risky_bare_private_lan_ip()
-            turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
-            turn_path.parent.mkdir(parents=True)
-            turn_path.write_text(json.dumps(turn) + "\n", encoding="utf-8")
+                    turn = valid_turn_flag()
+                    turn["redacted_user_prompt_summary"] = "Investigated host " + row_sample
+                    turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+                    turn_path.parent.mkdir(parents=True)
+                    turn_path.write_text(json.dumps(turn) + "\n", encoding="utf-8")
 
-            issues = "\n".join(MODULE.validate_root(root))
+                    issues = "\n".join(MODULE.validate_root(root))
 
-        self.assertIn("reports/daily/2026/05/22.md: retained text contains raw/sensitive evidence", issues)
-        self.assertIn(
-            "data/turn_flags/2026/05/turn_flags.jsonl:1: redacted_user_prompt_summary contains retained-text risk",
-            issues,
-        )
+                self.assertIn("reports/daily/2026/05/22.md: retained text contains raw/sensitive evidence", issues)
+                self.assertIn(
+                    "data/turn_flags/2026/05/turn_flags.jsonl:1: redacted_user_prompt_summary contains retained-text risk",
+                    issues,
+                )
 
     def test_safe_tokens_reject_risky_structured_values(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
