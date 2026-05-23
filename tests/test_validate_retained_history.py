@@ -101,12 +101,17 @@ def valid_trend() -> dict:
     }
 
 
-def write_retained_export(root: Path, export_dir: Path) -> None:
+def write_retained_export(root: Path, export_dir: Path, *, mode: str = "daily") -> None:
+    trend = valid_trend()
+    trend["window"]["mode"] = mode
+    manifest = valid_manifest()
+    manifest["mode"] = mode
+    manifest["window"]["mode"] = mode
     export_dir.mkdir(parents=True)
     (export_dir / "episodes.jsonl").write_text(json.dumps(valid_episode()) + "\n", encoding="utf-8")
     (export_dir / "turn_flags.jsonl").write_text(json.dumps(valid_turn_flag()) + "\n", encoding="utf-8")
-    (export_dir / "trend_report.json").write_text(json.dumps(valid_trend()), encoding="utf-8")
-    (export_dir / "retained_manifest.json").write_text(json.dumps(valid_manifest()), encoding="utf-8")
+    (export_dir / "trend_report.json").write_text(json.dumps(trend), encoding="utf-8")
+    (export_dir / "retained_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
 def risky_local_path() -> str:
@@ -266,11 +271,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertEqual(MODULE.validate_root(root), [])
 
     def test_flat_retained_export_layout_passes(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            write_retained_export(root, root / "retained" / "daily")
+        for export_name, mode in (("daily", "daily"), ("weekly", "weekly"), ("baseline", "baseline-90d")):
+            with self.subTest(export_name=export_name, mode=mode):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    write_retained_export(root, root / "retained" / export_name, mode=mode)
 
-            self.assertEqual(MODULE.validate_root(root), [])
+                    self.assertEqual(MODULE.validate_root(root), [])
 
     def test_flat_retained_export_rejects_extra_or_missing_files(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
