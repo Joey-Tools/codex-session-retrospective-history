@@ -29,9 +29,11 @@ schemas/
 
 Artifact basenames are fixed to avoid leaking customer, repository, host,
 session, or raw topic identifiers through Git paths.
-Retained host labels are also fixed: use only `local`, `miku-bot-dev`,
-`hoteng-srv-01`, `custom_source`, or `scope`. Customer, repository, project, or
-ad hoc source labels must be bucketed before artifacts reach this repository.
+Retained evidence host labels are also fixed: use only `local`,
+`miku-bot-dev`, `hoteng-srv-01`, or `custom_source` in episode, source, and
+trend artifacts. The `scope` label is reserved for coverage gaps such as
+intentionally partial scans. Customer, repository, project, or ad hoc source
+labels must be bucketed before artifacts reach this repository.
 
 ## Data Policy
 

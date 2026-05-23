@@ -644,6 +644,12 @@ def retained_window_identity(value: Any) -> tuple[str, tuple[int, int, int, int,
     return (mode, timestamp_order_key(start), timestamp_order_key(end))
 
 
+def valid_timestamp_key(value: Any) -> tuple[int, int, int, int, int, int, int] | None:
+    if not valid_timestamp(value):
+        return None
+    return timestamp_order_key(value)
+
+
 def validate_coverage_gap(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return ["coverage gap must be an object"]
@@ -928,6 +934,21 @@ def validate_retained_export_consistency(
 
     if not isinstance(trend, dict):
         return issues
+
+    trend_window = retained_window_identity(trend.get("window"))
+    if trend_window is not None:
+        _, window_start, window_end = trend_window
+        for index, row in enumerate(episodes, 1):
+            start_key = valid_timestamp_key(row.get("start"))
+            end_key = valid_timestamp_key(row.get("end"))
+            if (start_key is not None and start_key < window_start) or (
+                end_key is not None and end_key > window_end
+            ):
+                issues.append(f"{episodes_path}:{index}: episode start/end must be within trend window")
+        for index, row in enumerate(turn_flags, 1):
+            timestamp_key = valid_timestamp_key(row.get("timestamp"))
+            if timestamp_key is not None and (timestamp_key < window_start or timestamp_key >= window_end):
+                issues.append(f"{turn_flags_path}:{index}: timestamp must be within trend window")
 
     if valid_non_negative_int(trend.get("episode_count")) and trend["episode_count"] != len(episodes):
         issues.append(f"{trend_path}: episode_count must match episodes.jsonl")

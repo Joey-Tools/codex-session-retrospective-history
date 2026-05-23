@@ -409,6 +409,24 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("retained/daily/turn_flags.jsonl:1: host must match referenced episode", issues)
         self.assertIn("retained/daily/turn_flags.jsonl:1: session_id must match referenced episode", issues)
 
+    def test_flat_retained_export_rejects_rows_outside_trend_window(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            episode = valid_episode()
+            episode["start"] = "2026-06-01T00:00:00Z"
+            episode["end"] = "2026-06-01T01:00:00Z"
+            turn_flag = valid_turn_flag()
+            turn_flag["timestamp"] = "2026-06-01T00:00:00Z"
+            (export_dir / "episodes.jsonl").write_text(json.dumps(episode) + "\n", encoding="utf-8")
+            (export_dir / "turn_flags.jsonl").write_text(json.dumps(turn_flag) + "\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/daily/episodes.jsonl:1: episode start/end must be within trend window", issues)
+        self.assertIn("retained/daily/turn_flags.jsonl:1: timestamp must be within trend window", issues)
+
     def test_flat_retained_export_rejects_duplicate_ids(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
