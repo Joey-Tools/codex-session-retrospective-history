@@ -259,7 +259,7 @@
               "pattern": "-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"
             },
             {
-              "pattern": "(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/"
+              "pattern": "(^|[^A-Za-z0-9_])(?:~|/(?:[Uu][Ss][Ee][Rr][Ss]|[Hh][Oo][Mm][Ee]|[Rr][Oo][Oo][Tt]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]|[Tt][Mm][Pp]|[Vv][Aa][Rr]|[Ee][Tt][Cc]|[Oo][Pp][Tt]|[Vv][Oo][Ll][Uu][Mm][Ee][Ss]|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee][Ss]))/"
             },
           {
             "pattern": "(^|[^A-Za-z0-9_])(?:\\./|\\.\\./)?\\.[Cc][Oo][Dd][Ee][Xx](?:-[Ll][Oo][Cc][Aa][Ll]|-[Tt][Mm][Pp])?(?:/|\\\\)"
@@ -268,10 +268,10 @@
             "pattern": "(^|[^A-Za-z0-9_])(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn][Ss]|[Aa][Rr][Cc][Hh][Ii][Vv][Ee][Dd]_[Ss][Ee][Ss][Ss][Ii][Oo][Nn][Ss])(?:/|\\\\)"
           },
           {
-            "pattern": "\\b[A-Za-z]:\\\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\\\"
+            "pattern": "\\b[A-Za-z]:\\\\(?:[Uu][Ss][Ee][Rr][Ss]|[Hh][Oo][Mm][Ee]|[Rr][Oo][Oo][Tt]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]|[Tt][Mm][Pp]|[Vv][Aa][Rr]|[Ee][Tt][Cc]|[Oo][Pp][Tt]|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee][Ss])\\\\"
           },
           {
-            "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn])(?:\u0022|')?\\s*[:=]"
+            "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?[A-Za-z0-9._-]*(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][._-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy])[A-Za-z0-9._-]*(?:\u0022|')?\\s*[:=]"
           },
           {
             "pattern": "\\b[Bb][Ee][Aa][Rr][Ee][Rr]\\s+[A-Za-z0-9._~+/=-]{12,}\\b"

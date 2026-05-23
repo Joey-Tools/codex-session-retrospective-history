@@ -132,6 +132,15 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(manifest_schema["$defs"]["source_summary"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
         self.assertEqual(manifest_schema["$defs"]["coverage_gap"]["properties"]["host"], {"$ref": "#/$defs/retained_coverage_host"})
 
+    def test_schema_retained_text_patterns_cover_compound_secrets_and_case_paths(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        patterns = "\n".join(item["pattern"] for item in schema["$defs"]["retained_text"]["not"]["anyOf"])
+
+        self.assertIn("[A-Za-z0-9._-]*(?:", patterns)
+        self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy]", patterns)
+        self.assertIn("[Uu][Ss][Ee][Rr][Ss]", patterns)
+        self.assertIn("[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]", patterns)
+
     def test_clean_report_passes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -203,6 +212,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "Raw session pointer Session ID: abc123456",
             "Raw turn pointer turn-id=abc123456",
             '{"token":"redactedvalue"}',
+            '{"access_token":"redactedvalue"}',
+            '{"refresh-token":"redactedvalue"}',
+            '{"client_secret":"redactedvalue"}',
+            '{"db_password":"redactedvalue"}',
+            '{"private_key":"redactedvalue"}',
             '{"session_id":"abc123456"}',
             "Private key block -----BEGIN PRIVATE KEY-----\nredacted",
             "PGP private key block -----BEGIN PGP PRIVATE KEY BLOCK-----\nredacted",
@@ -210,7 +224,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "Case-variant source path ./.Codex/Sessions/2026/05/22/Rollout-ABC.JSONL",
             "Relative local source path .codex-local/session-retrospective/out/state.json",
             "Relative temp source path .codex-tmp/isolated-review/stdout.log",
+            "Lower-case POSIX path /users/hoteng/project",
             "Windows path C:\\Users\\hoteng\\project",
+            "Lower-case Windows path C:\\users\\hoteng\\project",
             "Internal hostname jira.cisco.example",
             "Rollout file rollout-2026-05-22T10-00-00-abc.jsonl",
         )
