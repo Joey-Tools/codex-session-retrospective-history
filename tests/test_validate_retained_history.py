@@ -315,6 +315,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             risky_private_ipv6(),
             risky_link_local_ipv6(),
             risky_loopback_ipv6(),
+            "FC00" + ":" + ":1",
+            "FD00" + ":" + ":1",
+            "FE80" + ":" + ":1",
         ):
             with self.subTest(sample=sample):
                 self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
