@@ -633,6 +633,17 @@ def validate_window(value: Any) -> list[str]:
     return issues
 
 
+def retained_window_identity(value: Any) -> tuple[str, tuple[int, int, int, int, int, int, int], tuple[int, int, int, int, int, int, int]] | None:
+    if not isinstance(value, dict):
+        return None
+    mode = value.get("mode")
+    start = value.get("start")
+    end = value.get("end")
+    if not valid_retained_mode(mode) or not valid_timestamp(start) or not valid_timestamp(end):
+        return None
+    return (mode, timestamp_order_key(start), timestamp_order_key(end))
+
+
 def validate_coverage_gap(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return ["coverage gap must be an object"]
@@ -848,7 +859,7 @@ def retained_data_month_key(relative: Path) -> tuple[str, str, str] | None:
     if (
         len(parts) == 5
         and parts[0] == "data"
-        and parts[1] in {"episodes", "turn_flags", "trends"}
+        and parts[1] in {"episodes", "turn_flags", "trends", "manifests"}
         and valid_year_month(parts, 2)
     ):
         return ("data", parts[2], parts[3])
@@ -964,10 +975,12 @@ def validate_root(root: Path) -> list[str]:
         return ["root must be an existing directory"]
     retained_export_files: dict[tuple[str, str], set[str]] = {}
     retained_export_modes: dict[tuple[str, str], dict[str, str]] = {}
+    retained_export_windows: dict[tuple[str, str], dict[str, tuple[str, tuple[int, int, int, int, int, int, int], tuple[int, int, int, int, int, int, int]]]] = {}
     retained_export_rows: dict[tuple[str, str], dict[str, list[Any]]] = {}
     retained_export_trends: dict[tuple[str, str], Any] = {}
     data_month_rows: dict[tuple[str, str, str], dict[str, list[Any]]] = {}
     data_month_trends: dict[tuple[str, str, str], Any] = {}
+    data_month_manifests: dict[tuple[str, str, str], Any] = {}
     data_month_paths: dict[tuple[str, str, str], dict[str, Path]] = {}
     for path in iter_files(root):
         relative = path.relative_to(root)
@@ -994,6 +1007,13 @@ def validate_root(root: Path) -> list[str]:
                     issues.extend(f"{relative}: {issue}" for issue in validate_manifest(data, expected_mode=expected_mode))
                     if expected_mode is not None and isinstance(data, dict) and isinstance(data.get("mode"), str):
                         retained_export_modes.setdefault(tuple(relative.parts[:2]), {})["manifest"] = data["mode"]
+                    if export_key is not None and isinstance(data, dict):
+                        window_identity = retained_window_identity(data.get("window"))
+                        if window_identity is not None:
+                            retained_export_windows.setdefault(export_key, {})["manifest"] = window_identity
+                    if data_month_key is not None and isinstance(data, dict):
+                        data_month_manifests[data_month_key] = data
+                        data_month_paths.setdefault(data_month_key, {})["manifest"] = relative
                 elif json_kind == "trend":
                     expected_mode = expected_mode_from_retained_export_path(relative)
                     issues.extend(f"{relative}: {issue}" for issue in validate_trend(data, expected_mode=expected_mode))
@@ -1003,6 +1023,9 @@ def validate_root(root: Path) -> list[str]:
                             retained_export_modes.setdefault(tuple(relative.parts[:2]), {})["trend"] = window["mode"]
                         if export_key is not None:
                             retained_export_trends[export_key] = data
+                            window_identity = retained_window_identity(window)
+                            if window_identity is not None:
+                                retained_export_windows.setdefault(export_key, {})["trend"] = window_identity
                     if data_month_key is not None and isinstance(data, dict):
                         data_month_trends[data_month_key] = data
                         data_month_paths.setdefault(data_month_key, {})["trend"] = relative
@@ -1054,6 +1077,9 @@ def validate_root(root: Path) -> list[str]:
         modes = retained_export_modes.get(export_dir, {})
         if modes.get("trend") and modes.get("manifest") and modes["trend"] != modes["manifest"]:
             issues.append(f"{Path(*export_dir)}: retained export mode differs between trend and manifest")
+        windows = retained_export_windows.get(export_dir, {})
+        if windows.get("trend") and windows.get("manifest") and windows["trend"] != windows["manifest"]:
+            issues.append(f"{Path(*export_dir)}: retained export window differs between trend and manifest")
         issues.extend(
             validate_retained_export_consistency(
                 export_dir,
@@ -1061,7 +1087,14 @@ def validate_root(root: Path) -> list[str]:
                 retained_export_trends.get(export_dir),
             )
         )
-    for data_month in sorted(set(data_month_rows) | set(data_month_trends)):
+    for data_month in sorted(set(data_month_rows) | set(data_month_trends) | set(data_month_manifests)):
+        trend = data_month_trends.get(data_month)
+        manifest = data_month_manifests.get(data_month)
+        if isinstance(trend, dict) and isinstance(manifest, dict):
+            trend_window = retained_window_identity(trend.get("window"))
+            manifest_window = retained_window_identity(manifest.get("window"))
+            if trend_window is not None and manifest_window is not None and trend_window != manifest_window:
+                issues.append(f"{Path(*data_month)}: retained export window differs between trend and manifest")
         issues.extend(
             validate_retained_export_consistency(
                 data_month,

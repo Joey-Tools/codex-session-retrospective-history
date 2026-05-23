@@ -1080,7 +1080,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             trend = valid_trend()
             trend["window"]["mode"] = "weekly"
-            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path = root / "data" / "trends" / "2026" / "06" / "trend_report.json"
             trend_path.parent.mkdir(parents=True)
             trend_path.write_text(json.dumps(trend), encoding="utf-8")
 
@@ -1138,6 +1138,34 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             issues = "\n".join(MODULE.validate_root(root))
 
         self.assertIn("retained/baseline: retained export mode differs between trend and manifest", issues)
+
+    def test_flat_retained_export_window_must_match_between_manifest_and_trend(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            manifest_path = export_dir / "retained_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["window"]["end"] = "2026-05-23T00:00:00Z"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/daily: retained export window differs between trend and manifest", issues)
+
+    def test_monthly_retained_export_window_must_match_between_manifest_and_trend(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_monthly_export(root)
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest = valid_manifest()
+            manifest["window"]["start"] = "2026-05-20T00:00:00Z"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("data/2026/05: retained export window differs between trend and manifest", issues)
 
     def test_customer_like_modes_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
