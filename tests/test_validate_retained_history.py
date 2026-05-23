@@ -67,7 +67,7 @@ def valid_episode() -> dict:
 def valid_turn_flag() -> dict:
     return {
         "turn_id": "turn_ref_v1:" + "a" * 20,
-        "episode_id": "episode_ref_v1:" + "b" * 20,
+        "episode_id": "episode_ref_v1:" + "a" * 20,
         "host": "local",
         "session_id": "session_ref_v1:" + "c" * 20,
         "source_path": "path_ref_v1:" + "d" * 16,
@@ -287,6 +287,33 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             (export_dir / "retained_manifest.json").unlink()
 
             self.assertIn("retained export directory is incomplete or has extra files", "\n".join(MODULE.validate_root(root)))
+
+    def test_flat_retained_export_rejects_inconsistent_rows_and_trend(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            turn_flag = valid_turn_flag()
+            turn_flag["episode_id"] = "episode_ref_v1:" + "b" * 20
+            (export_dir / "turn_flags.jsonl").write_text(json.dumps(turn_flag) + "\n", encoding="utf-8")
+            trend = valid_trend()
+            trend["turn_count"] = 0
+            trend["flagged_turn_count"] = 0
+            trend["episode_count"] = 0
+            trend["flags"] = {}
+            trend["hosts"] = {}
+            trend["model_eras"] = {}
+            (export_dir / "trend_report.json").write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/daily/turn_flags.jsonl:1: episode_id is missing from episodes export", issues)
+        self.assertIn("retained/daily/trend_report.json: episode_count must match episodes.jsonl", issues)
+        self.assertIn("retained/daily/trend_report.json: flagged_turn_count must match turn_flags.jsonl", issues)
+        self.assertIn("retained/daily/trend_report.json: turn_count must match episodes.jsonl turn_count total", issues)
+        self.assertIn("retained/daily/trend_report.json: hosts must match episodes.jsonl turn_count totals", issues)
+        self.assertIn("retained/daily/trend_report.json: model_eras must match episodes.jsonl turn_count totals", issues)
+        self.assertIn("retained/daily/trend_report.json: flags must match turn_flags.jsonl issue_flags", issues)
 
     def test_forbidden_raw_artifact_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -646,9 +673,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertIn("issue_flags must be safe-token array", "\n".join(MODULE.validate_root(root)))
 
     def test_safe_tokens_reject_compound_secret_names(self) -> None:
-        for token in ("client_secret", "refresh-token", "private_key", "db_password", "OPENAI_API_KEY"):
-            with self.subTest(token=token):
-                self.assertFalse(MODULE.valid_safe_token(token))
+        for sample in ("client_secret", "refresh-token", "private_key", "db_password", "OPENAI_API_KEY"):
+            with self.subTest(sample=sample):
+                self.assertFalse(MODULE.valid_safe_token(sample))
 
     def test_window_start_must_be_before_end(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -875,6 +902,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("README.md", "Internal private IP URL " + risky_private_ip_url() + "\n"),
             ("README.md", "Internal short host URL " + risky_short_host_url() + "\n"),
             ("README.md", "Short secret api_" + "key: abc\n"),
+            ("README.md", "Short secret to" + "ken = abcdefghijklmnop\n"),
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
