@@ -430,6 +430,25 @@ def valid_retained_mode(value: Any) -> bool:
     return isinstance(value, str) and (value in RETAINED_FIXED_MODES or BASELINE_MODE_RE.fullmatch(value) is not None)
 
 
+def expected_mode_from_retained_export_path(relative: Path) -> str | None:
+    parts = relative.parts
+    if len(parts) == 3 and parts[:2] in RETAINED_EXPORT_DIRS:
+        return parts[1]
+    return None
+
+
+def validate_expected_mode(value: Any, expected_mode: str | None, label: str) -> list[str]:
+    if expected_mode is None:
+        return []
+    if expected_mode == "baseline":
+        if not isinstance(value, str) or BASELINE_MODE_RE.fullmatch(value) is None:
+            return [f"{label} must match retained/baseline export directory"]
+        return []
+    if value != expected_mode:
+        return [f"{label} must match retained/{expected_mode} export directory"]
+    return []
+
+
 def valid_retained_model_id(value: Any) -> bool:
     return isinstance(value, str) and value in RETAINED_MODEL_IDS
 
@@ -701,7 +720,7 @@ def validate_turn_flag(row: Any) -> list[str]:
     return issues
 
 
-def validate_trend(data: Any) -> list[str]:
+def validate_trend(data: Any, *, expected_mode: str | None = None) -> list[str]:
     if not isinstance(data, dict):
         return ["trend must be an object"]
     issues = unexpected_keys(data, TREND_KEYS) + missing_keys(data, TREND_KEYS)
@@ -710,6 +729,8 @@ def validate_trend(data: Any) -> list[str]:
     if data.get("schema_version") != 1:
         issues.append("trend schema_version must be 1")
     issues.extend(validate_window(data.get("window")))
+    window = data.get("window") if isinstance(data.get("window"), dict) else {}
+    issues.extend(validate_expected_mode(window.get("mode"), expected_mode, "trend window.mode"))
     for key in ("turn_count", "flagged_turn_count", "episode_count"):
         if not valid_non_negative_int(data.get(key)):
             issues.append(f"{key} must be a non-negative integer")
@@ -722,7 +743,7 @@ def validate_trend(data: Any) -> list[str]:
     return issues
 
 
-def validate_manifest(data: Any) -> list[str]:
+def validate_manifest(data: Any, *, expected_mode: str | None = None) -> list[str]:
     issues: list[str] = []
     if not isinstance(data, dict):
         return ["manifest must be an object"]
@@ -739,6 +760,10 @@ def validate_manifest(data: Any) -> list[str]:
     if not valid_retained_mode(data.get("mode")):
         issues.append("manifest mode must be an allowed retained mode")
     issues.extend(validate_window(data.get("window")))
+    window = data.get("window") if isinstance(data.get("window"), dict) else {}
+    if isinstance(window, dict) and window.get("mode") != data.get("mode"):
+        issues.append("manifest mode must match window.mode")
+    issues.extend(validate_expected_mode(data.get("mode"), expected_mode, "manifest mode"))
     if not isinstance(data.get("sources"), list) or not data.get("sources"):
         issues.append("manifest sources must be a non-empty array")
     else:
@@ -779,9 +804,11 @@ def validate_root(root: Path) -> list[str]:
                 data = parse_json(path)
                 json_kind = allowed_retained_json_artifact(relative)
                 if json_kind == "manifest":
-                    issues.extend(f"{relative}: {issue}" for issue in validate_manifest(data))
+                    expected_mode = expected_mode_from_retained_export_path(relative)
+                    issues.extend(f"{relative}: {issue}" for issue in validate_manifest(data, expected_mode=expected_mode))
                 elif json_kind == "trend":
-                    issues.extend(f"{relative}: {issue}" for issue in validate_trend(data))
+                    expected_mode = expected_mode_from_retained_export_path(relative)
+                    issues.extend(f"{relative}: {issue}" for issue in validate_trend(data, expected_mode=expected_mode))
                 elif relative.parts[0] in {"data", "reports"} or not allowed_infrastructure_artifact(relative):
                     issues.append(f"{relative}: unexpected JSON artifact")
                     if contains_risky_key(data):

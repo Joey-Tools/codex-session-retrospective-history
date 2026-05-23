@@ -743,6 +743,40 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             self.assertEqual(MODULE.validate_root(root), [])
 
+    def test_manifest_mode_must_match_window_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            manifest_path = export_dir / "retained_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["window"]["mode"] = "weekly"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/daily/retained_manifest.json: manifest mode must match window.mode", issues)
+
+    def test_flat_retained_export_mode_must_match_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            trend_path = export_dir / "trend_report.json"
+            trend = json.loads(trend_path.read_text(encoding="utf-8"))
+            trend["window"]["mode"] = "weekly"
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+            manifest_path = export_dir / "retained_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["mode"] = "weekly"
+            manifest["window"]["mode"] = "weekly"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/daily/trend_report.json: trend window.mode must match retained/daily export directory", issues)
+        self.assertIn("retained/daily/retained_manifest.json: manifest mode must match retained/daily export directory", issues)
+
     def test_customer_like_modes_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
