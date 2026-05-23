@@ -157,8 +157,22 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             path.write_text(json.dumps(manifest), encoding="utf-8")
 
             issues = "\n".join(MODULE.validate_root(root))
-            self.assertIn("unexpected field: worklist", issues)
+            self.assertIn("unexpected field is not allowed", issues)
             self.assertIn("manifest retained text contains raw/sensitive evidence", issues)
+
+    def test_manifest_unknown_risky_key_is_rejected_without_echoing_key(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            risky_key = "/Users/hoteng/.codex/sessions/2026/05/22/rollout.jsonl"
+            manifest = valid_manifest() | {risky_key: "opaque"}
+            path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("unexpected field is not allowed", issues)
+            self.assertIn("manifest JSON key contains raw/sensitive evidence", issues)
+            self.assertNotIn(risky_key, issues)
 
     def test_jsonl_extra_raw_fields_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -182,7 +196,35 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
-            self.assertIn("unexpected field: raw_path", "\n".join(MODULE.validate_root(root)))
+            self.assertIn("unexpected field is not allowed", "\n".join(MODULE.validate_root(root)))
+
+    def test_jsonl_unknown_risky_key_is_rejected_without_echoing_key(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            risky_key = "HTTPS://internal.example/path"
+            row = {
+                "episode_id": "episode_ref_v1:" + "a" * 20,
+                "host": "local",
+                "session_id": "session_ref_v1:" + "b" * 20,
+                "start": "2026-05-21T00:00:00Z",
+                "end": "2026-05-21T01:00:00Z",
+                "cwd": None,
+                "model_era": "unknown",
+                "topic": "Redacted topic",
+                "turn_count": 1,
+                "friction_flags": [],
+                "outcome": "needs_review",
+                "work_report_hint": None,
+                risky_key: "opaque",
+            }
+            path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("unexpected field is not allowed", issues)
+            self.assertIn("episode JSON key contains raw/sensitive evidence", issues)
+            self.assertNotIn(risky_key, issues)
 
     def test_unexpected_text_artifact_locations_are_rejected_and_scanned(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

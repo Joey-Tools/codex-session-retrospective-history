@@ -275,6 +275,18 @@ def contains_risky_text(value: Any) -> bool:
     return False
 
 
+def contains_risky_key(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if isinstance(key, str) and contains_risky_text(key):
+                return True
+            if contains_risky_key(child):
+                return True
+    if isinstance(value, list):
+        return any(contains_risky_key(child) for child in value)
+    return False
+
+
 def contains_raw_path_fields(value: Any) -> bool:
     if isinstance(value, dict):
         for key, child in value.items():
@@ -288,7 +300,7 @@ def contains_raw_path_fields(value: Any) -> bool:
 
 
 def unexpected_keys(row: dict[str, Any], allowed: frozenset[str]) -> list[str]:
-    return [f"unexpected field: {key}" for key in sorted(set(row) - allowed)]
+    return ["unexpected field is not allowed"] if set(row) - allowed else []
 
 
 def missing_keys(row: dict[str, Any], required: frozenset[str]) -> list[str]:
@@ -483,6 +495,8 @@ def validate_episode(row: Any) -> list[str]:
     issues.extend(missing_keys(row, EPISODE_KEYS))
     if contains_raw_path_fields(row):
         issues.append("episode contains raw root/path field")
+    if contains_risky_key(row):
+        issues.append("episode JSON key contains raw/sensitive evidence")
     if not EPISODE_REF_RE.fullmatch(str(row.get("episode_id", ""))):
         issues.append("episode_id must be episode_ref_v1")
     if not valid_safe_token(row.get("host")):
@@ -515,6 +529,8 @@ def validate_turn_flag(row: Any) -> list[str]:
     issues.extend(missing_keys(row, TURN_FLAG_KEYS))
     if contains_raw_path_fields(row):
         issues.append("turn flag contains raw root/path field")
+    if contains_risky_key(row):
+        issues.append("turn flag JSON key contains raw/sensitive evidence")
     if not TURN_REF_RE.fullmatch(str(row.get("turn_id", ""))):
         issues.append("turn_id must be turn_ref_v1")
     if not EPISODE_REF_RE.fullmatch(str(row.get("episode_id", ""))):
@@ -545,6 +561,8 @@ def validate_trend(data: Any) -> list[str]:
     if not isinstance(data, dict):
         return ["trend must be an object"]
     issues = unexpected_keys(data, TREND_KEYS) + missing_keys(data, TREND_KEYS)
+    if contains_risky_key(data):
+        issues.append("trend JSON key contains raw/sensitive evidence")
     if data.get("schema_version") != 1:
         issues.append("trend schema_version must be 1")
     issues.extend(validate_window(data.get("window")))
@@ -565,6 +583,8 @@ def validate_manifest(data: Any) -> list[str]:
     issues.extend(missing_keys(data, MANIFEST_KEYS))
     if contains_raw_path_fields(data):
         issues.append("manifest contains raw root/path field")
+    if contains_risky_key(data):
+        issues.append("manifest JSON key contains raw/sensitive evidence")
     if contains_risky_text(data):
         issues.append("manifest retained text contains raw/sensitive evidence")
     if data.get("schema_version") != 1:
@@ -611,6 +631,8 @@ def validate_root(root: Path) -> list[str]:
                     issues.extend(f"{relative}: {issue}" for issue in validate_trend(data))
                 elif relative.parts[0] in {"data", "reports"} or not allowed_infrastructure_artifact(relative):
                     issues.append(f"{relative}: unexpected JSON artifact")
+                    if contains_risky_key(data):
+                        issues.append(f"{relative}: JSON key contains raw/sensitive evidence")
                     if contains_risky_text(data):
                         issues.append(f"{relative}: retained text contains raw/sensitive evidence")
             elif suffix == ".jsonl":

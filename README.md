@@ -12,16 +12,23 @@ workflow patterns, repo names, and operational context.
 reports/
   daily/YYYY/MM/DD.md
   weekly/YYYY/MM/DD.md
-  baseline/90-day-windows/*.md
+  baseline/90-day-windows/YYYY-MM-DD_to_YYYY-MM-DD.md
 data/
-  episodes/YYYY/MM/*.jsonl
-  turn_flags/YYYY/MM/*.jsonl
-  trends/*.json
-  manifests/YYYY/MM/*.json
+  episodes/YYYY/MM/episodes.jsonl
+  turn_flags/YYYY/MM/turn_flags.jsonl
+  trends/YYYY/MM/trend_report.json
+  manifests/YYYY/MM/retained_manifest.json
+retained/
+  daily/{episodes.jsonl,turn_flags.jsonl,trend_report.json,retained_manifest.json}
+  weekly/{episodes.jsonl,turn_flags.jsonl,trend_report.json,retained_manifest.json}
+  baseline/{episodes.jsonl,turn_flags.jsonl,trend_report.json,retained_manifest.json}
 schemas/
   session-retrospective-v1.schema.json
   retained-manifest-v1.schema.json
 ```
+
+Artifact basenames are fixed to avoid leaking customer, repository, host,
+session, or raw topic identifiers through Git paths.
 
 ## Data Policy
 
