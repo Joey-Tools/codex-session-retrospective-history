@@ -62,6 +62,7 @@ VALID_RETAINED_SUFFIXES = TEXT_ARTIFACT_SUFFIXES
 STRIPPABLE_ARTIFACT_SUFFIXES = TEXT_ARTIFACT_SUFFIXES | COMPRESSED_ARTIFACT_SUFFIXES
 ROOT_DOC_FILES = frozenset({".gitignore", "AGENTS.md", "README.md", "data/README.md", "reports/README.md"})
 WORKFLOW_SUFFIXES = frozenset({".yaml", ".yml"})
+SCHEMA_FILES = frozenset({"retained-manifest-v1.schema.json", "session-retrospective-v1.schema.json"})
 EPISODE_KEYS = frozenset(
     {
         "episode_id",
@@ -323,7 +324,7 @@ def allowed_infrastructure_artifact(relative: Path) -> bool:
     if parts[0] == "scripts":
         return len(parts) == 2 and relative.suffix.lower() == ".py"
     if parts[0] == "schemas":
-        return len(parts) == 2 and relative.name.endswith(".schema.json")
+        return len(parts) == 2 and relative.name in SCHEMA_FILES
     if parts[0] == "tests":
         return len(parts) == 2 and relative.suffix.lower() == ".py"
     return False
@@ -343,7 +344,7 @@ def allowed_retained_text_artifact(relative: Path) -> bool:
             and re.fullmatch(r"\d{2}", Path(day_file).stem)
         )
     if len(parts) == 4 and parts[:3] == ("reports", "baseline", "90-day-windows"):
-        return relative.suffix.lower() == ".md"
+        return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}_to_\d{4}-\d{2}-\d{2}\.md", parts[3]))
     return False
 
 
@@ -353,18 +354,18 @@ def valid_year_month(parts: tuple[str, ...], start: int) -> bool:
 
 def allowed_retained_json_artifact(relative: Path) -> str | None:
     parts = relative.parts
-    if len(parts) == 5 and parts[:2] == ("data", "trends") and valid_year_month(parts, 2) and relative.suffix.lower() == ".json":
+    if len(parts) == 5 and parts[:2] == ("data", "trends") and valid_year_month(parts, 2) and relative.name == "trend_report.json":
         return "trend"
-    if len(parts) == 5 and parts[:2] == ("data", "manifests") and valid_year_month(parts, 2) and relative.suffix.lower() == ".json":
+    if len(parts) == 5 and parts[:2] == ("data", "manifests") and valid_year_month(parts, 2) and relative.name == "retained_manifest.json":
         return "manifest"
     return None
 
 
 def allowed_retained_jsonl_artifact(relative: Path) -> str | None:
     parts = relative.parts
-    if len(parts) == 5 and parts[:2] == ("data", "episodes") and valid_year_month(parts, 2) and relative.suffix.lower() == ".jsonl":
+    if len(parts) == 5 and parts[:2] == ("data", "episodes") and valid_year_month(parts, 2) and relative.name == "episodes.jsonl":
         return "episode"
-    if len(parts) == 5 and parts[:2] == ("data", "turn_flags") and valid_year_month(parts, 2) and relative.suffix.lower() == ".jsonl":
+    if len(parts) == 5 and parts[:2] == ("data", "turn_flags") and valid_year_month(parts, 2) and relative.name == "turn_flags.jsonl":
         return "turn_flag"
     return None
 

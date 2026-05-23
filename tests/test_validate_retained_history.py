@@ -217,6 +217,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "data/manifests/2026/05/worklist.txt",
             "reports/misc/notes.md",
             "reports/daily/2026/05/08.txt",
+            "reports/baseline/90-day-windows/customer-acme.md",
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
@@ -228,7 +229,15 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     self.assertIn("unexpected retained text artifact location", "\n".join(MODULE.validate_root(root)))
 
     def test_unknown_json_artifacts_are_rejected(self) -> None:
-        for relative_path in ("data/worklist.json", "data/source-map.JSON", "reports/weekly/notes.json", "data/trends/customer-acme/trend_report.json"):
+        for relative_path in (
+            "data/worklist.json",
+            "data/source-map.JSON",
+            "reports/weekly/notes.json",
+            "data/trends/customer-acme/trend_report.json",
+            "data/trends/2026/05/customer-acme.json",
+            "data/manifests/2026/05/customer-acme.json",
+            "schemas/customer-acme.schema.json",
+        ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
                     root = Path(raw)
@@ -239,7 +248,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     self.assertIn("unexpected JSON artifact", "\n".join(MODULE.validate_root(root)))
 
     def test_unknown_jsonl_artifacts_are_rejected(self) -> None:
-        for relative_path in ("data/episodes/customer-acme/episodes.jsonl", "data/turn_flags/customer-acme/turn_flags.jsonl"):
+        for relative_path in (
+            "data/episodes/customer-acme/episodes.jsonl",
+            "data/episodes/2026/05/customer-acme.jsonl",
+            "data/turn_flags/customer-acme/turn_flags.jsonl",
+            "data/turn_flags/2026/05/session_id-rawabcdef123456.jsonl",
+        ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
                     root = Path(raw)
