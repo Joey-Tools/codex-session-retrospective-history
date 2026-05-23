@@ -12,6 +12,7 @@ import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "validate_retained_history.py"
 SCHEMA = Path(__file__).resolve().parents[1] / "schemas" / "session-retrospective-v1.schema.json"
+MANIFEST_SCHEMA = Path(__file__).resolve().parents[1] / "schemas" / "retained-manifest-v1.schema.json"
 SPEC = importlib.util.spec_from_file_location("validate_retained_history", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC is not None
@@ -112,6 +113,21 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
 
         self.assertIn({"$ref": "#/$defs/manifest"}, schema["oneOf"])
+
+    def test_schema_host_allowlist_matches_validator(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        manifest_schema = json.loads(MANIFEST_SCHEMA.read_text(encoding="utf-8"))
+        expected = sorted(MODULE.RETAINED_HOSTS)
+
+        self.assertEqual(sorted(schema["$defs"]["retained_host"]["enum"]), expected)
+        self.assertEqual(sorted(manifest_schema["$defs"]["retained_host"]["enum"]), expected)
+        self.assertEqual(schema["$defs"]["episode"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
+        self.assertEqual(schema["$defs"]["turn_flag"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
+        self.assertEqual(schema["$defs"]["source_summary"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
+        self.assertEqual(schema["$defs"]["coverage_gap"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
+        self.assertEqual(schema["$defs"]["trend"]["properties"]["hosts"], {"$ref": "#/$defs/retained_host_count_map"})
+        self.assertEqual(manifest_schema["$defs"]["source_summary"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
+        self.assertEqual(manifest_schema["$defs"]["coverage_gap"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
 
     def test_clean_report_passes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
