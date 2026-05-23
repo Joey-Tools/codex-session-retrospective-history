@@ -156,8 +156,10 @@ COVERAGE_REASONS = frozenset(
         "session_index_missing",
         "session_index_unreadable",
         "source_root_missing",
+        "source_root_symlink",
         "stale_host",
         "unreachable",
+        "unsafe_source_artifact",
     }
 )
 MAX_MANIFEST_SOURCES = 16

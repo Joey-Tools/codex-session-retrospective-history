@@ -74,8 +74,10 @@
             "session_index_missing",
             "session_index_unreadable",
             "source_root_missing",
+            "source_root_symlink",
             "stale_host",
-            "unreachable"
+            "unreachable",
+            "unsafe_source_artifact"
           ]
         },
         "root_ref": {

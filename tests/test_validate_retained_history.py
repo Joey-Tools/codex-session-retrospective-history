@@ -1013,6 +1013,20 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             self.assertIn("hosts key must be an allowed retained host", "\n".join(MODULE.validate_root(root)))
 
+    def test_source_safety_coverage_reasons_are_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = valid_manifest()
+            manifest["coverage_gaps"] = [
+                {"host": "local", "reason": "source_root_symlink", "root_ref": "path_ref_v1:aaaaaaaaaaaaaaaa"},
+                {"host": "custom_source", "reason": "unsafe_source_artifact", "root_ref": "path_ref_v1:aaaaaaaaaaaaaaaa"},
+            ]
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            self.assertEqual(MODULE.validate_root(root), [])
+
     def test_count_maps_are_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
