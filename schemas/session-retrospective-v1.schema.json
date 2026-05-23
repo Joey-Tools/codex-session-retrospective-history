@@ -219,11 +219,14 @@
             "pattern": "\\b(?:[Hh][Tt][Tt][Pp][Ss]?|[Ss][Ss][Hh])://"
           },
           {
-            "pattern": "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
-          },
-          {
-            "pattern": "(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/"
-          },
+              "pattern": "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
+            },
+            {
+              "pattern": "-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"
+            },
+            {
+              "pattern": "(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/"
+            },
           {
             "pattern": "(^|[^A-Za-z0-9_])(?:\\./|\\.\\./)?\\.codex(?:-local|-tmp)?(?:/|\\\\)"
           },

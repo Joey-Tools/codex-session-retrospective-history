@@ -80,6 +80,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "SSH URL ssh://git@example.internal/repo",
             "Raw session pointer Session ID: abc123456",
             "Raw turn pointer turn-id=abc123456",
+            "Private key block -----BEGIN PRIVATE KEY-----\nredacted",
+            "PGP private key block -----BEGIN PGP PRIVATE KEY BLOCK-----\nredacted",
             "Relative source path ./.codex/sessions/2026/05/22/rollout.jsonl",
             "Relative local source path .codex-local/session-retrospective/out/state.json",
             "Relative temp source path .codex-tmp/isolated-review/stdout.log",

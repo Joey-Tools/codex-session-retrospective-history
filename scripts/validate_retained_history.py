@@ -139,6 +139,7 @@ MAX_TOKEN_ARRAY_ITEMS = 16
 MAX_COUNT_MAP_PROPERTIES = 64
 MAX_COUNT = 1_000_000
 RISK_PATTERNS = (
+    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", re.I),
     re.compile(r"\b(?:https?|ssh)://", re.I),
     re.compile(r"\bgit@[A-Za-z0-9_.-]+:"),
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
