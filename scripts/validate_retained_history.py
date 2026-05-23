@@ -329,6 +329,46 @@ def allowed_infrastructure_artifact(relative: Path) -> bool:
     return False
 
 
+def allowed_retained_text_artifact(relative: Path) -> bool:
+    path_text = relative.as_posix()
+    if path_text in {"data/README.md", "reports/README.md"}:
+        return True
+    parts = relative.parts
+    if len(parts) == 5 and parts[0] == "reports" and parts[1] in {"daily", "weekly"}:
+        year, month, day_file = parts[2], parts[3], parts[4]
+        return bool(
+            re.fullmatch(r"\d{4}", year)
+            and re.fullmatch(r"\d{2}", month)
+            and relative.suffix.lower() == ".md"
+            and re.fullmatch(r"\d{2}", Path(day_file).stem)
+        )
+    if len(parts) == 4 and parts[:3] == ("reports", "baseline", "90-day-windows"):
+        return relative.suffix.lower() == ".md"
+    return False
+
+
+def valid_year_month(parts: tuple[str, ...], start: int) -> bool:
+    return len(parts) > start + 1 and bool(re.fullmatch(r"\d{4}", parts[start]) and re.fullmatch(r"\d{2}", parts[start + 1]))
+
+
+def allowed_retained_json_artifact(relative: Path) -> str | None:
+    parts = relative.parts
+    if len(parts) == 5 and parts[:2] == ("data", "trends") and valid_year_month(parts, 2) and relative.suffix.lower() == ".json":
+        return "trend"
+    if len(parts) == 5 and parts[:2] == ("data", "manifests") and valid_year_month(parts, 2) and relative.suffix.lower() == ".json":
+        return "manifest"
+    return None
+
+
+def allowed_retained_jsonl_artifact(relative: Path) -> str | None:
+    parts = relative.parts
+    if len(parts) == 5 and parts[:2] == ("data", "episodes") and valid_year_month(parts, 2) and relative.suffix.lower() == ".jsonl":
+        return "episode"
+    if len(parts) == 5 and parts[:2] == ("data", "turn_flags") and valid_year_month(parts, 2) and relative.suffix.lower() == ".jsonl":
+        return "turn_flag"
+    return None
+
+
 def validate_safe_token_array(value: Any, label: str, *, min_items: int = 0) -> list[str]:
     if not isinstance(value, list):
         return [f"{label} must be safe-token array"]
@@ -563,9 +603,10 @@ def validate_root(root: Path) -> list[str]:
         try:
             if suffix == ".json":
                 data = parse_json(path)
-                if relative.parts[:2] == ("data", "manifests"):
+                json_kind = allowed_retained_json_artifact(relative)
+                if json_kind == "manifest":
                     issues.extend(f"{relative}: {issue}" for issue in validate_manifest(data))
-                elif relative.parts[:2] == ("data", "trends"):
+                elif json_kind == "trend":
                     issues.extend(f"{relative}: {issue}" for issue in validate_trend(data))
                 elif relative.parts[0] in {"data", "reports"} or not allowed_infrastructure_artifact(relative):
                     issues.append(f"{relative}: unexpected JSON artifact")
@@ -573,13 +614,16 @@ def validate_root(root: Path) -> list[str]:
                         issues.append(f"{relative}: retained text contains raw/sensitive evidence")
             elif suffix == ".jsonl":
                 rows = parse_jsonl(path)
-                validator = validate_episode if relative.parts[:2] == ("data", "episodes") else validate_turn_flag if relative.parts[:2] == ("data", "turn_flags") else None
-                if validator is None:
+                jsonl_kind = allowed_retained_jsonl_artifact(relative)
+                if jsonl_kind is None:
                     issues.append(f"{relative}: unexpected JSONL artifact")
                 else:
+                    validator = validate_episode if jsonl_kind == "episode" else validate_turn_flag
                     for index, row in enumerate(rows, 1):
                         issues.extend(f"{relative}:{index}: {issue}" for issue in validator(row))
             elif relative.parts[0] in {"data", "reports"} and suffix in {".md", ".txt"}:
+                if not allowed_retained_text_artifact(relative):
+                    issues.append(f"{relative}: unexpected retained text artifact location")
                 if contains_risky_text(path.read_text(encoding="utf-8")):
                     issues.append(f"{relative}: retained text contains raw/sensitive evidence")
             elif relative.parts[0] in {"data", "reports"} and suffix not in VALID_RETAINED_SUFFIXES:

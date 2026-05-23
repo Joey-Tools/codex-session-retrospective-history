@@ -562,6 +562,9 @@
   "description": "Schema bundle for redacted Codex session retrospective artifacts.",
   "oneOf": [
     {
+      "$ref": "#/$defs/manifest"
+    },
+    {
       "$ref": "#/$defs/episode"
     },
     {

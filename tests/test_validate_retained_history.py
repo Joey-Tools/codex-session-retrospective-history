@@ -11,6 +11,7 @@ import unittest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "validate_retained_history.py"
+SCHEMA = Path(__file__).resolve().parents[1] / "schemas" / "session-retrospective-v1.schema.json"
 SPEC = importlib.util.spec_from_file_location("validate_retained_history", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC is not None
@@ -45,6 +46,11 @@ def valid_manifest() -> dict:
 
 
 class ValidateRetainedHistoryTests(unittest.TestCase):
+    def test_bundle_schema_includes_manifest_root(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+
+        self.assertIn({"$ref": "#/$defs/manifest"}, schema["oneOf"])
+
     def test_clean_report_passes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -205,8 +211,24 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     self.assertIn("unexpected", issues)
                     self.assertIn("retained text contains raw/sensitive evidence", issues)
 
+    def test_unexpected_retained_text_artifacts_are_rejected_without_risky_text(self) -> None:
+        for relative_path in (
+            "data/source-map.txt",
+            "data/manifests/2026/05/worklist.txt",
+            "reports/misc/notes.md",
+            "reports/daily/2026/05/08.txt",
+        ):
+            with self.subTest(relative_path=relative_path):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    artifact = root / relative_path
+                    artifact.parent.mkdir(parents=True)
+                    artifact.write_text("path_ref_v1:aaaaaaaaaaaaaaaa\n", encoding="utf-8")
+
+                    self.assertIn("unexpected retained text artifact location", "\n".join(MODULE.validate_root(root)))
+
     def test_unknown_json_artifacts_are_rejected(self) -> None:
-        for relative_path in ("data/worklist.json", "data/source-map.JSON", "reports/weekly/notes.json"):
+        for relative_path in ("data/worklist.json", "data/source-map.JSON", "reports/weekly/notes.json", "data/trends/customer-acme/trend_report.json"):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
                     root = Path(raw)
@@ -215,6 +237,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     artifact.write_text(json.dumps({"items": [{"source": "opaque"}]}), encoding="utf-8")
 
                     self.assertIn("unexpected JSON artifact", "\n".join(MODULE.validate_root(root)))
+
+    def test_unknown_jsonl_artifacts_are_rejected(self) -> None:
+        for relative_path in ("data/episodes/customer-acme/episodes.jsonl", "data/turn_flags/customer-acme/turn_flags.jsonl"):
+            with self.subTest(relative_path=relative_path):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    artifact = root / relative_path
+                    artifact.parent.mkdir(parents=True)
+                    artifact.write_text("\n", encoding="utf-8")
+
+                    self.assertIn("unexpected JSONL artifact", "\n".join(MODULE.validate_root(root)))
 
     def test_invalid_jsonl_errors_do_not_include_absolute_paths(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
