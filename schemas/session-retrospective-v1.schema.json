@@ -13,6 +13,29 @@
       },
       "type": "object"
     },
+    "issue_flag": {
+      "enum": [
+        "approval_auth_friction",
+        "context_loss",
+        "failed_command",
+        "safety_privacy_flag",
+        "user_correction",
+        "verification_gap"
+      ],
+      "type": "string"
+    },
+    "issue_flag_count_map": {
+      "additionalProperties": {
+        "maximum": 1000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxProperties": 64,
+      "propertyNames": {
+        "$ref": "#/$defs/issue_flag"
+      },
+      "type": "object"
+    },
     "retained_host_count_map": {
       "additionalProperties": {
         "maximum": 1000000,
@@ -109,7 +132,7 @@
         },
         "friction_flags": {
           "items": {
-            "$ref": "#/$defs/safe_token"
+            "$ref": "#/$defs/issue_flag"
           },
           "maxItems": 16,
           "type": "array"
@@ -312,7 +335,7 @@
             "pattern": "\\b[A-Za-z]:\\\\(?:[Uu][Ss][Ee][Rr][Ss]|[Hh][Oo][Mm][Ee]|[Rr][Oo][Oo][Tt]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]|[Tt][Mm][Pp]|[Vv][Aa][Rr]|[Ee][Tt][Cc]|[Oo][Pp][Tt]|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee][Ss])\\\\"
           },
           {
-            "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?[A-Za-z0-9._-]*(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][._-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy])[A-Za-z0-9._-]*(?:\u0022|')?\\s*[:=]"
+            "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?[A-Za-z0-9._-]*(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt](?:[\\s._-]+[Kk][Ee][Yy])?|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][\\s._-]+[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][\\s._-]+[Kk][Ee][Yy])[A-Za-z0-9._-]*(?:\u0022|')?\\s*[:=]"
           },
           {
             "pattern": "\\b[Bb][Ee][Aa][Rr][Ee][Rr]\\s+[A-Za-z0-9._~+/=-]{12,}\\b"
@@ -330,7 +353,7 @@
             "pattern": "\\b[Rr][Oo][Ll][Ll][Oo][Uu][Tt](?:-[Ss][Uu][Mm][Mm][Aa][Rr][Yy])?-[A-Za-z0-9_.-]+\\.[Jj][Ss][Oo][Nn][Ll]\\b"
           },
           {
-            "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Tt][Uu][Rr][Nn]|[Ee][Pp][Ii][Ss][Oo][Dd][Ee])[-_ ]?[Ii][Dd](?:\u0022|')?\\s*[:=]\\s*(?:\u0022|')?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\\b"
+            "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Tt][Uu][Rr][Nn]|[Ee][Pp][Ii][Ss][Oo][Dd][Ee])[._ -][Ii][Dd](?:\u0022|')?(?:\\s*[:=]\\s*|\\s+)(?:\u0022|')?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\\b"
           },
           {
             "pattern": "\\b(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Tt][Uu][Rr][Nn]|[Ee][Pp][Ii][Ss][Oo][Dd][Ee])[._-][Ii][Dd][._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\\b"
@@ -482,7 +505,7 @@
           "type": "integer"
         },
         "flags": {
-          "$ref": "#/$defs/count_map"
+          "$ref": "#/$defs/issue_flag_count_map"
         },
         "hosts": {
           "$ref": "#/$defs/retained_host_count_map"
@@ -539,7 +562,7 @@
         },
         "issue_flags": {
           "items": {
-            "$ref": "#/$defs/safe_token"
+            "$ref": "#/$defs/issue_flag"
           },
           "maxItems": 16,
           "minItems": 1,

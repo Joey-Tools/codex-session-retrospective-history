@@ -60,6 +60,11 @@ SENSITIVE_TOKEN_RE = re.compile(
     re.I,
 )
 RAW_ID_TOKEN_RE = re.compile(r"\b(?:session|turn|episode)[._-]id[._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\b", re.I)
+RAW_ID_VALUE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])[\"']?(?:session|turn|episode)[._ -]id[\"']?(?:\s*[:=]\s*|\s+)[\"']?"
+    r"(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:|row\.get\b|data\.get\b|value\.get\b)[A-Za-z0-9_.:-]{6,}\b",
+    re.I,
+)
 BASELINE_MODE_RE = re.compile(r"^baseline-[1-9][0-9]{0,3}d$")
 TIMESTAMP_RE = re.compile(
     r"^(?:(?:\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-8])))|(?:(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29))T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$"
@@ -141,6 +146,16 @@ SOURCE_SUMMARY_KEYS = frozenset({"host", "root_ref", "status", "rollout_count", 
 COVERAGE_GAP_KEYS = frozenset({"host", "reason", "root_ref", "bytes"})
 SOURCE_STATUSES = frozenset({"empty", "missing", "ready", "stale"})
 OUTCOMES = frozenset({"needs_review", "no_issue_observed"})
+ISSUE_FLAGS = frozenset(
+    {
+        "approval_auth_friction",
+        "context_loss",
+        "failed_command",
+        "safety_privacy_flag",
+        "user_correction",
+        "verification_gap",
+    }
+)
 COVERAGE_REASONS = frozenset(
     {
         "auth_gated",
@@ -181,7 +196,7 @@ RISK_PATTERNS = (
     re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\", re.I),
     re.compile(
         r"(?<![A-Za-z0-9_])[\"']?"
-        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret|token|api[._-]?key|authorization|private[._-]?key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
+        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]+key|authorization|private[\s._-]+key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
         r"(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]+",
         re.I,
     ),
@@ -190,10 +205,7 @@ RISK_PATTERNS = (
     re.compile(r"(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)"),
     re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
-    re.compile(
-        r"(?<![A-Za-z0-9_])[\"']?(?:session|turn|episode)[-_ ]?id[\"']?\s*[:=]\s*[\"']?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:|row\.get\b|data\.get\b|value\.get\b)[A-Za-z0-9_.:-]{6,}\b",
-        re.I,
-    ),
+    RAW_ID_VALUE_RE,
     RAW_ID_TOKEN_RE,
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
 )
@@ -218,17 +230,14 @@ INFRASTRUCTURE_RISK_PATTERNS = (
     re.compile(
         r"(?<![A-Za-z0-9_])[\"']?"
         r"(?!(?:safe[._-]?token[._-]?re|max[._-]?safe[._-]?token[._-]?length|max[._-]?token[._-]?array[._-]?items|sensitive[._-]?token[._-]?re|risk[._-]?patterns?|infrastructure[._-]?risk[._-]?patterns?|safe[._-]?infrastructure[._-]?lines)[\"']?\s*[:=])"
-        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret|token|api[._-]?key|authorization|private[._-]?key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
+        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]+key|authorization|private[\s._-]+key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
         r"(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]+",
         re.I,
     ),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
-    re.compile(
-        r"(?<![A-Za-z0-9_])[\"']?(?:session|turn|episode)[-_ ]?id[\"']?\s*[:=]\s*[\"']?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:|row\.get\b|data\.get\b|value\.get\b)[A-Za-z0-9_.:-]{6,}\b",
-        re.I,
-    ),
+    RAW_ID_VALUE_RE,
     RAW_ID_TOKEN_RE,
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
 )
@@ -566,6 +575,16 @@ def validate_safe_token_array(value: Any, label: str, *, min_items: int = 0) -> 
     return issues
 
 
+def validate_issue_flag_array(value: Any, label: str, *, min_items: int = 0) -> list[str]:
+    issues = validate_safe_token_array(value, label, min_items=min_items)
+    if isinstance(value, list):
+        for item in value:
+            if item not in ISSUE_FLAGS:
+                issues.append(f"{label} must use allowed issue flags")
+                break
+    return issues
+
+
 def validate_count_map(value: Any, label: str) -> list[str]:
     if not isinstance(value, dict):
         return [f"{label} must be an object"]
@@ -581,6 +600,16 @@ def validate_count_map(value: Any, label: str) -> list[str]:
             issues.append("model_eras key must be an allowed retained model era")
         if not valid_non_negative_int(count):
             issues.append(f"{label} value must be a bounded non-negative integer")
+    return issues
+
+
+def validate_issue_flag_count_map(value: Any, label: str) -> list[str]:
+    issues = validate_count_map(value, label)
+    if isinstance(value, dict):
+        for key in value:
+            if key not in ISSUE_FLAGS:
+                issues.append(f"{label} keys must use allowed issue flags")
+                break
     return issues
 
 
@@ -703,7 +732,7 @@ def validate_episode(row: Any) -> list[str]:
     issues.extend(validate_retained_text(row.get("topic"), "topic"))
     if not valid_non_negative_int(row.get("turn_count")):
         issues.append("turn_count must be a bounded non-negative integer")
-    issues.extend(validate_safe_token_array(row.get("friction_flags"), "friction_flags"))
+    issues.extend(validate_issue_flag_array(row.get("friction_flags"), "friction_flags"))
     if row.get("outcome") not in OUTCOMES:
         issues.append("outcome is invalid")
     issues.extend(validate_retained_text(row.get("work_report_hint"), "work_report_hint", nullable=True))
@@ -742,7 +771,7 @@ def validate_turn_flag(row: Any) -> list[str]:
         issues.append("model_era must be an allowed retained model era")
     for key in ("redacted_user_prompt_summary", "assistant_action_summary", "prompt_improvement"):
         issues.extend(validate_retained_text(row.get(key), key, nullable=(key == "prompt_improvement")))
-    issues.extend(validate_safe_token_array(row.get("issue_flags"), "issue_flags", min_items=1))
+    issues.extend(validate_issue_flag_array(row.get("issue_flags"), "issue_flags", min_items=1))
     return issues
 
 
@@ -763,7 +792,8 @@ def validate_trend(data: Any, *, expected_mode: str | None = None) -> list[str]:
     if valid_non_negative_int(data.get("turn_count")) and valid_non_negative_int(data.get("flagged_turn_count")):
         if data["flagged_turn_count"] > data["turn_count"]:
             issues.append("flagged_turn_count must be less than or equal to turn_count")
-    for key in ("flags", "hosts", "model_eras"):
+    issues.extend(validate_issue_flag_count_map(data.get("flags"), "flags"))
+    for key in ("hosts", "model_eras"):
         issues.extend(validate_count_map(data.get(key), key))
     issues.extend(validate_coverage_gaps(data.get("coverage_gaps")))
     return issues
@@ -920,7 +950,7 @@ def validate_retained_export_consistency(
     for row in turn_flags:
         flags = row.get("issue_flags")
         if isinstance(flags, list):
-            expected_flags.update(flag for flag in flags if valid_safe_token(flag))
+            expected_flags.update(flag for flag in flags if flag in ISSUE_FLAGS)
     if valid_trend_count_map(trend.get("flags")) and trend["flags"] != sorted_counter(expected_flags):
         issues.append(f"{trend_path}: flags must match turn_flags.jsonl issue_flags")
 

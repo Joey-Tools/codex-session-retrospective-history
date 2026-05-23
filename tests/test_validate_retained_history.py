@@ -182,6 +182,22 @@ def risky_episode_pointer() -> str:
     return "episode_" + "id=abc123456"
 
 
+def risky_space_session_pointer() -> str:
+    return "Session " + "ID abc123456"
+
+
+def risky_dotted_session_pointer() -> str:
+    return "session." + "id: abc123456"
+
+
+def risky_space_turn_pointer() -> str:
+    return "turn " + "id abc123456"
+
+
+def risky_dotted_episode_pointer() -> str:
+    return "episode." + "id: abc123456"
+
+
 def risky_compound_session_token() -> str:
     return "session_" + "id_abc123456"
 
@@ -222,14 +238,35 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(manifest_schema["$defs"]["source_summary"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
         self.assertEqual(manifest_schema["$defs"]["coverage_gap"]["properties"]["host"], {"$ref": "#/$defs/retained_coverage_host"})
 
+    def test_schema_coverage_gap_reasons_match_validator(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        manifest_schema = json.loads(MANIFEST_SCHEMA.read_text(encoding="utf-8"))
+        expected = sorted(MODULE.COVERAGE_REASONS)
+
+        self.assertEqual(sorted(schema["$defs"]["coverage_gap"]["properties"]["reason"]["enum"]), expected)
+        self.assertEqual(sorted(manifest_schema["$defs"]["coverage_gap"]["properties"]["reason"]["enum"]), expected)
+
+    def test_schema_issue_flags_match_validator(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        expected = sorted(MODULE.ISSUE_FLAGS)
+
+        self.assertEqual(sorted(schema["$defs"]["issue_flag"]["enum"]), expected)
+        self.assertEqual(schema["$defs"]["episode"]["properties"]["friction_flags"]["items"], {"$ref": "#/$defs/issue_flag"})
+        self.assertEqual(schema["$defs"]["turn_flag"]["properties"]["issue_flags"]["items"], {"$ref": "#/$defs/issue_flag"})
+        self.assertEqual(schema["$defs"]["trend"]["properties"]["flags"], {"$ref": "#/$defs/issue_flag_count_map"})
+
     def test_schema_retained_text_patterns_cover_compound_secrets_and_case_paths(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
-        patterns = "\n".join(item["pattern"] for item in schema["$defs"]["retained_text"]["not"]["anyOf"])
+        schema_patterns = [re.compile(item["pattern"]) for item in schema["$defs"]["retained_text"]["not"]["anyOf"]]
+        patterns = "\n".join(pattern.pattern for pattern in schema_patterns)
 
         self.assertIn("[A-Za-z0-9._-]*(?:", patterns)
-        self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy]", patterns)
+        self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][\\s._-]+[Kk][Ee][Yy]", patterns)
         self.assertIn("[Uu][Ss][Ee][Rr][Ss]", patterns)
         self.assertIn("[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]", patterns)
+        for sample in ("api " + "key: abc", "secret " + "key: abc", "private " + "key: abc"):
+            with self.subTest(sample=sample):
+                self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
 
     def test_schema_raw_id_pattern_is_fully_case_insensitive(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
@@ -244,6 +281,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "SESS" + "ION_ID: abc123456",
             "TURN" + "_ID=abc123456",
             "EPIS" + "ODE ID: abc123456",
+            risky_space_session_pointer(),
+            risky_dotted_session_pointer(),
+            risky_space_turn_pointer(),
+            risky_dotted_episode_pointer(),
         ):
             with self.subTest(text=text):
                 self.assertIsNotNone(raw_id_re.search(text))
@@ -540,6 +581,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "Raw session pointer " + risky_session_pointer(),
             "Raw turn pointer " + risky_turn_pointer(),
             "Raw episode pointer " + risky_episode_pointer(),
+            "Raw session pointer " + risky_space_session_pointer(),
+            "Raw dotted session pointer " + risky_dotted_session_pointer(),
+            "Raw turn pointer " + risky_space_turn_pointer(),
+            "Raw dotted episode pointer " + risky_dotted_episode_pointer(),
             "Raw compound session pointer " + risky_compound_session_token(),
             "Raw compound turn pointer " + risky_compound_turn_token(),
             "Raw compound episode pointer " + risky_compound_episode_token(),
@@ -549,6 +594,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             '{"client_sec' + 'ret":"redactedvalue"}',
             '{"db_pass' + 'word":"redactedvalue"}',
             '{"api_' + 'key":"abc"}',
+            "api " + "key: abc",
+            "secret " + "key: abc",
+            "private " + "key: abc",
             "pass" + "word=12345",
             '{"private_' + 'key":"redactedvalue"}',
             '{"session_' + 'id":"abc123456"}',
@@ -898,6 +946,31 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
             self.assertIn("issue_flags must be safe-token array", "\n".join(MODULE.validate_root(root)))
+
+    def test_retained_flags_reject_private_identifiers(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = valid_episode()
+            episode["friction_flags"] = ["customer_acme"]
+            episode_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            episode_path.parent.mkdir(parents=True)
+            episode_path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+            turn = valid_turn_flag()
+            turn["issue_flags"] = ["incident_123"]
+            turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            turn_path.parent.mkdir(parents=True)
+            turn_path.write_text(json.dumps(turn) + "\n", encoding="utf-8")
+            trend = valid_trend()
+            trend["flags"] = {"customer_acme": 1}
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("friction_flags must use allowed issue flags", issues)
+        self.assertIn("issue_flags must use allowed issue flags", issues)
+        self.assertIn("flags keys must use allowed issue flags", issues)
 
     def test_safe_tokens_reject_compound_secret_names(self) -> None:
         for sample in (
