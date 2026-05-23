@@ -196,7 +196,7 @@ MAX_TOKEN_ARRAY_ITEMS = 16
 MAX_COUNT_MAP_PROPERTIES = 64
 MAX_COUNT = 1_000_000
 RETAINED_SAFETY_TEXT_RE = re.compile(
-    r"(?:\b(?:secret|token|credential|password|private key|production|destructive|rm -rf|reset --hard|customer data|privacy|pii)\b|"
+    r"(?:\b(?:secret|token|credential|password|private key|production|destructive|rm -rf|reset --hard|customer data|pii)\b|"
     r"客户|客户数据|凭据|凭证|密钥|生产|破坏性)",
     re.I,
 )
@@ -254,6 +254,8 @@ INFRASTRUCTURE_RISK_PATTERNS = (
     ),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)"),
+    re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
     PRIVATE_IPV4_RE,
     PRIVATE_IPV6_RE,

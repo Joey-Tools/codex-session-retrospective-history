@@ -210,6 +210,14 @@ def risky_secret_token() -> str:
     return "s" + "k-" + "proj-" + "abcdefghijklmnop123456"
 
 
+def risky_raw_hash() -> str:
+    return "a" * 64
+
+
+def risky_uuid() -> str:
+    return "12345678-" + "1234-" + "1234-" + "1234-" + "123456789abc"
+
+
 def risky_session_pointer() -> str:
     return "Session " + "ID: abc123456"
 
@@ -898,10 +906,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             root = Path(raw)
             data_readme = root / "data" / "README.md"
             reports_readme = root / "reports" / "README.md"
+            weekly_report = root / "reports" / "weekly" / "2026" / "05" / "08.md"
             data_readme.parent.mkdir(parents=True)
             reports_readme.parent.mkdir(parents=True)
+            weekly_report.parent.mkdir(parents=True)
             data_readme.write_text("Retained summaries may count safety/privacy flags.\n", encoding="utf-8")
             reports_readme.write_text("Do not retain customer data or PII in report text.\n", encoding="utf-8")
+            weekly_report.write_text("Summarized safety/privacy flags without raw evidence.\n", encoding="utf-8")
 
             self.assertEqual(MODULE.validate_root(root), [])
 
@@ -1670,6 +1681,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("README.md", "Redacted-looking api" + "Key: [REDACTED]\n"),
             ("README.md", "Empty private" + "Key = \"\"\n"),
             ("README.md", "Placeholder private" + "Key = <redacted>\n"),
+            ("README.md", "Raw hash " + risky_raw_hash() + "\n"),
+            ("README.md", "Raw UUID " + risky_uuid() + "\n"),
+            ("scripts/probe.py", "# Raw hash " + risky_raw_hash() + "\n"),
+            ("tests/probe.py", "# Raw UUID " + risky_uuid() + "\n"),
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
@@ -1740,7 +1755,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "episode_count": 1,
                 "flags": {risky_secret_token(): 1},
                 "hosts": {risky_internal_host(): 1},
-                "model_eras": {"01234567-89ab-cdef-0123-456789abcdef": 1},
+                "model_eras": {risky_uuid(): 1},
                 "coverage_gaps": [],
             }
             trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"

@@ -344,7 +344,7 @@
             "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?[A-Za-z0-9._-]*(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt](?:[\\s._-]+[Kk][Ee][Yy])?|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][\\s._-]*[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][\\s._-]*[Kk][Ee][Yy])[A-Za-z0-9._-]*(?:\u0022|')?\\s*[:=]"
           },
           {
-            "pattern": "(?:\\b(?:[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]\\s+[Kk][Ee][Yy]|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn]|[Dd][Ee][Ss][Tt][Rr][Uu][Cc][Tt][Ii][Vv][Ee]|rm -rf|reset --hard|[Cc][Uu][Ss][Tt][Oo][Mm][Ee][Rr]\\s+[Dd][Aa][Tt][Aa]|[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Pp][Ii][Ii])\\b|客户|客户数据|凭据|凭证|密钥|生产|破坏性)"
+            "pattern": "(?:\\b(?:[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]\\s+[Kk][Ee][Yy]|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn]|[Dd][Ee][Ss][Tt][Rr][Uu][Cc][Tt][Ii][Vv][Ee]|rm -rf|reset --hard|[Cc][Uu][Ss][Tt][Oo][Mm][Ee][Rr]\\s+[Dd][Aa][Tt][Aa]|[Pp][Ii][Ii])\\b|客户|客户数据|凭据|凭证|密钥|生产|破坏性)"
           },
           {
             "pattern": "\\b[Bb][Ee][Aa][Rr][Ee][Rr]\\s+[A-Za-z0-9._~+/=-]{12,}\\b"
