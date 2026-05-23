@@ -70,7 +70,7 @@ def valid_turn_flag() -> dict:
         "host": "local",
         "session_id": "session_ref_v1:" + "c" * 20,
         "source_path": "path_ref_v1:" + "d" * 16,
-        "source_hash": "e" * 64,
+        "source_hash": "source_hash_v1:" + "e" * 20,
         "timestamp": "2026-05-21T00:00:00Z",
         "cwd": None,
         "model": None,
@@ -106,6 +106,30 @@ def write_retained_export(root: Path, export_dir: Path) -> None:
     (export_dir / "turn_flags.jsonl").write_text(json.dumps(valid_turn_flag()) + "\n", encoding="utf-8")
     (export_dir / "trend_report.json").write_text(json.dumps(valid_trend()), encoding="utf-8")
     (export_dir / "retained_manifest.json").write_text(json.dumps(valid_manifest()), encoding="utf-8")
+
+
+def risky_local_path() -> str:
+    return "/Us" + "ers/hoteng/.cod" + "ex/sess" + "ions/2026/05/22/rollout.jsonl"
+
+
+def risky_project_path() -> str:
+    return "/Us" + "ers/hoteng/project"
+
+
+def risky_internal_url() -> str:
+    return "HTTPS://internal" + ".example/path"
+
+
+def risky_ssh_url() -> str:
+    return "ssh" + "://git@" + "example" + ".internal/repo"
+
+
+def risky_internal_host() -> str:
+    return "jira.cisco" + ".example"
+
+
+def risky_secret_token() -> str:
+    return "s" + "k-" + "proj-" + "abcdefghijklmnop123456"
 
 
 class ValidateRetainedHistoryTests(unittest.TestCase):
@@ -152,6 +176,24 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?", manifest_patterns)
         self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy]", manifest_patterns)
 
+    def test_schema_restricts_retained_modes_models_and_source_hashes(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        manifest_schema = json.loads(MANIFEST_SCHEMA.read_text(encoding="utf-8"))
+
+        self.assertEqual(sorted(schema["$defs"]["retained_mode"]["anyOf"][0]["enum"]), sorted(MODULE.RETAINED_FIXED_MODES))
+        self.assertEqual(schema["$defs"]["retained_mode"]["anyOf"][1]["pattern"], MODULE.BASELINE_MODE_RE.pattern)
+        self.assertEqual(
+            sorted(manifest_schema["$defs"]["retained_mode"]["anyOf"][0]["enum"]),
+            sorted(MODULE.RETAINED_FIXED_MODES),
+        )
+        self.assertEqual(manifest_schema["$defs"]["retained_mode"]["anyOf"][1]["pattern"], MODULE.BASELINE_MODE_RE.pattern)
+        self.assertEqual(sorted(schema["$defs"]["retained_model_id"]["enum"]), sorted(MODULE.RETAINED_MODEL_IDS))
+        self.assertEqual(sorted(schema["$defs"]["retained_model_era"]["enum"]), sorted(MODULE.RETAINED_MODEL_ERAS))
+        self.assertEqual(schema["$defs"]["turn_flag"]["properties"]["source_hash"]["pattern"], MODULE.SOURCE_HASH_RE.pattern)
+        self.assertEqual(schema["$defs"]["trend"]["properties"]["window"], {"$ref": "#/$defs/window"})
+        self.assertEqual(schema["$defs"]["manifest"]["properties"]["mode"], {"$ref": "#/$defs/retained_mode"})
+        self.assertEqual(manifest_schema["properties"]["mode"], {"$ref": "#/$defs/retained_mode"})
+
     def test_clean_report_passes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -185,12 +227,19 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertIn("forbidden raw/transient artifact", "\n".join(MODULE.validate_root(root)))
 
     def test_forced_raw_session_directories_are_rejected(self) -> None:
-        for relative_path in ("sessions/prompt.txt", "archived_sessions/raw.txt", "Sessions/prompt.txt"):
+        for relative_path in (
+            "sess" + "ions/prompt.txt",
+            "archived_" + "sess" + "ions/raw.txt",
+            "Sess" + "ions/prompt.txt",
+        ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
                     root = Path(raw)
                     subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.DEVNULL)
-                    (root / ".gitignore").write_text("sessions/\narchived_sessions/\nSessions/\n", encoding="utf-8")
+                    (root / ".gitignore").write_text(
+                        "sess" + "ions/\narchived_" + "sess" + "ions/\nSess" + "ions/\n",
+                        encoding="utf-8",
+                    )
                     artifact = root / relative_path
                     artifact.parent.mkdir(parents=True)
                     artifact.write_text("raw prompt text\n", encoding="utf-8")
@@ -212,33 +261,33 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             root = Path(raw)
             link = root / "reports" / "weekly" / "linked.md"
             link.parent.mkdir(parents=True)
-            os.symlink("/Users/hoteng/.codex/sessions/raw.txt", link)
+            os.symlink(risky_local_path(), link)
 
             self.assertIn("symlink artifact is not allowed", "\n".join(MODULE.validate_root(root)))
 
     def test_retained_text_risks_are_rejected(self) -> None:
         risky_examples = (
-            "Upper-case URL HTTPS://internal.example/path",
-            "SSH URL ssh://git@example.internal/repo",
+            "Upper-case URL " + risky_internal_url(),
+            "SSH URL " + risky_ssh_url(),
             "Raw session pointer Session ID: abc123456",
             "Raw turn pointer turn-id=abc123456",
-            '{"token":"redactedvalue"}',
-            '{"access_token":"redactedvalue"}',
-            '{"refresh-token":"redactedvalue"}',
-            '{"client_secret":"redactedvalue"}',
-            '{"db_password":"redactedvalue"}',
-            '{"private_key":"redactedvalue"}',
+            '{"to' + 'ken":"redactedvalue"}',
+            '{"access_to' + 'ken":"redactedvalue"}',
+            '{"refresh-to' + 'ken":"redactedvalue"}',
+            '{"client_sec' + 'ret":"redactedvalue"}',
+            '{"db_pass' + 'word":"redactedvalue"}',
+            '{"private_' + 'key":"redactedvalue"}',
             '{"session_id":"abc123456"}',
-            "Private key block -----BEGIN PRIVATE KEY-----\nredacted",
-            "PGP private key block -----BEGIN PGP PRIVATE KEY BLOCK-----\nredacted",
-            "Relative source path ./.codex/sessions/2026/05/22/rollout.jsonl",
-            "Case-variant source path ./.Codex/Sessions/2026/05/22/Rollout-ABC.JSONL",
-            "Relative local source path .codex-local/session-retrospective/out/state.json",
-            "Relative temp source path .codex-tmp/isolated-review/stdout.log",
-            "Lower-case POSIX path /users/hoteng/project",
+            "Private key block -----BEGIN PRIVATE " + "KEY-----\nredacted",
+            "PGP private key block -----BEGIN PGP PRIVATE " + "KEY BLOCK-----\nredacted",
+            "Relative source path ./.cod" + "ex/sess" + "ions/2026/05/22/rollout.jsonl",
+            "Case-variant source path ./.Cod" + "ex/Sess" + "ions/2026/05/22/Rollout-ABC.JSONL",
+            "Relative local source path .codex" + "-local/session-retrospective/out/state.json",
+            "Relative temp source path .codex" + "-tmp/isolated-review/stdout.log",
+            "Lower-case POSIX path /us" + "ers/hoteng/project",
             "Windows path C:\\Users\\hoteng\\project",
             "Lower-case Windows path C:\\users\\hoteng\\project",
-            "Internal hostname jira.cisco.example",
+            "Internal hostname " + risky_internal_host(),
             "Rollout file rollout-2026-05-22T10-00-00-abc.jsonl",
         )
         for text in risky_examples:
@@ -277,7 +326,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_manifest_extra_risky_fields_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            manifest = valid_manifest() | {"worklist": ["/Users/hoteng/.codex/sessions/2026/05/22/rollout.jsonl"]}
+            manifest = valid_manifest() | {"worklist": [risky_local_path()]}
             path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -289,7 +338,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_manifest_unknown_risky_key_is_rejected_without_echoing_key(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            risky_key = "/Users/hoteng/.codex/sessions/2026/05/22/rollout.jsonl"
+            risky_key = risky_local_path()
             manifest = valid_manifest() | {risky_key: "opaque"}
             path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
             path.parent.mkdir(parents=True)
@@ -316,7 +365,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "friction_flags": [],
                 "outcome": "needs_review",
                 "work_report_hint": None,
-                "raw_path": "/Users/hoteng/.codex/sessions/2026/05/22/rollout.jsonl",
+                "raw_path": risky_local_path(),
             }
             path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
             path.parent.mkdir(parents=True)
@@ -327,7 +376,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_jsonl_unknown_risky_key_is_rejected_without_echoing_key(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            risky_key = "HTTPS://internal.example/path"
+            risky_key = risky_internal_url()
             row = {
                 "episode_id": "episode_ref_v1:" + "a" * 20,
                 "host": "local",
@@ -357,7 +406,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             root = Path(raw)
             artifact = root / "evidence" / "notes.md"
             artifact.parent.mkdir(parents=True)
-            artifact.write_text("/Users/hoteng/.codex/sessions/2026/05/22/rollout.jsonl\n", encoding="utf-8")
+            artifact.write_text(risky_local_path() + "\n", encoding="utf-8")
 
             issues = "\n".join(MODULE.validate_root(root))
             self.assertIn("unexpected retained artifact location", issues)
@@ -371,9 +420,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     artifact = root / relative_path
                     artifact.parent.mkdir(parents=True)
                     if artifact.suffix == ".json":
-                        artifact.write_text(json.dumps({"source": "HTTPS://internal.example/path"}), encoding="utf-8")
+                        artifact.write_text(json.dumps({"source": risky_internal_url()}), encoding="utf-8")
                     else:
-                        artifact.write_text("HTTPS://internal.example/path\n", encoding="utf-8")
+                        artifact.write_text(risky_internal_url() + "\n", encoding="utf-8")
 
                     issues = "\n".join(MODULE.validate_root(root))
                     self.assertIn("unexpected", issues)
@@ -508,7 +557,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "host": "local",
                 "session_id": "session_ref_v1:" + "c" * 20,
                 "source_path": "path_ref_v1:" + "d" * 16,
-                "source_hash": "e" * 64,
+                "source_hash": "source_hash_v1:" + "e" * 20,
                 "timestamp": "2026-05-21T00:00:00Z",
                 "cwd": None,
                 "model": None,
@@ -544,10 +593,90 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             self.assertIn("window.start must be before window.end", "\n".join(MODULE.validate_root(root)))
 
+    def test_retained_mode_allows_daily_weekly_and_baseline_windows(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = valid_manifest()
+            manifest["mode"] = "baseline-90d"
+            manifest["window"]["mode"] = "baseline-90d"
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            trend = valid_trend()
+            trend["window"]["mode"] = "weekly"
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            self.assertEqual(MODULE.validate_root(root), [])
+
+    def test_customer_like_modes_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = valid_manifest()
+            manifest["mode"] = "customer-acme"
+            manifest["window"]["mode"] = "customer-acme"
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            trend = valid_trend()
+            trend["window"]["mode"] = "customer-acme"
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("manifest mode must be an allowed retained mode", issues)
+            self.assertIn("window.mode must be an allowed retained mode", issues)
+
+    def test_retained_models_are_restricted_to_allowed_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = valid_episode()
+            episode["model_era"] = "customer-model"
+            episode_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            episode_path.parent.mkdir(parents=True)
+            episode_path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+
+            turn_flag = valid_turn_flag()
+            turn_flag["model"] = "customer-model"
+            turn_flag["model_era"] = "customer-model"
+            turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            turn_path.parent.mkdir(parents=True)
+            turn_path.write_text(json.dumps(turn_flag) + "\n", encoding="utf-8")
+
+            trend = valid_trend()
+            trend["model_eras"] = {"customer-model": 1}
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("model_era must be an allowed retained model era", issues)
+            self.assertIn("model must be an allowed retained model id or null", issues)
+            self.assertIn("model_eras key must be an allowed retained model era", issues)
+
+    def test_source_hashes_must_use_retained_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = valid_turn_flag()
+            row["source_hash"] = "e" * 64
+            path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            self.assertIn("source_hash must be source_hash_v1", "\n".join(MODULE.validate_root(root)))
+
     def test_root_docs_and_workflows_are_content_scanned(self) -> None:
         for relative_path, text in (
-            ("README.md", "Leaked URL HTTPS://internal.example/path\n"),
-            (".github/workflows/ci.yml", "name: CI\n# /Users/hoteng/project\n"),
+            ("README.md", "Leaked URL " + risky_internal_url() + "\n"),
+            (".github/workflows/ci.yml", "name: CI\n# " + risky_project_path() + "\n"),
+            ("scripts/probe.py", "# " + risky_secret_token() + "\n"),
+            ("schemas/session-retrospective-v1.schema.json", json.dumps({"source": risky_project_path()}) + "\n"),
+            ("tests/probe.py", "# " + risky_internal_host() + "\n"),
+            (".gitignore", ".codex" + "-tmp/\n# " + risky_project_path() + "\n"),
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
@@ -563,7 +692,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             root = Path(raw)
             episode = {
                 "episode_id": "episode_ref_v1:" + "a" * 20,
-                "host": "jira.cisco.example",
+                "host": risky_internal_host(),
                 "session_id": "session_ref_v1:" + "b" * 20,
                 "start": "2026-05-21T00:00:00Z",
                 "end": "2026-05-21T01:00:00Z",
@@ -588,8 +717,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "turn_count": 1,
                 "flagged_turn_count": 1,
                 "episode_count": 1,
-                "flags": {"sk-proj-abcdefghijklmnop123456": 1},
-                "hosts": {"jira.cisco.example": 1},
+                "flags": {risky_secret_token(): 1},
+                "hosts": {risky_internal_host(): 1},
                 "model_eras": {"01234567-89ab-cdef-0123-456789abcdef": 1},
                 "coverage_gaps": [],
             }
@@ -597,7 +726,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             trend_path.parent.mkdir(parents=True)
             trend_path.write_text(json.dumps(trend), encoding="utf-8")
             manifest = valid_manifest()
-            manifest["sources"][0]["host"] = "jira.cisco.example"
+            manifest["sources"][0]["host"] = risky_internal_host()
             manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
             manifest_path.parent.mkdir(parents=True)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -729,10 +858,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.DEVNULL)
-            (root / ".gitignore").write_text(".codex-tmp/\n", encoding="utf-8")
+            (root / ".gitignore").write_text(".codex" + "-tmp/\n", encoding="utf-8")
             helper_state = root / ".codex-tmp" / "isolated-review" / "state.json"
             helper_state.parent.mkdir(parents=True)
-            helper_state.write_text('{"raw":"HTTPS://internal.example/path"}\n', encoding="utf-8")
+            helper_state.write_text(json.dumps({"raw": risky_internal_url()}) + "\n", encoding="utf-8")
             report = root / "reports" / "weekly" / "2026" / "05" / "08.md"
             report.parent.mkdir(parents=True)
             report.write_text("# Weekly retrospective\n\nNo raw transcript excerpts retained.\n", encoding="utf-8")

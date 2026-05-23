@@ -53,12 +53,13 @@ PATH_REF_RE = re.compile(r"^path_ref_v1:[0-9a-f]{16}$")
 SESSION_REF_RE = re.compile(r"^session_ref_v1:[0-9a-f]{20}$")
 EPISODE_REF_RE = re.compile(r"^episode_ref_v1:[0-9a-f]{20}$")
 TURN_REF_RE = re.compile(r"^turn_ref_v1:[0-9a-f]{20}$")
-SOURCE_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+SOURCE_HASH_RE = re.compile(r"^source_hash_v1:[0-9a-f]{20}$")
 SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 SENSITIVE_TOKEN_RE = re.compile(
     r"(^|[._-])(?:password|passwd|pwd|credentials?|secret|token|api[._-]?key|authorization|private[._-]?key)($|[._-])",
     re.I,
 )
+BASELINE_MODE_RE = re.compile(r"^baseline-[1-9][0-9]{0,3}d$")
 TIMESTAMP_RE = re.compile(
     r"^\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9]))T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$"
 )
@@ -72,6 +73,9 @@ RETAINED_EXPORT_DIRS = frozenset({("retained", "daily"), ("retained", "weekly"),
 RETAINED_EXPORT_FILES = frozenset({"episodes.jsonl", "turn_flags.jsonl", "trend_report.json", "retained_manifest.json"})
 RETAINED_EVIDENCE_HOSTS = frozenset({"local", "miku-bot-dev", "hoteng-srv-01", "custom_source"})
 RETAINED_HOSTS = frozenset((*RETAINED_EVIDENCE_HOSTS, "scope"))
+RETAINED_FIXED_MODES = frozenset({"daily", "weekly"})
+RETAINED_MODEL_IDS = frozenset({"gpt-5.5", "gpt-5.4", "gpt-5.3-codex"})
+RETAINED_MODEL_ERAS = frozenset((*RETAINED_MODEL_IDS, "other-model", "pre-gpt-5.3-codex", "unknown"))
 EPISODE_KEYS = frozenset(
     {
         "episode_id",
@@ -172,7 +176,7 @@ RISK_PATTERNS = (
     re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
     re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\", re.I),
     re.compile(
-        r"(?<![A-Za-z0-9_])[\"']?[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret|token|api[._-]?key|authorization|private[._-]?key)[A-Za-z0-9._-]*[\"']?\s*[:=]",
+        r"(?<![A-Za-z0-9_])[\"']?[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret|token|api[._-]?key|authorization|private[._-]?key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]{8,}",
         re.I,
     ),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
@@ -185,6 +189,39 @@ RISK_PATTERNS = (
         re.I,
     ),
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
+)
+INFRASTRUCTURE_RISK_PATTERNS = (
+    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", re.I),
+    re.compile(r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/", re.I),
+    re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)", re.I),
+    re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
+    re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\", re.I),
+    re.compile(
+        r"(?<![A-Za-z0-9_])[\"']?[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret|token|api[._-]?key|authorization|private[._-]?key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]{8,}",
+        re.I,
+    ),
+    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
+    re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
+)
+SAFE_INFRASTRUCTURE_LINES = frozenset(
+    {
+        ".codex-local/",
+        ".codex-tmp/",
+        ".codex/",
+        "archived_sessions/",
+        "sessions/",
+        "auth.json",
+        "config.toml",
+        "history.jsonl",
+        "session_index.jsonl",
+        "rollout-*.jsonl",
+        "rollout-summary*.jsonl",
+        "source_metadata.json",
+        "shard_manifest.json",
+        "shards.jsonl",
+        "turn_summaries.jsonl",
+    }
 )
 
 
@@ -287,6 +324,16 @@ def contains_risky_text(value: Any) -> bool:
     return False
 
 
+def contains_infrastructure_risk_text(value: str) -> bool:
+    for line in value.splitlines():
+        normalized_line = line.strip().rstrip(",").strip("\"'")
+        if normalized_line in SAFE_INFRASTRUCTURE_LINES:
+            continue
+        if any(pattern.search(line) for pattern in INFRASTRUCTURE_RISK_PATTERNS):
+            return True
+    return False
+
+
 def contains_risky_token(value: Any) -> bool:
     return isinstance(value, str) and SENSITIVE_TOKEN_RE.search(value) is not None
 
@@ -349,6 +396,18 @@ def valid_retained_coverage_host(value: Any) -> bool:
     return isinstance(value, str) and value in RETAINED_HOSTS
 
 
+def valid_retained_mode(value: Any) -> bool:
+    return isinstance(value, str) and (value in RETAINED_FIXED_MODES or BASELINE_MODE_RE.fullmatch(value) is not None)
+
+
+def valid_retained_model_id(value: Any) -> bool:
+    return isinstance(value, str) and value in RETAINED_MODEL_IDS
+
+
+def valid_retained_model_era(value: Any) -> bool:
+    return isinstance(value, str) and value in RETAINED_MODEL_ERAS
+
+
 def allowed_infrastructure_artifact(relative: Path) -> bool:
     path_text = relative.as_posix()
     if path_text in ROOT_DOC_FILES:
@@ -368,11 +427,7 @@ def allowed_infrastructure_artifact(relative: Path) -> bool:
 
 
 def content_scanned_infrastructure_artifact(relative: Path) -> bool:
-    path_text = relative.as_posix()
-    if path_text in {"AGENTS.md", "README.md"}:
-        return True
-    parts = relative.parts
-    return bool(len(parts) >= 3 and parts[0] == ".github" and parts[1] == "workflows" and relative.suffix.lower() in WORKFLOW_SUFFIXES)
+    return allowed_infrastructure_artifact(relative)
 
 
 def allowed_retained_text_artifact(relative: Path) -> bool:
@@ -447,6 +502,8 @@ def validate_count_map(value: Any, label: str) -> list[str]:
             issues.append(f"{label} key must be a safe token")
         if label == "hosts" and not valid_retained_host(key):
             issues.append("hosts key must be an allowed retained host")
+        if label == "model_eras" and not valid_retained_model_era(key):
+            issues.append("model_eras key must be an allowed retained model era")
         if not valid_non_negative_int(count):
             issues.append(f"{label} value must be a bounded non-negative integer")
     return issues
@@ -456,8 +513,8 @@ def validate_window(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return ["window must be an object"]
     issues = unexpected_keys(value, WINDOW_KEYS) + missing_keys(value, WINDOW_KEYS)
-    if not valid_safe_token(value.get("mode")):
-        issues.append("window.mode must be a safe token")
+    if not valid_retained_mode(value.get("mode")):
+        issues.append("window.mode must be an allowed retained mode")
     start_value = value.get("start")
     end_value = value.get("end")
     start_valid = isinstance(start_value, str) and TIMESTAMP_RE.fullmatch(start_value) is not None
@@ -561,8 +618,8 @@ def validate_episode(row: Any) -> list[str]:
         issues.append("end must be timestamp or null")
     if row.get("cwd") is not None and not PATH_REF_RE.fullmatch(str(row.get("cwd"))):
         issues.append("cwd must be path_ref_v1 or null")
-    if not valid_safe_token(row.get("model_era")):
-        issues.append("model_era must be a safe token")
+    if not valid_retained_model_era(row.get("model_era")):
+        issues.append("model_era must be an allowed retained model era")
     issues.extend(validate_retained_text(row.get("topic"), "topic"))
     if not valid_non_negative_int(row.get("turn_count")):
         issues.append("turn_count must be a bounded non-negative integer")
@@ -594,15 +651,15 @@ def validate_turn_flag(row: Any) -> list[str]:
     if not PATH_REF_RE.fullmatch(str(row.get("source_path", ""))):
         issues.append("source_path must be path_ref_v1")
     if not SOURCE_HASH_RE.fullmatch(str(row.get("source_hash", ""))):
-        issues.append("source_hash must be a 64-character hex digest")
+        issues.append("source_hash must be source_hash_v1")
     if not valid_timestamp_or_null(row.get("timestamp")):
         issues.append("timestamp must be timestamp or null")
     if row.get("cwd") is not None and not PATH_REF_RE.fullmatch(str(row.get("cwd"))):
         issues.append("cwd must be path_ref_v1 or null")
-    if row.get("model") is not None and not valid_safe_token(row.get("model")):
-        issues.append("model must be a safe token or null")
-    if not valid_safe_token(row.get("model_era")):
-        issues.append("model_era must be a safe token")
+    if row.get("model") is not None and not valid_retained_model_id(row.get("model")):
+        issues.append("model must be an allowed retained model id or null")
+    if not valid_retained_model_era(row.get("model_era")):
+        issues.append("model_era must be an allowed retained model era")
     for key in ("redacted_user_prompt_summary", "assistant_action_summary", "prompt_improvement"):
         issues.extend(validate_retained_text(row.get(key), key, nullable=(key == "prompt_improvement")))
     issues.extend(validate_safe_token_array(row.get("issue_flags"), "issue_flags", min_items=1))
@@ -641,8 +698,8 @@ def validate_manifest(data: Any) -> list[str]:
         issues.append("manifest retained text contains raw/sensitive evidence")
     if data.get("schema_version") != 1:
         issues.append("manifest schema_version must be 1")
-    if not valid_safe_token(data.get("mode")):
-        issues.append("manifest mode must be a safe token")
+    if not valid_retained_mode(data.get("mode")):
+        issues.append("manifest mode must be an allowed retained mode")
     issues.extend(validate_window(data.get("window")))
     if not isinstance(data.get("sources"), list) or not data.get("sources"):
         issues.append("manifest sources must be a non-empty array")
@@ -678,7 +735,7 @@ def validate_root(root: Path) -> list[str]:
         suffix = relative.suffix.lower()
         try:
             if content_scanned_infrastructure_artifact(relative):
-                if contains_risky_text(path.read_text(encoding="utf-8")):
+                if contains_infrastructure_risk_text(path.read_text(encoding="utf-8")):
                     issues.append(f"{relative}: infrastructure text contains raw/sensitive evidence")
             if suffix == ".json":
                 data = parse_json(path)

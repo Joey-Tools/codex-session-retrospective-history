@@ -62,6 +62,18 @@
       "enum": ["local", "miku-bot-dev", "hoteng-srv-01", "custom_source", "scope"],
       "type": "string"
     },
+    "retained_mode": {
+      "anyOf": [
+        {
+          "enum": ["daily", "weekly"],
+          "type": "string"
+        },
+        {
+          "pattern": "^baseline-[1-9][0-9]{0,3}d$",
+          "type": "string"
+        }
+      ]
+    },
     "safe_token": {
       "maxLength": 64,
       "not": {
@@ -212,7 +224,7 @@
       "type": "array"
     },
     "mode": {
-      "$ref": "#/$defs/safe_token"
+      "$ref": "#/$defs/retained_mode"
     },
     "redaction_policy_version": {
       "const": 1
@@ -241,7 +253,7 @@
           "$ref": "#/$defs/timestamp_required"
         },
         "mode": {
-          "$ref": "#/$defs/safe_token"
+          "$ref": "#/$defs/retained_mode"
         },
         "start": {
           "$ref": "#/$defs/timestamp_required"
