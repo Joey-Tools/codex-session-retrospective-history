@@ -175,7 +175,9 @@ RISK_PATTERNS = (
     re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
     re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\", re.I),
     re.compile(
-        r"(?<![A-Za-z0-9_])[\"']?[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret|token|api[._-]?key|authorization|private[._-]?key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]{8,}",
+        r"(?<![A-Za-z0-9_])[\"']?"
+        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret|token|api[._-]?key|authorization|private[._-]?key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
+        r"(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]+",
         re.I,
     ),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
@@ -200,7 +202,10 @@ INFRASTRUCTURE_RISK_PATTERNS = (
     re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
     re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\", re.I),
     re.compile(
-        r"(?<![A-Za-z0-9_])[\"']?[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret|token|api[._-]?key|authorization|private[._-]?key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]{8,}",
+        r"(?<![A-Za-z0-9_])[\"']?"
+        r"(?!(?:safe[._-]?token|max[._-]?(?:safe[._-]?)?token|token[._-]?array|sensitive[._-]?token|risk[._-]?patterns?|tokens?)(?:[._-]?[A-Za-z0-9]+)*[\"']?\s*[:=])"
+        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret|token|api[._-]?key|authorization|private[._-]?key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
+        r"(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]+",
         re.I,
     ),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),

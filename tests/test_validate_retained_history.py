@@ -339,6 +339,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             '{"refresh-to' + 'ken":"redactedvalue"}',
             '{"client_sec' + 'ret":"redactedvalue"}',
             '{"db_pass' + 'word":"redactedvalue"}',
+            '{"api_' + 'key":"abc"}',
+            "pass" + "word=12345",
             '{"private_' + 'key":"redactedvalue"}',
             '{"session_' + 'id":"abc123456"}',
             "Private key block -----BEGIN PRIVATE " + "KEY-----\nredacted",
@@ -812,6 +814,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("README.md", "Internal localhost URL " + risky_localhost_url() + "\n"),
             ("README.md", "Internal private IP URL " + risky_private_ip_url() + "\n"),
             ("README.md", "Internal short host URL " + risky_short_host_url() + "\n"),
+            ("README.md", "Short secret api_" + "key: abc\n"),
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
