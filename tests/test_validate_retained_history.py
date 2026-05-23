@@ -182,6 +182,18 @@ def risky_episode_pointer() -> str:
     return "episode_" + "id=abc123456"
 
 
+def risky_compound_session_token() -> str:
+    return "session_" + "id_abc123456"
+
+
+def risky_compound_turn_token() -> str:
+    return "turn-" + "id-abc123456"
+
+
+def risky_compound_episode_token() -> str:
+    return "episode." + "id.abc123456"
+
+
 def risky_rollout_filename() -> str:
     return "rollout-" + "2026-05-22T10-00-00-abc.jsonl"
 
@@ -241,13 +253,19 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_schema_safe_token_patterns_cover_compound_secret_names(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
         manifest_schema = json.loads(MANIFEST_SCHEMA.read_text(encoding="utf-8"))
-        patterns = "\n".join(item["pattern"] for item in schema["$defs"]["safe_token"]["not"]["anyOf"])
-        manifest_patterns = "\n".join(item["pattern"] for item in manifest_schema["$defs"]["safe_token"]["not"]["anyOf"])
+        schema_patterns = [re.compile(item["pattern"]) for item in schema["$defs"]["safe_token"]["not"]["anyOf"]]
+        manifest_schema_patterns = [re.compile(item["pattern"]) for item in manifest_schema["$defs"]["safe_token"]["not"]["anyOf"]]
+        patterns = "\n".join(pattern.pattern for pattern in schema_patterns)
+        manifest_patterns = "\n".join(pattern.pattern for pattern in manifest_schema_patterns)
 
         self.assertIn("[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?", patterns)
         self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy]", patterns)
         self.assertIn("[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?", manifest_patterns)
         self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy]", manifest_patterns)
+        for sample in (risky_compound_session_token(), risky_compound_turn_token(), risky_compound_episode_token()):
+            with self.subTest(sample=sample):
+                self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
+                self.assertTrue(any(pattern.search(sample) for pattern in manifest_schema_patterns))
 
     def test_schema_restricts_retained_modes_models_and_source_hashes(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
@@ -522,6 +540,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "Raw session pointer " + risky_session_pointer(),
             "Raw turn pointer " + risky_turn_pointer(),
             "Raw episode pointer " + risky_episode_pointer(),
+            "Raw compound session pointer " + risky_compound_session_token(),
+            "Raw compound turn pointer " + risky_compound_turn_token(),
+            "Raw compound episode pointer " + risky_compound_episode_token(),
             '{"to' + 'ken":"redactedvalue"}',
             '{"access_to' + 'ken":"redactedvalue"}',
             '{"refresh-to' + 'ken":"redactedvalue"}',
@@ -722,7 +743,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "data/episodes/customer-acme/episodes.jsonl",
             "data/episodes/2026/05/customer-acme.jsonl",
             "data/turn_flags/customer-acme/turn_flags.jsonl",
-            "data/turn_flags/2026/05/session_id-rawabcdef123456.jsonl",
+            "data/turn_flags/2026/05/" + "session_" + "id-rawabcdef123456.jsonl",
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
@@ -879,7 +900,16 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertIn("issue_flags must be safe-token array", "\n".join(MODULE.validate_root(root)))
 
     def test_safe_tokens_reject_compound_secret_names(self) -> None:
-        for sample in ("client_secret", "refresh-token", "private_key", "db_password", "OPENAI_API_KEY"):
+        for sample in (
+            "client_secret",
+            "refresh-token",
+            "private_key",
+            "db_password",
+            "OPENAI_API_KEY",
+            risky_compound_session_token(),
+            risky_compound_turn_token(),
+            risky_compound_episode_token(),
+        ):
             with self.subTest(sample=sample):
                 self.assertFalse(MODULE.valid_safe_token(sample))
 
@@ -1228,6 +1258,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             manifest["coverage_gaps"] = [
                 {"host": "local", "reason": "source_root_symlink", "root_ref": "path_ref_v1:aaaaaaaaaaaaaaaa"},
                 {"host": "custom_source", "reason": "unsafe_source_artifact", "root_ref": "path_ref_v1:aaaaaaaaaaaaaaaa"},
+                {"host": "local", "reason": "truncated_rollout_summary", "root_ref": "path_ref_v1:aaaaaaaaaaaaaaaa"},
             ]
             manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
             manifest_path.parent.mkdir(parents=True)

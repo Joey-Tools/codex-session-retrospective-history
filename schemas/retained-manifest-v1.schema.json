@@ -40,6 +40,7 @@
             "source_root_missing",
             "source_root_symlink",
             "stale_host",
+            "truncated_rollout_summary",
             "unreachable",
             "unsafe_source_artifact"
           ]
@@ -88,6 +89,9 @@
           },
           {
             "pattern": "(^|[._-])(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][._-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy])($|[._-])"
+          },
+          {
+            "pattern": "\\b(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Tt][Uu][Rr][Nn]|[Ee][Pp][Ii][Ss][Oo][Dd][Ee])[._-][Ii][Dd][._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\\b"
           },
           {
             "pattern": "^[0-9a-fA-F]{64}$"

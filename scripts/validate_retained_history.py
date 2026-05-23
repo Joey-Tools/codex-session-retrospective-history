@@ -59,6 +59,7 @@ SENSITIVE_TOKEN_RE = re.compile(
     r"(^|[._-])(?:password|passwd|pwd|credentials?|secret|token|api[._-]?key|authorization|private[._-]?key)($|[._-])",
     re.I,
 )
+RAW_ID_TOKEN_RE = re.compile(r"\b(?:session|turn|episode)[._-]id[._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\b", re.I)
 BASELINE_MODE_RE = re.compile(r"^baseline-[1-9][0-9]{0,3}d$")
 TIMESTAMP_RE = re.compile(
     r"^(?:(?:\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-8])))|(?:(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29))T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$"
@@ -158,6 +159,7 @@ COVERAGE_REASONS = frozenset(
         "source_root_missing",
         "source_root_symlink",
         "stale_host",
+        "truncated_rollout_summary",
         "unreachable",
         "unsafe_source_artifact",
     }
@@ -192,6 +194,7 @@ RISK_PATTERNS = (
         r"(?<![A-Za-z0-9_])[\"']?(?:session|turn|episode)[-_ ]?id[\"']?\s*[:=]\s*[\"']?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:|row\.get\b|data\.get\b|value\.get\b)[A-Za-z0-9_.:-]{6,}\b",
         re.I,
     ),
+    RAW_ID_TOKEN_RE,
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
 )
 INFRASTRUCTURE_RISK_PATTERNS = (
@@ -226,6 +229,7 @@ INFRASTRUCTURE_RISK_PATTERNS = (
         r"(?<![A-Za-z0-9_])[\"']?(?:session|turn|episode)[-_ ]?id[\"']?\s*[:=]\s*[\"']?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:|row\.get\b|data\.get\b|value\.get\b)[A-Za-z0-9_.:-]{6,}\b",
         re.I,
     ),
+    RAW_ID_TOKEN_RE,
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
 )
 SAFE_INFRASTRUCTURE_LINES = frozenset(
