@@ -464,6 +464,10 @@ def valid_non_negative_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_COUNT
 
 
+def valid_schema_version_one(value: Any) -> bool:
+    return type(value) is int and value == 1
+
+
 def valid_safe_token(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -545,6 +549,34 @@ def content_scanned_infrastructure_artifact(relative: Path) -> bool:
     return allowed_infrastructure_artifact(relative)
 
 
+def valid_date_components(year_text: str, month_text: str, day_text: str) -> bool:
+    if (
+        re.fullmatch(r"\d{4}", year_text) is None
+        or re.fullmatch(r"\d{2}", month_text) is None
+        or re.fullmatch(r"\d{2}", day_text) is None
+    ):
+        return False
+    try:
+        dt.date(int(year_text), int(month_text), int(day_text))
+    except ValueError:
+        return False
+    return True
+
+
+def valid_baseline_report_filename(name: str) -> bool:
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})\.md", name)
+    if match is None:
+        return False
+    start_year, start_month, start_day, end_year, end_month, end_day = match.groups()
+    if not valid_date_components(start_year, start_month, start_day):
+        return False
+    if not valid_date_components(end_year, end_month, end_day):
+        return False
+    start = dt.date(int(start_year), int(start_month), int(start_day))
+    end = dt.date(int(end_year), int(end_month), int(end_day))
+    return start <= end
+
+
 def allowed_retained_text_artifact(relative: Path) -> bool:
     path_text = relative.as_posix()
     if path_text in {"data/README.md", "reports/README.md"}:
@@ -552,14 +584,9 @@ def allowed_retained_text_artifact(relative: Path) -> bool:
     parts = relative.parts
     if len(parts) == 5 and parts[0] == "reports" and parts[1] in {"daily", "weekly"}:
         year, month, day_file = parts[2], parts[3], parts[4]
-        return bool(
-            re.fullmatch(r"\d{4}", year)
-            and re.fullmatch(r"\d{2}", month)
-            and relative.suffix.lower() == ".md"
-            and re.fullmatch(r"\d{2}", Path(day_file).stem)
-        )
+        return bool(relative.suffix.lower() == ".md" and valid_date_components(year, month, Path(day_file).stem))
     if len(parts) == 4 and parts[:3] == ("reports", "baseline", "90-day-windows"):
-        return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}_to_\d{4}-\d{2}-\d{2}\.md", parts[3]))
+        return valid_baseline_report_filename(parts[3])
     return False
 
 
@@ -871,7 +898,7 @@ def validate_trend(data: Any, *, expected_mode: str | None = None) -> list[str]:
     issues = unexpected_keys(data, TREND_KEYS) + missing_keys(data, TREND_KEYS)
     if contains_risky_key(data):
         issues.append("trend JSON key contains raw/sensitive evidence")
-    if data.get("schema_version") != 1:
+    if not valid_schema_version_one(data.get("schema_version")):
         issues.append("trend schema_version must be 1")
     issues.extend(validate_window(data.get("window")))
     window = data.get("window") if isinstance(data.get("window"), dict) else {}
@@ -901,7 +928,7 @@ def validate_manifest(data: Any, *, expected_mode: str | None = None) -> list[st
         issues.append("manifest JSON key contains raw/sensitive evidence")
     if contains_risky_text(data):
         issues.append("manifest retained text contains raw/sensitive evidence")
-    if data.get("schema_version") != 1:
+    if not valid_schema_version_one(data.get("schema_version")):
         issues.append("manifest schema_version must be 1")
     if not valid_retained_mode(data.get("mode")):
         issues.append("manifest mode must be an allowed retained mode")

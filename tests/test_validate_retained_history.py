@@ -624,6 +624,25 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("data/episodes/0000/05/episodes.jsonl: unexpected JSONL artifact", issues)
         self.assertIn("data/trends/9999/12/trend_report.json: unexpected JSON artifact", issues)
 
+    def test_schema_version_rejects_bool(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_monthly_export(root)
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend = json.loads(trend_path.read_text(encoding="utf-8"))
+            trend["schema_version"] = True
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest = valid_manifest()
+            manifest["schema_version"] = True
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("data/trends/2026/05/trend_report.json: trend schema_version must be 1", issues)
+        self.assertIn("data/manifests/2026/05/retained_manifest.json: manifest schema_version must be 1", issues)
+
     def test_monthly_turn_flags_check_episode_refs_without_trend(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -937,7 +956,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "data/manifests/2026/05/worklist.txt",
             "reports/misc/notes.md",
             "reports/daily/2026/05/08.txt",
+            "reports/daily/2026/13/08.md",
+            "reports/weekly/0000/05/08.md",
+            "reports/weekly/2026/02/31.md",
             "reports/baseline/90-day-windows/customer-acme.md",
+            "reports/baseline/90-day-windows/2026-02-31_to_2026-03-01.md",
+            "reports/baseline/90-day-windows/2026-03-01_to_2026-02-28.md",
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
