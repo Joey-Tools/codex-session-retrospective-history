@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import datetime as dt
 import json
 from pathlib import Path
 import re
@@ -439,6 +440,13 @@ def timestamp_order_key(value: str) -> tuple[int, int, int, int, int, int, int]:
     return (year, month, day, hour, minute, second, nanosecond)
 
 
+def timestamp_epoch_nanoseconds(value: str) -> int:
+    year, month, day, hour, minute, second, nanosecond = timestamp_order_key(value)
+    ordinal = dt.date(year, month, day).toordinal()
+    seconds = ((ordinal * 24 + hour) * 60 + minute) * 60 + second
+    return seconds * 1_000_000_000 + nanosecond
+
+
 def valid_non_negative_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_COUNT
 
@@ -463,6 +471,17 @@ def valid_retained_coverage_host(value: Any) -> bool:
 
 def valid_retained_mode(value: Any) -> bool:
     return isinstance(value, str) and (value in RETAINED_FIXED_MODES or BASELINE_MODE_RE.fullmatch(value) is not None)
+
+
+def retained_mode_days(mode: str) -> int | None:
+    if mode == "daily":
+        return 1
+    if mode == "weekly":
+        return 7
+    match = BASELINE_MODE_RE.fullmatch(mode)
+    if match is not None:
+        return int(mode.removeprefix("baseline-").removesuffix("d"))
+    return None
 
 
 def expected_mode_from_retained_export_path(relative: Path) -> str | None:
@@ -533,7 +552,27 @@ def allowed_retained_text_artifact(relative: Path) -> bool:
 
 
 def valid_year_month(parts: tuple[str, ...], start: int) -> bool:
-    return len(parts) > start + 1 and bool(re.fullmatch(r"\d{4}", parts[start]) and re.fullmatch(r"\d{2}", parts[start + 1]))
+    if len(parts) <= start + 1 or re.fullmatch(r"\d{4}", parts[start]) is None or re.fullmatch(r"\d{2}", parts[start + 1]) is None:
+        return False
+    month = int(parts[start + 1])
+    return 1 <= month <= 12
+
+
+def data_month_window(data_month: tuple[str, str, str]) -> tuple[
+    tuple[int, int, int, int, int, int, int],
+    tuple[int, int, int, int, int, int, int],
+]:
+    _, year_text, month_text = data_month
+    year = int(year_text)
+    month = int(month_text)
+    start = dt.date(year, month, 1)
+    if month == 12:
+        end = dt.date(year + 1, 1, 1)
+    else:
+        end = dt.date(year, month + 1, 1)
+    start_key = (start.year, start.month, start.day, 0, 0, 0, 0)
+    end_key = (end.year, end.month, end.day, 0, 0, 0, 0)
+    return (start_key, end_key)
 
 
 def allowed_retained_json_artifact(relative: Path) -> str | None:
@@ -579,7 +618,7 @@ def validate_issue_flag_array(value: Any, label: str, *, min_items: int = 0) -> 
     issues = validate_safe_token_array(value, label, min_items=min_items)
     if isinstance(value, list):
         for item in value:
-            if item not in ISSUE_FLAGS:
+            if not isinstance(item, str) or item not in ISSUE_FLAGS:
                 issues.append(f"{label} must use allowed issue flags")
                 break
     return issues
@@ -630,6 +669,12 @@ def validate_window(value: Any) -> list[str]:
     if start_valid and end_valid:
         if timestamp_order_key(start_value) >= timestamp_order_key(end_value):
             issues.append("window.start must be before window.end")
+        elif isinstance(value.get("mode"), str):
+            mode_days = retained_mode_days(value["mode"])
+            if mode_days is not None:
+                expected_ns = mode_days * 24 * 60 * 60 * 1_000_000_000
+                if timestamp_epoch_nanoseconds(end_value) - timestamp_epoch_nanoseconds(start_value) != expected_ns:
+                    issues.append("window duration must match window.mode")
     return issues
 
 
@@ -887,6 +932,7 @@ def validate_retained_export_consistency(
     rows: dict[str, list[Any]],
     trend: Any,
     artifact_paths: dict[str, Path] | None = None,
+    data_month: tuple[str, str, str] | None = None,
 ) -> list[str]:
     export_path = Path(*export_dir)
     artifact_paths = artifact_paths or {}
@@ -931,6 +977,20 @@ def validate_retained_export_consistency(
             issues.append(f"{turn_flags_path}:{index}: host must match referenced episode")
         if row.get("session_id") != episode.get("session_id"):
             issues.append(f"{turn_flags_path}:{index}: session_id must match referenced episode")
+
+    if data_month is not None:
+        month_start, month_end = data_month_window(data_month)
+        for index, row in enumerate(episodes, 1):
+            start_key = valid_timestamp_key(row.get("start"))
+            end_key = valid_timestamp_key(row.get("end"))
+            if (start_key is not None and (start_key < month_start or start_key >= month_end)) or (
+                end_key is not None and (end_key < month_start or end_key > month_end)
+            ):
+                issues.append(f"{episodes_path}:{index}: episode start/end must be within data month")
+        for index, row in enumerate(turn_flags, 1):
+            timestamp_key = valid_timestamp_key(row.get("timestamp"))
+            if timestamp_key is not None and (timestamp_key < month_start or timestamp_key >= month_end):
+                issues.append(f"{turn_flags_path}:{index}: timestamp must be within data month")
 
     if not isinstance(trend, dict):
         return issues
@@ -982,7 +1042,7 @@ def validate_retained_export_consistency(
     for row in turn_flags:
         flags = row.get("issue_flags")
         if isinstance(flags, list):
-            expected_flags.update(flag for flag in flags if flag in ISSUE_FLAGS)
+            expected_flags.update(flag for flag in flags if isinstance(flag, str) and flag in ISSUE_FLAGS)
     if valid_trend_count_map(trend.get("flags")) and trend["flags"] != sorted_counter(expected_flags):
         issues.append(f"{trend_path}: flags must match turn_flags.jsonl issue_flags")
 
@@ -1122,6 +1182,7 @@ def validate_root(root: Path) -> list[str]:
                 data_month_rows.get(data_month, {}),
                 data_month_trends.get(data_month),
                 artifact_paths=data_month_paths.get(data_month),
+                data_month=data_month,
             )
         )
     return issues

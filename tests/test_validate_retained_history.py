@@ -101,12 +101,24 @@ def valid_trend() -> dict:
     }
 
 
+def window_for_mode(mode: str) -> dict:
+    if mode == "daily":
+        start = "2026-05-21T00:00:00Z"
+    elif mode == "weekly":
+        start = "2026-05-15T00:00:00Z"
+    elif mode == "baseline-90d":
+        start = "2026-02-21T00:00:00Z"
+    else:
+        start = "2026-05-21T00:00:00Z"
+    return {"mode": mode, "start": start, "end": "2026-05-22T00:00:00Z"}
+
+
 def write_retained_export(root: Path, export_dir: Path, *, mode: str = "daily") -> None:
     trend = valid_trend()
-    trend["window"]["mode"] = mode
+    trend["window"] = window_for_mode(mode)
     manifest = valid_manifest()
     manifest["mode"] = mode
-    manifest["window"]["mode"] = mode
+    manifest["window"] = window_for_mode(mode)
     export_dir.mkdir(parents=True)
     (export_dir / "episodes.jsonl").write_text(json.dumps(valid_episode()) + "\n", encoding="utf-8")
     (export_dir / "turn_flags.jsonl").write_text(json.dumps(valid_turn_flag()) + "\n", encoding="utf-8")
@@ -519,6 +531,27 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "data/turn_flags/2026/05/turn_flags.jsonl:1: episode_id is missing from episodes export",
             issues,
         )
+
+    def test_monthly_rows_without_trend_must_match_path_month(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = valid_episode()
+            episode["start"] = "2026-06-01T00:00:00Z"
+            episode["end"] = "2026-06-01T01:00:00Z"
+            episodes_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            episodes_path.parent.mkdir(parents=True)
+            episodes_path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+
+            turn_flag = valid_turn_flag()
+            turn_flag["timestamp"] = "2026-04-30T23:59:59Z"
+            turn_flags_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            turn_flags_path.parent.mkdir(parents=True)
+            turn_flags_path.write_text(json.dumps(turn_flag) + "\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("data/episodes/2026/05/episodes.jsonl:1: episode start/end must be within data month", issues)
+        self.assertIn("data/turn_flags/2026/05/turn_flags.jsonl:1: timestamp must be within data month", issues)
 
     def test_monthly_retained_artifacts_reject_inconsistent_rows_and_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -1009,6 +1042,33 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("issue_flags must use allowed issue flags", issues)
         self.assertIn("flags keys must use allowed issue flags", issues)
 
+    def test_nested_issue_flags_report_errors_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = valid_episode()
+            episode["friction_flags"] = [[]]
+            episode_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            episode_path.parent.mkdir(parents=True)
+            episode_path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+
+            turn = valid_turn_flag()
+            turn["issue_flags"] = [{}]
+            turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            turn_path.parent.mkdir(parents=True)
+            turn_path.write_text(json.dumps(turn) + "\n", encoding="utf-8")
+
+            trend = valid_trend()
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("friction_flags must be safe-token array", issues)
+        self.assertIn("friction_flags must use allowed issue flags", issues)
+        self.assertIn("issue_flags must be safe-token array", issues)
+        self.assertIn("issue_flags must use allowed issue flags", issues)
+
     def test_safe_tokens_reject_compound_secret_names(self) -> None:
         for sample in (
             "client_secret",
@@ -1038,6 +1098,26 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             self.assertIn("window.start must be before window.end", "\n".join(MODULE.validate_root(root)))
 
+    def test_window_duration_must_match_retained_mode(self) -> None:
+        cases = (
+            ("daily", "2026-05-21T00:00:00Z", "2026-05-23T00:00:00Z"),
+            ("weekly", "2026-05-21T00:00:00Z", "2026-05-22T00:00:00Z"),
+            ("baseline-90d", "2026-05-01T00:00:00Z", "2026-05-22T00:00:00Z"),
+        )
+        for mode, start, end in cases:
+            with self.subTest(mode=mode):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    trend = valid_trend()
+                    trend["window"] = {"mode": mode, "start": start, "end": end}
+                    path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+                    path.parent.mkdir(parents=True)
+                    path.write_text(json.dumps(trend), encoding="utf-8")
+
+                    issues = "\n".join(MODULE.validate_root(root))
+
+                self.assertIn("window duration must match window.mode", issues)
+
     def test_window_accepts_nanosecond_precision_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -1045,7 +1125,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             trend["window"] = {
                 "mode": "daily",
                 "start": "2026-05-21T00:00:00.123456789Z",
-                "end": "2026-05-21T00:00:00.123456790Z",
+                "end": "2026-05-22T00:00:00.123456789Z",
             }
             path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
             path.parent.mkdir(parents=True)
@@ -1110,13 +1190,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             root = Path(raw)
             manifest = valid_manifest()
             manifest["mode"] = "baseline-90d"
-            manifest["window"]["mode"] = "baseline-90d"
+            manifest["window"] = window_for_mode("baseline-90d")
             manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
             manifest_path.parent.mkdir(parents=True)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
             trend = valid_trend()
-            trend["window"]["mode"] = "weekly"
+            trend["window"] = window_for_mode("weekly")
             trend_path = root / "data" / "trends" / "2026" / "06" / "trend_report.json"
             trend_path.parent.mkdir(parents=True)
             trend_path.write_text(json.dumps(trend), encoding="utf-8")
