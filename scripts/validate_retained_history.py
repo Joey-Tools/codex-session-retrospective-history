@@ -809,6 +809,18 @@ def retained_export_key(relative: Path) -> tuple[str, str] | None:
     return None
 
 
+def retained_data_month_key(relative: Path) -> tuple[str, str, str] | None:
+    parts = relative.parts
+    if (
+        len(parts) == 5
+        and parts[0] == "data"
+        and parts[1] in {"episodes", "turn_flags", "trends"}
+        and valid_year_month(parts, 2)
+    ):
+        return ("data", parts[2], parts[3])
+    return None
+
+
 def valid_trend_count_map(value: Any) -> bool:
     return isinstance(value, dict) and all(
         isinstance(key, str) and valid_non_negative_int(count) for key, count in value.items()
@@ -820,39 +832,61 @@ def sorted_counter(counter: Counter[str]) -> dict[str, int]:
 
 
 def validate_retained_export_consistency(
-    export_dir: tuple[str, str],
+    export_dir: tuple[str, ...],
     rows: dict[str, list[Any]],
     trend: Any,
+    artifact_paths: dict[str, Path] | None = None,
 ) -> list[str]:
     export_path = Path(*export_dir)
+    artifact_paths = artifact_paths or {}
+    episodes_path = artifact_paths.get("episode", export_path / "episodes.jsonl")
+    turn_flags_path = artifact_paths.get("turn_flag", export_path / "turn_flags.jsonl")
+    trend_path = artifact_paths.get("trend", export_path / "trend_report.json")
     issues: list[str] = []
-    if not isinstance(trend, dict):
-        return issues
 
     episodes = [row for row in rows.get("episode", []) if isinstance(row, dict)]
     turn_flags = [row for row in rows.get("turn_flag", []) if isinstance(row, dict)]
-    episodes_by_id = {
-        row["episode_id"]: row
-        for row in episodes
-        if isinstance(row.get("episode_id"), str) and EPISODE_REF_RE.fullmatch(row["episode_id"])
-    }
+    episodes_by_id: dict[str, dict[str, Any]] = {}
+    for index, row in enumerate(episodes, 1):
+        episode_id = row.get("episode_id")
+        if not isinstance(episode_id, str) or EPISODE_REF_RE.fullmatch(episode_id) is None:
+            continue
+        if episode_id in episodes_by_id:
+            issues.append(f"{episodes_path}:{index}: duplicate episode_id")
+            continue
+        episodes_by_id[episode_id] = row
+    turn_ids: set[str] = set()
+    for index, row in enumerate(turn_flags, 1):
+        turn_id = row.get("turn_id")
+        if not isinstance(turn_id, str) or TURN_REF_RE.fullmatch(turn_id) is None:
+            continue
+        if turn_id in turn_ids:
+            issues.append(f"{turn_flags_path}:{index}: duplicate turn_id")
+            continue
+        turn_ids.add(turn_id)
+
+    if not episodes and not turn_flags:
+        return issues
+    if not isinstance(trend, dict):
+        return issues
+
     for index, row in enumerate(turn_flags, 1):
         episode_id = row.get("episode_id")
         if not isinstance(episode_id, str) or not EPISODE_REF_RE.fullmatch(episode_id):
             continue
         episode = episodes_by_id.get(episode_id)
         if episode is None:
-            issues.append(f"{export_path}/turn_flags.jsonl:{index}: episode_id is missing from episodes export")
+            issues.append(f"{turn_flags_path}:{index}: episode_id is missing from episodes export")
             continue
         if row.get("host") != episode.get("host"):
-            issues.append(f"{export_path}/turn_flags.jsonl:{index}: host must match referenced episode")
+            issues.append(f"{turn_flags_path}:{index}: host must match referenced episode")
         if row.get("session_id") != episode.get("session_id"):
-            issues.append(f"{export_path}/turn_flags.jsonl:{index}: session_id must match referenced episode")
+            issues.append(f"{turn_flags_path}:{index}: session_id must match referenced episode")
 
     if valid_non_negative_int(trend.get("episode_count")) and trend["episode_count"] != len(episodes):
-        issues.append(f"{export_path}/trend_report.json: episode_count must match episodes.jsonl")
+        issues.append(f"{trend_path}: episode_count must match episodes.jsonl")
     if valid_non_negative_int(trend.get("flagged_turn_count")) and trend["flagged_turn_count"] != len(turn_flags):
-        issues.append(f"{export_path}/trend_report.json: flagged_turn_count must match turn_flags.jsonl")
+        issues.append(f"{trend_path}: flagged_turn_count must match turn_flags.jsonl")
 
     episode_turn_counts = [
         row.get("turn_count") for row in episodes if valid_non_negative_int(row.get("turn_count"))
@@ -860,7 +894,7 @@ def validate_retained_export_consistency(
     if len(episode_turn_counts) == len(episodes):
         expected_turn_count = sum(episode_turn_counts)
         if valid_non_negative_int(trend.get("turn_count")) and trend["turn_count"] != expected_turn_count:
-            issues.append(f"{export_path}/trend_report.json: turn_count must match episodes.jsonl turn_count total")
+            issues.append(f"{trend_path}: turn_count must match episodes.jsonl turn_count total")
 
         expected_hosts = Counter[str]()
         expected_model_eras = Counter[str]()
@@ -873,9 +907,9 @@ def validate_retained_export_consistency(
             if valid_retained_model_era(model_era):
                 expected_model_eras[model_era] += turn_count
         if valid_trend_count_map(trend.get("hosts")) and trend["hosts"] != sorted_counter(expected_hosts):
-            issues.append(f"{export_path}/trend_report.json: hosts must match episodes.jsonl turn_count totals")
+            issues.append(f"{trend_path}: hosts must match episodes.jsonl turn_count totals")
         if valid_trend_count_map(trend.get("model_eras")) and trend["model_eras"] != sorted_counter(expected_model_eras):
-            issues.append(f"{export_path}/trend_report.json: model_eras must match episodes.jsonl turn_count totals")
+            issues.append(f"{trend_path}: model_eras must match episodes.jsonl turn_count totals")
 
     expected_flags = Counter[str]()
     for row in turn_flags:
@@ -883,7 +917,7 @@ def validate_retained_export_consistency(
         if isinstance(flags, list):
             expected_flags.update(flag for flag in flags if valid_safe_token(flag))
     if valid_trend_count_map(trend.get("flags")) and trend["flags"] != sorted_counter(expected_flags):
-        issues.append(f"{export_path}/trend_report.json: flags must match turn_flags.jsonl issue_flags")
+        issues.append(f"{trend_path}: flags must match turn_flags.jsonl issue_flags")
 
     return issues
 
@@ -897,9 +931,13 @@ def validate_root(root: Path) -> list[str]:
     retained_export_modes: dict[tuple[str, str], dict[str, str]] = {}
     retained_export_rows: dict[tuple[str, str], dict[str, list[Any]]] = {}
     retained_export_trends: dict[tuple[str, str], Any] = {}
+    data_month_rows: dict[tuple[str, str, str], dict[str, list[Any]]] = {}
+    data_month_trends: dict[tuple[str, str, str], Any] = {}
+    data_month_paths: dict[tuple[str, str, str], dict[str, Path]] = {}
     for path in iter_files(root):
         relative = path.relative_to(root)
         export_key = retained_export_key(relative)
+        data_month_key = retained_data_month_key(relative)
         if export_key is not None:
             retained_export_files.setdefault(export_key, set()).add(relative.name)
         if path.is_symlink():
@@ -930,6 +968,9 @@ def validate_root(root: Path) -> list[str]:
                             retained_export_modes.setdefault(tuple(relative.parts[:2]), {})["trend"] = window["mode"]
                         if export_key is not None:
                             retained_export_trends[export_key] = data
+                    if data_month_key is not None and isinstance(data, dict):
+                        data_month_trends[data_month_key] = data
+                        data_month_paths.setdefault(data_month_key, {})["trend"] = relative
                 elif relative.parts[0] in {"data", "reports"} or not allowed_infrastructure_artifact(relative):
                     issues.append(f"{relative}: unexpected JSON artifact")
                     if contains_risky_key(data):
@@ -947,6 +988,9 @@ def validate_root(root: Path) -> list[str]:
                         issues.extend(f"{relative}:{index}: {issue}" for issue in validator(row))
                     if export_key is not None:
                         retained_export_rows.setdefault(export_key, {}).setdefault(jsonl_kind, []).extend(rows)
+                    if data_month_key is not None:
+                        data_month_rows.setdefault(data_month_key, {}).setdefault(jsonl_kind, []).extend(rows)
+                        data_month_paths.setdefault(data_month_key, {})[jsonl_kind] = relative
             elif relative.parts[0] in {"data", "reports"} and suffix in {".md", ".txt"}:
                 if not allowed_retained_text_artifact(relative):
                     issues.append(f"{relative}: unexpected retained text artifact location")
@@ -980,6 +1024,15 @@ def validate_root(root: Path) -> list[str]:
                 export_dir,
                 retained_export_rows.get(export_dir, {}),
                 retained_export_trends.get(export_dir),
+            )
+        )
+    for data_month in sorted(set(data_month_rows) | set(data_month_trends)):
+        issues.extend(
+            validate_retained_export_consistency(
+                data_month,
+                data_month_rows.get(data_month, {}),
+                data_month_trends.get(data_month),
+                artifact_paths=data_month_paths.get(data_month),
             )
         )
     return issues

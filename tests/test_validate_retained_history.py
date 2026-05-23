@@ -114,6 +114,18 @@ def write_retained_export(root: Path, export_dir: Path, *, mode: str = "daily") 
     (export_dir / "retained_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
+def write_monthly_export(root: Path, *, year: str = "2026", month: str = "05") -> None:
+    episodes_path = root / "data" / "episodes" / year / month / "episodes.jsonl"
+    turn_flags_path = root / "data" / "turn_flags" / year / month / "turn_flags.jsonl"
+    trend_path = root / "data" / "trends" / year / month / "trend_report.json"
+    episodes_path.parent.mkdir(parents=True)
+    turn_flags_path.parent.mkdir(parents=True)
+    trend_path.parent.mkdir(parents=True)
+    episodes_path.write_text(json.dumps(valid_episode()) + "\n", encoding="utf-8")
+    turn_flags_path.write_text(json.dumps(valid_turn_flag()) + "\n", encoding="utf-8")
+    trend_path.write_text(json.dumps(valid_trend()), encoding="utf-8")
+
+
 def risky_local_path() -> str:
     return "/Us" + "ers/hoteng/.cod" + "ex/sess" + "ions/2026/05/22/rollout.jsonl"
 
@@ -337,6 +349,80 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
         self.assertIn("retained/daily/turn_flags.jsonl:1: host must match referenced episode", issues)
         self.assertIn("retained/daily/turn_flags.jsonl:1: session_id must match referenced episode", issues)
+
+    def test_flat_retained_export_rejects_duplicate_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            episode = valid_episode()
+            turn_flag = valid_turn_flag()
+            (export_dir / "episodes.jsonl").write_text(
+                json.dumps(episode) + "\n" + json.dumps(episode) + "\n",
+                encoding="utf-8",
+            )
+            (export_dir / "turn_flags.jsonl").write_text(
+                json.dumps(turn_flag) + "\n" + json.dumps(turn_flag) + "\n",
+                encoding="utf-8",
+            )
+            trend = valid_trend()
+            trend["turn_count"] = 2
+            trend["flagged_turn_count"] = 2
+            trend["episode_count"] = 2
+            trend["flags"] = {"verification_gap": 2}
+            trend["hosts"] = {"local": 2}
+            trend["model_eras"] = {"unknown": 2}
+            (export_dir / "trend_report.json").write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/daily/episodes.jsonl:2: duplicate episode_id", issues)
+        self.assertIn("retained/daily/turn_flags.jsonl:2: duplicate turn_id", issues)
+
+    def test_monthly_retained_artifacts_reject_inconsistent_rows_and_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_monthly_export(root)
+            episodes_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            turn_flags_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            episode = valid_episode()
+            turn_flag = valid_turn_flag()
+            turn_flag["episode_id"] = "episode_ref_v1:" + "c" * 20
+            episodes_path.write_text(json.dumps(episode) + "\n" + json.dumps(episode) + "\n", encoding="utf-8")
+            turn_flags_path.write_text(json.dumps(turn_flag) + "\n" + json.dumps(turn_flag) + "\n", encoding="utf-8")
+            trend = valid_trend()
+            trend["turn_count"] = 0
+            trend["flagged_turn_count"] = 0
+            trend["episode_count"] = 0
+            trend["flags"] = {}
+            trend["hosts"] = {}
+            trend["model_eras"] = {}
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("data/episodes/2026/05/episodes.jsonl:2: duplicate episode_id", issues)
+        self.assertIn("data/turn_flags/2026/05/turn_flags.jsonl:2: duplicate turn_id", issues)
+        self.assertIn(
+            "data/turn_flags/2026/05/turn_flags.jsonl:1: episode_id is missing from episodes export",
+            issues,
+        )
+        self.assertIn("data/trends/2026/05/trend_report.json: episode_count must match episodes.jsonl", issues)
+        self.assertIn(
+            "data/trends/2026/05/trend_report.json: flagged_turn_count must match turn_flags.jsonl",
+            issues,
+        )
+        self.assertIn(
+            "data/trends/2026/05/trend_report.json: turn_count must match episodes.jsonl turn_count total",
+            issues,
+        )
+        self.assertIn("data/trends/2026/05/trend_report.json: hosts must match episodes.jsonl turn_count totals", issues)
+        self.assertIn(
+            "data/trends/2026/05/trend_report.json: model_eras must match episodes.jsonl turn_count totals",
+            issues,
+        )
+        self.assertIn("data/trends/2026/05/trend_report.json: flags must match turn_flags.jsonl issue_flags", issues)
 
     def test_forbidden_raw_artifact_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
