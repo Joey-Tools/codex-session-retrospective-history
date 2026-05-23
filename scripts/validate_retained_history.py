@@ -941,8 +941,8 @@ def validate_retained_export_consistency(
         for index, row in enumerate(episodes, 1):
             start_key = valid_timestamp_key(row.get("start"))
             end_key = valid_timestamp_key(row.get("end"))
-            if (start_key is not None and start_key < window_start) or (
-                end_key is not None and end_key > window_end
+            if (start_key is not None and (start_key < window_start or start_key >= window_end)) or (
+                end_key is not None and (end_key < window_start or end_key > window_end)
             ):
                 issues.append(f"{episodes_path}:{index}: episode start/end must be within trend window")
         for index, row in enumerate(turn_flags, 1):

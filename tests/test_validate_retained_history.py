@@ -427,6 +427,25 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("retained/daily/episodes.jsonl:1: episode start/end must be within trend window", issues)
         self.assertIn("retained/daily/turn_flags.jsonl:1: timestamp must be within trend window", issues)
 
+    def test_flat_retained_export_rejects_single_sided_episode_times_outside_trend_window(self) -> None:
+        for start_value, end_value in (
+            ("2026-06-01T00:00:00Z", None),
+            (None, "2026-04-30T23:59:59Z"),
+        ):
+            with self.subTest(start=start_value, end=end_value):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    export_dir = root / "retained" / "daily"
+                    write_retained_export(root, export_dir)
+                    episode = valid_episode()
+                    episode["start"] = start_value
+                    episode["end"] = end_value
+                    (export_dir / "episodes.jsonl").write_text(json.dumps(episode) + "\n", encoding="utf-8")
+
+                    issues = "\n".join(MODULE.validate_root(root))
+
+                self.assertIn("retained/daily/episodes.jsonl:1: episode start/end must be within trend window", issues)
+
     def test_flat_retained_export_rejects_duplicate_ids(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
