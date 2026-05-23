@@ -671,6 +671,33 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             self.assertEqual(MODULE.validate_root(root), [])
 
+    def test_episode_start_must_not_be_after_end(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = valid_episode()
+            episode["start"] = "2026-05-21T02:00:00Z"
+            episode["end"] = "2026-05-21T01:00:00Z"
+            path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+
+            self.assertIn("episode start must be before or equal to end", "\n".join(MODULE.validate_root(root)))
+
+    def test_trend_flagged_turn_count_cannot_exceed_turn_count(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            trend = valid_trend()
+            trend["turn_count"] = 1
+            trend["flagged_turn_count"] = 2
+            path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(trend), encoding="utf-8")
+
+            self.assertIn(
+                "flagged_turn_count must be less than or equal to turn_count",
+                "\n".join(MODULE.validate_root(root)),
+            )
+
     def test_timestamps_reject_non_calendar_dates(self) -> None:
         self.assertFalse(MODULE.valid_timestamp("2025-02-29T00:00:00Z"))
         self.assertFalse(MODULE.valid_timestamp("2026-04-31T00:00:00Z"))

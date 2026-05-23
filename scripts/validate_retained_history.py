@@ -635,10 +635,17 @@ def validate_episode(row: Any) -> list[str]:
         issues.append("host must be an allowed retained host")
     if not SESSION_REF_RE.fullmatch(str(row.get("session_id", ""))):
         issues.append("session_id must be session_ref_v1")
-    if not valid_timestamp_or_null(row.get("start")):
+    start_value = row.get("start")
+    end_value = row.get("end")
+    start_valid = valid_timestamp_or_null(start_value)
+    end_valid = valid_timestamp_or_null(end_value)
+    if not start_valid:
         issues.append("start must be timestamp or null")
-    if not valid_timestamp_or_null(row.get("end")):
+    if not end_valid:
         issues.append("end must be timestamp or null")
+    if start_valid and end_valid and isinstance(start_value, str) and isinstance(end_value, str):
+        if timestamp_order_key(start_value) > timestamp_order_key(end_value):
+            issues.append("episode start must be before or equal to end")
     if row.get("cwd") is not None and not PATH_REF_RE.fullmatch(str(row.get("cwd"))):
         issues.append("cwd must be path_ref_v1 or null")
     if not valid_retained_model_era(row.get("model_era")):
@@ -701,6 +708,9 @@ def validate_trend(data: Any) -> list[str]:
     for key in ("turn_count", "flagged_turn_count", "episode_count"):
         if not valid_non_negative_int(data.get(key)):
             issues.append(f"{key} must be a non-negative integer")
+    if valid_non_negative_int(data.get("turn_count")) and valid_non_negative_int(data.get("flagged_turn_count")):
+        if data["flagged_turn_count"] > data["turn_count"]:
+            issues.append("flagged_turn_count must be less than or equal to turn_count")
     for key in ("flags", "hosts", "model_eras"):
         issues.extend(validate_count_map(data.get(key), key))
     issues.extend(validate_coverage_gaps(data.get("coverage_gaps")))
