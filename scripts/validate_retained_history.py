@@ -574,7 +574,7 @@ def valid_baseline_report_filename(name: str) -> bool:
         return False
     start = dt.date(int(start_year), int(start_month), int(start_day))
     end = dt.date(int(end_year), int(end_month), int(end_day))
-    return start <= end
+    return (end - start).days == 90
 
 
 def allowed_retained_text_artifact(relative: Path) -> bool:
@@ -945,7 +945,7 @@ def validate_manifest(data: Any, *, expected_mode: str | None = None) -> list[st
         for index, source in enumerate(data.get("sources", []), 1):
             issues.extend(f"sources[{index}]: {issue}" for issue in validate_source_summary(source))
     issues.extend(validate_coverage_gaps(data.get("coverage_gaps")))
-    if data.get("redaction_policy_version") != 1:
+    if not valid_schema_version_one(data.get("redaction_policy_version")):
         issues.append("manifest redaction_policy_version must be 1")
     if data.get("retention_note") != "Derived retained manifest; raw location fields removed and opaque refs preserved.":
         issues.append("manifest retention_note is invalid")

@@ -361,6 +361,15 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             with self.subTest(sample=sample):
                 self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
                 self.assertTrue(any(pattern.search(sample) for pattern in manifest_schema_patterns))
+        for sample in (
+            risky_bare_private_ip(),
+            risky_bare_private_lan_ip(),
+            risky_link_local_ip(),
+            risky_cgnat_ip(),
+        ):
+            with self.subTest(sample=sample):
+                self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
+                self.assertTrue(any(pattern.search(sample) for pattern in manifest_schema_patterns))
 
     def test_schema_restricts_retained_modes_models_and_source_hashes(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
@@ -639,12 +648,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             manifest_path.parent.mkdir(parents=True)
             manifest = valid_manifest()
             manifest["schema_version"] = True
+            manifest["redaction_policy_version"] = True
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
             issues = "\n".join(MODULE.validate_root(root))
 
         self.assertIn("data/trends/2026/05/trend_report.json: trend schema_version must be 1", issues)
         self.assertIn("data/manifests/2026/05/retained_manifest.json: manifest schema_version must be 1", issues)
+        self.assertIn(
+            "data/manifests/2026/05/retained_manifest.json: manifest redaction_policy_version must be 1",
+            issues,
+        )
 
     def test_monthly_turn_flags_check_episode_refs_without_trend(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -965,6 +979,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "reports/baseline/90-day-windows/customer-acme.md",
             "reports/baseline/90-day-windows/2026-02-31_to_2026-03-01.md",
             "reports/baseline/90-day-windows/2026-03-01_to_2026-02-28.md",
+            "reports/baseline/90-day-windows/2026-05-01_to_2026-05-02.md",
+            "reports/baseline/90-day-windows/2026-01-01_to_2026-05-01.md",
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
@@ -1268,6 +1284,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             risky_compound_session_token(),
             risky_compound_turn_token(),
             risky_compound_episode_token(),
+            risky_bare_private_ip(),
+            risky_bare_private_lan_ip(),
+            risky_link_local_ip(),
+            risky_cgnat_ip(),
         ):
             with self.subTest(sample=sample):
                 self.assertFalse(MODULE.valid_safe_token(sample))
