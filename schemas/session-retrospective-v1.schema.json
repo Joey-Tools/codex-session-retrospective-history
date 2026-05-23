@@ -135,6 +135,7 @@
             "$ref": "#/$defs/issue_flag"
           },
           "maxItems": 16,
+          "uniqueItems": true,
           "type": "array"
         },
         "host": {
@@ -263,7 +264,7 @@
           "type": "string"
         },
         {
-          "pattern": "^baseline-[1-9][0-9]{0,3}d$",
+          "pattern": "^baseline-90d$",
           "type": "string"
         }
       ]
@@ -566,6 +567,7 @@
           },
           "maxItems": 16,
           "minItems": 1,
+          "uniqueItems": true,
           "type": "array"
         },
         "model": {

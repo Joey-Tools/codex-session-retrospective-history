@@ -66,7 +66,10 @@ RAW_ID_VALUE_RE = re.compile(
     r"(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:|row\.get\b|data\.get\b|value\.get\b)[A-Za-z0-9_.:-]{6,}\b",
     re.I,
 )
-BASELINE_MODE_RE = re.compile(r"^baseline-[1-9][0-9]{0,3}d$")
+BASELINE_MODE_RE = re.compile(r"^baseline-90d$")
+PRIVATE_IPV4_RE = re.compile(
+    r"(?<![\d.])(?:10(?:\.\d{1,3}){3}|127(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})(?![\d.])"
+)
 TIMESTAMP_RE = re.compile(
     r"^(?:(?:\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-8])))|(?:(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29))T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$"
 )
@@ -206,6 +209,7 @@ RISK_PATTERNS = (
     re.compile(r"(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)"),
     re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
+    PRIVATE_IPV4_RE,
     RAW_ID_VALUE_RE,
     RAW_ID_TOKEN_RE,
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
@@ -238,6 +242,7 @@ INFRASTRUCTURE_RISK_PATTERNS = (
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
+    PRIVATE_IPV4_RE,
     RAW_ID_VALUE_RE,
     RAW_ID_TOKEN_RE,
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
@@ -478,9 +483,8 @@ def retained_mode_days(mode: str) -> int | None:
         return 1
     if mode == "weekly":
         return 7
-    match = BASELINE_MODE_RE.fullmatch(mode)
-    if match is not None:
-        return int(mode.removeprefix("baseline-").removesuffix("d"))
+    if mode == "baseline-90d":
+        return 90
     return None
 
 
@@ -495,7 +499,7 @@ def validate_expected_mode(value: Any, expected_mode: str | None, label: str) ->
     if expected_mode is None:
         return []
     if expected_mode == "baseline":
-        if not isinstance(value, str) or BASELINE_MODE_RE.fullmatch(value) is None:
+        if value != "baseline-90d":
             return [f"{label} must match retained/baseline export directory"]
         return []
     if value != expected_mode:
@@ -617,10 +621,15 @@ def validate_safe_token_array(value: Any, label: str, *, min_items: int = 0) -> 
 def validate_issue_flag_array(value: Any, label: str, *, min_items: int = 0) -> list[str]:
     issues = validate_safe_token_array(value, label, min_items=min_items)
     if isinstance(value, list):
+        seen: set[str] = set()
         for item in value:
             if not isinstance(item, str) or item not in ISSUE_FLAGS:
                 issues.append(f"{label} must use allowed issue flags")
                 break
+            if item in seen:
+                issues.append(f"{label} must not contain duplicate issue flags")
+                break
+            seen.add(item)
     return issues
 
 
@@ -931,6 +940,7 @@ def validate_retained_export_consistency(
     export_dir: tuple[str, ...],
     rows: dict[str, list[Any]],
     trend: Any,
+    manifest: Any = None,
     artifact_paths: dict[str, Path] | None = None,
     data_month: tuple[str, str, str] | None = None,
 ) -> list[str]:
@@ -939,6 +949,7 @@ def validate_retained_export_consistency(
     episodes_path = artifact_paths.get("episode", export_path / "episodes.jsonl")
     turn_flags_path = artifact_paths.get("turn_flag", export_path / "turn_flags.jsonl")
     trend_path = artifact_paths.get("trend", export_path / "trend_report.json")
+    manifest_path = artifact_paths.get("manifest", export_path / "retained_manifest.json")
     issues: list[str] = []
 
     episodes = [row for row in rows.get("episode", []) if isinstance(row, dict)]
@@ -962,9 +973,6 @@ def validate_retained_export_consistency(
             continue
         turn_ids.add(turn_id)
 
-    if not episodes and not turn_flags and "episode" not in rows and "turn_flag" not in rows:
-        return issues
-
     for index, row in enumerate(turn_flags, 1):
         episode_id = row.get("episode_id")
         if not isinstance(episode_id, str) or not EPISODE_REF_RE.fullmatch(episode_id):
@@ -980,6 +988,15 @@ def validate_retained_export_consistency(
 
     if data_month is not None:
         month_start, month_end = data_month_window(data_month)
+        for artifact, path in ((trend, trend_path), (manifest, manifest_path)):
+            if isinstance(artifact, dict):
+                window_identity = retained_window_identity(artifact.get("window"))
+                if window_identity is not None:
+                    _, window_start, window_end = window_identity
+                    if window_start >= month_end or window_end <= month_start:
+                        issues.append(f"{path}: window must overlap data month")
+                    elif window_end > month_end:
+                        issues.append(f"{path}: window end must be within data month")
         for index, row in enumerate(episodes, 1):
             start_key = valid_timestamp_key(row.get("start"))
             end_key = valid_timestamp_key(row.get("end"))
@@ -991,6 +1008,9 @@ def validate_retained_export_consistency(
             timestamp_key = valid_timestamp_key(row.get("timestamp"))
             if timestamp_key is not None and (timestamp_key < month_start or timestamp_key >= month_end):
                 issues.append(f"{turn_flags_path}:{index}: timestamp must be within data month")
+
+    if not episodes and not turn_flags and "episode" not in rows and "turn_flag" not in rows and not isinstance(trend, dict):
+        return issues
 
     if not isinstance(trend, dict):
         return issues
@@ -1042,7 +1062,7 @@ def validate_retained_export_consistency(
     for row in turn_flags:
         flags = row.get("issue_flags")
         if isinstance(flags, list):
-            expected_flags.update(flag for flag in flags if isinstance(flag, str) and flag in ISSUE_FLAGS)
+            expected_flags.update({flag for flag in flags if isinstance(flag, str) and flag in ISSUE_FLAGS})
     if valid_trend_count_map(trend.get("flags")) and trend["flags"] != sorted_counter(expected_flags):
         issues.append(f"{trend_path}: flags must match turn_flags.jsonl issue_flags")
 
@@ -1181,6 +1201,7 @@ def validate_root(root: Path) -> list[str]:
                 data_month,
                 data_month_rows.get(data_month, {}),
                 data_month_trends.get(data_month),
+                manifest=data_month_manifests.get(data_month),
                 artifact_paths=data_month_paths.get(data_month),
                 data_month=data_month,
             )

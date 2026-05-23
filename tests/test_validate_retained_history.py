@@ -155,7 +155,15 @@ def risky_localhost_url() -> str:
 
 
 def risky_private_ip_url() -> str:
-    return "http" + "://10.0.0.5:8080/status"
+    return "http" + "://" + risky_bare_private_ip() + ":8080/status"
+
+
+def risky_bare_private_ip() -> str:
+    return "10" + ".0.0.5"
+
+
+def risky_bare_private_lan_ip() -> str:
+    return "192" + ".168.1.4"
 
 
 def risky_short_host_url() -> str:
@@ -163,7 +171,7 @@ def risky_short_host_url() -> str:
 
 
 def risky_private_ip_ssh_url() -> str:
-    return "ssh" + "://git@10.0.0.5/repo"
+    return "ssh" + "://git@" + risky_bare_private_ip() + "/repo"
 
 
 def risky_short_host_git_remote() -> str:
@@ -337,6 +345,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(schema["$defs"]["trend"]["properties"]["window"], {"$ref": "#/$defs/window"})
         self.assertEqual(schema["$defs"]["manifest"]["properties"]["mode"], {"$ref": "#/$defs/retained_mode"})
         self.assertEqual(manifest_schema["properties"]["mode"], {"$ref": "#/$defs/retained_mode"})
+        self.assertIs(schema["$defs"]["episode"]["properties"]["friction_flags"]["uniqueItems"], True)
+        self.assertIs(schema["$defs"]["turn_flag"]["properties"]["issue_flags"]["uniqueItems"], True)
 
     def test_schema_timestamp_patterns_reject_non_calendar_dates(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
@@ -517,6 +527,56 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "data/trends/2026/05/trend_report.json: flagged_turn_count must match turn_flags.jsonl",
             issues,
         )
+
+    def test_monthly_trend_without_row_files_rejects_nonzero_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(valid_trend()), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("data/trends/2026/05/trend_report.json: episode_count must match episodes.jsonl", issues)
+        self.assertIn("data/trends/2026/05/trend_report.json: flagged_turn_count must match turn_flags.jsonl", issues)
+        self.assertIn("data/trends/2026/05/trend_report.json: turn_count must match episodes.jsonl turn_count total", issues)
+        self.assertIn("data/trends/2026/05/trend_report.json: hosts must match episodes.jsonl turn_count totals", issues)
+        self.assertIn("data/trends/2026/05/trend_report.json: model_eras must match episodes.jsonl turn_count totals", issues)
+        self.assertIn("data/trends/2026/05/trend_report.json: flags must match turn_flags.jsonl issue_flags", issues)
+
+    def test_monthly_artifact_windows_must_belong_to_path_month(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            trend = valid_trend()
+            trend["turn_count"] = 0
+            trend["flagged_turn_count"] = 0
+            trend["episode_count"] = 0
+            trend["flags"] = {}
+            trend["hosts"] = {}
+            trend["model_eras"] = {}
+            trend["window"] = {
+                "mode": "daily",
+                "start": "2026-06-01T00:00:00Z",
+                "end": "2026-06-02T00:00:00Z",
+            }
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            manifest = valid_manifest()
+            manifest["window"] = {
+                "mode": "daily",
+                "start": "2026-04-29T00:00:00Z",
+                "end": "2026-04-30T00:00:00Z",
+            }
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("data/trends/2026/05/trend_report.json: window must overlap data month", issues)
+        self.assertIn("data/manifests/2026/05/retained_manifest.json: window must overlap data month", issues)
 
     def test_monthly_turn_flags_check_episode_refs_without_trend(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -1042,6 +1102,32 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("issue_flags must use allowed issue flags", issues)
         self.assertIn("flags keys must use allowed issue flags", issues)
 
+    def test_retained_flags_reject_duplicate_issue_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = valid_episode()
+            episode["friction_flags"] = ["verification_gap", "verification_gap"]
+            episode_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            episode_path.parent.mkdir(parents=True)
+            episode_path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+
+            turn = valid_turn_flag()
+            turn["issue_flags"] = ["verification_gap", "verification_gap"]
+            turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            turn_path.parent.mkdir(parents=True)
+            turn_path.write_text(json.dumps(turn) + "\n", encoding="utf-8")
+
+            trend = valid_trend()
+            trend["flags"] = {"verification_gap": 1}
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("friction_flags must not contain duplicate issue flags", issues)
+        self.assertIn("issue_flags must not contain duplicate issue flags", issues)
+
     def test_nested_issue_flags_report_errors_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -1127,6 +1213,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "start": "2026-05-21T00:00:00.123456789Z",
                 "end": "2026-05-22T00:00:00.123456789Z",
             }
+            trend["turn_count"] = 0
+            trend["flagged_turn_count"] = 0
+            trend["episode_count"] = 0
+            trend["flags"] = {}
+            trend["hosts"] = {}
+            trend["model_eras"] = {}
             path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps(trend), encoding="utf-8")
@@ -1195,13 +1287,36 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             manifest_path.parent.mkdir(parents=True)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
+            self.assertEqual(MODULE.validate_root(root), [])
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_monthly_export(root)
             trend = valid_trend()
             trend["window"] = window_for_mode("weekly")
-            trend_path = root / "data" / "trends" / "2026" / "06" / "trend_report.json"
-            trend_path.parent.mkdir(parents=True)
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
             trend_path.write_text(json.dumps(trend), encoding="utf-8")
 
             self.assertEqual(MODULE.validate_root(root), [])
+
+    def test_retained_mode_rejects_non_90_day_baselines(self) -> None:
+        self.assertFalse(MODULE.valid_retained_mode("baseline-30d"))
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            trend = valid_trend()
+            trend["window"] = {
+                "mode": "baseline-30d",
+                "start": "2026-04-22T00:00:00Z",
+                "end": "2026-05-22T00:00:00Z",
+            }
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("window.mode must be an allowed retained mode", issues)
 
     def test_manifest_mode_must_match_window_mode(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -1368,6 +1483,27 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     path.write_text(text, encoding="utf-8")
 
                     self.assertIn("infrastructure text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
+
+    def test_retained_text_rejects_bare_private_ip_addresses(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            report = root / "reports" / "daily" / "2026" / "05" / "22.md"
+            report.parent.mkdir(parents=True)
+            report.write_text("Investigated host " + risky_bare_private_ip() + "\n", encoding="utf-8")
+
+            turn = valid_turn_flag()
+            turn["redacted_user_prompt_summary"] = "Investigated host " + risky_bare_private_lan_ip()
+            turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            turn_path.parent.mkdir(parents=True)
+            turn_path.write_text(json.dumps(turn) + "\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("reports/daily/2026/05/22.md: retained text contains raw/sensitive evidence", issues)
+        self.assertIn(
+            "data/turn_flags/2026/05/turn_flags.jsonl:1: redacted_user_prompt_summary contains retained-text risk",
+            issues,
+        )
 
     def test_safe_tokens_reject_risky_structured_values(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
