@@ -9,7 +9,9 @@ import subprocess
 from typing import Any
 
 
-FORBIDDEN_COMPONENTS = frozenset({".codex", ".codex-local", ".codex-tmp", "raw", "scratch", "transient"})
+FORBIDDEN_COMPONENTS = frozenset(
+    {".codex", ".codex-local", ".codex-tmp", "archived_sessions", "raw", "scratch", "sessions", "transient"}
+)
 FORBIDDEN_FILENAMES = frozenset(
     {
         "auth.json",
@@ -141,7 +143,7 @@ RISK_PATTERNS = (
     re.compile(r"\bgit@[A-Za-z0-9_.-]+:"),
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     re.compile(r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/"),
-    re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:/|\\)"),
+    re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)"),
     re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)"),
     re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\"),
     re.compile(r"\b(?:password|passwd|pwd|credential|secret|token|api[_-]?key|authorization)\s*[:=]", re.I),

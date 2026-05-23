@@ -225,7 +225,7 @@
             "pattern": "(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/"
           },
           {
-            "pattern": "(^|[^A-Za-z0-9_])(?:\\./|\\.\\./)?\\.codex(?:/|\\\\)"
+            "pattern": "(^|[^A-Za-z0-9_])(?:\\./|\\.\\./)?\\.codex(?:-local|-tmp)?(?:/|\\\\)"
           },
           {
             "pattern": "(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\\\)"

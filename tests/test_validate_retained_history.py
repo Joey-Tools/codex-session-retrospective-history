@@ -60,6 +60,20 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             self.assertIn("forbidden raw/transient artifact", "\n".join(MODULE.validate_root(root)))
 
+    def test_forced_raw_session_directories_are_rejected(self) -> None:
+        for relative_path in ("sessions/prompt.txt", "archived_sessions/raw.txt"):
+            with self.subTest(relative_path=relative_path):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.DEVNULL)
+                    (root / ".gitignore").write_text("sessions/\narchived_sessions/\n", encoding="utf-8")
+                    artifact = root / relative_path
+                    artifact.parent.mkdir(parents=True)
+                    artifact.write_text("raw prompt text\n", encoding="utf-8")
+                    subprocess.run(["git", "add", "-f", relative_path], cwd=root, check=True)
+
+                    self.assertIn("forbidden raw/transient artifact", "\n".join(MODULE.validate_root(root)))
+
     def test_retained_text_risks_are_rejected(self) -> None:
         risky_examples = (
             "Upper-case URL HTTPS://internal.example/path",
@@ -67,6 +81,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "Raw session pointer Session ID: abc123456",
             "Raw turn pointer turn-id=abc123456",
             "Relative source path ./.codex/sessions/2026/05/22/rollout.jsonl",
+            "Relative local source path .codex-local/session-retrospective/out/state.json",
+            "Relative temp source path .codex-tmp/isolated-review/stdout.log",
             "Windows path C:\\Users\\hoteng\\project",
             "Internal hostname jira.cisco.example",
             "Rollout file rollout-2026-05-22T10-00-00-abc.jsonl",
