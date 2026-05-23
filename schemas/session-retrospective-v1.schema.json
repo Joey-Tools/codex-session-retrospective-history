@@ -44,7 +44,7 @@
           "type": "integer"
         },
         "host": {
-          "$ref": "#/$defs/retained_host"
+          "$ref": "#/$defs/retained_coverage_host"
         },
         "reason": {
           "enum": [
@@ -271,7 +271,7 @@
             "pattern": "\\b[A-Za-z]:\\\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\\\"
           },
           {
-            "pattern": "\\b(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn])\\s*[:=]"
+            "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn])(?:\u0022|')?\\s*[:=]"
           },
           {
             "pattern": "\\b[Bb][Ee][Aa][Rr][Ee][Rr]\\s+[A-Za-z0-9._~+/=-]{12,}\\b"
@@ -289,13 +289,17 @@
             "pattern": "\\b[Rr][Oo][Ll][Ll][Oo][Uu][Tt](?:-[Ss][Uu][Mm][Mm][Aa][Rr][Yy])?-[A-Za-z0-9_.-]+\\.[Jj][Ss][Oo][Nn][Ll]\\b"
           },
           {
-            "pattern": "\\b(?:[Ss]ession|[Tt]urn|[Ee]pisode)[-_ ]?[Ii][Dd]\\s*[:=]\\s*[\"']?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\\b"
+            "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?(?:[Ss]ession|[Tt]urn|[Ee]pisode)[-_ ]?[Ii][Dd](?:\u0022|')?\\s*[:=]\\s*(?:\u0022|')?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\\b"
           }
         ]
       },
       "type": "string"
     },
     "retained_host": {
+      "enum": ["local", "miku-bot-dev", "hoteng-srv-01", "custom_source"],
+      "type": "string"
+    },
+    "retained_coverage_host": {
       "enum": ["local", "miku-bot-dev", "hoteng-srv-01", "custom_source", "scope"],
       "type": "string"
     },

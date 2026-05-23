@@ -117,17 +117,20 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_schema_host_allowlist_matches_validator(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
         manifest_schema = json.loads(MANIFEST_SCHEMA.read_text(encoding="utf-8"))
-        expected = sorted(MODULE.RETAINED_HOSTS)
+        expected = sorted(MODULE.RETAINED_EVIDENCE_HOSTS)
+        coverage_expected = sorted(MODULE.RETAINED_HOSTS)
 
         self.assertEqual(sorted(schema["$defs"]["retained_host"]["enum"]), expected)
+        self.assertEqual(sorted(schema["$defs"]["retained_coverage_host"]["enum"]), coverage_expected)
         self.assertEqual(sorted(manifest_schema["$defs"]["retained_host"]["enum"]), expected)
+        self.assertEqual(sorted(manifest_schema["$defs"]["retained_coverage_host"]["enum"]), coverage_expected)
         self.assertEqual(schema["$defs"]["episode"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
         self.assertEqual(schema["$defs"]["turn_flag"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
         self.assertEqual(schema["$defs"]["source_summary"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
-        self.assertEqual(schema["$defs"]["coverage_gap"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
+        self.assertEqual(schema["$defs"]["coverage_gap"]["properties"]["host"], {"$ref": "#/$defs/retained_coverage_host"})
         self.assertEqual(schema["$defs"]["trend"]["properties"]["hosts"], {"$ref": "#/$defs/retained_host_count_map"})
         self.assertEqual(manifest_schema["$defs"]["source_summary"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
-        self.assertEqual(manifest_schema["$defs"]["coverage_gap"]["properties"]["host"], {"$ref": "#/$defs/retained_host"})
+        self.assertEqual(manifest_schema["$defs"]["coverage_gap"]["properties"]["host"], {"$ref": "#/$defs/retained_coverage_host"})
 
     def test_clean_report_passes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -199,6 +202,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "SSH URL ssh://git@example.internal/repo",
             "Raw session pointer Session ID: abc123456",
             "Raw turn pointer turn-id=abc123456",
+            '{"token":"redactedvalue"}',
+            '{"session_id":"abc123456"}',
             "Private key block -----BEGIN PRIVATE KEY-----\nredacted",
             "PGP private key block -----BEGIN PGP PRIVATE KEY BLOCK-----\nredacted",
             "Relative source path ./.codex/sessions/2026/05/22/rollout.jsonl",
@@ -571,6 +576,26 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertIn("hosts key must be an allowed retained host", issues)
             self.assertIn("source host must be an allowed retained host", issues)
             self.assertIn("coverage gap host must be an allowed retained host", issues)
+
+    def test_scope_is_only_allowed_for_coverage_gap_host(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = valid_manifest()
+            manifest["coverage_gaps"] = [{"host": "scope", "reason": "partial_host_scope"}]
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertEqual(MODULE.validate_root(root), [])
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            trend = valid_trend()
+            trend["hosts"] = {"scope": 1}
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            self.assertIn("hosts key must be an allowed retained host", "\n".join(MODULE.validate_root(root)))
 
     def test_count_maps_are_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

@@ -65,7 +65,8 @@ WORKFLOW_SUFFIXES = frozenset({".yaml", ".yml"})
 SCHEMA_FILES = frozenset({"retained-manifest-v1.schema.json", "session-retrospective-v1.schema.json"})
 RETAINED_EXPORT_DIRS = frozenset({("retained", "daily"), ("retained", "weekly"), ("retained", "baseline")})
 RETAINED_EXPORT_FILES = frozenset({"episodes.jsonl", "turn_flags.jsonl", "trend_report.json", "retained_manifest.json"})
-RETAINED_HOSTS = frozenset({"local", "miku-bot-dev", "hoteng-srv-01", "custom_source", "scope"})
+RETAINED_EVIDENCE_HOSTS = frozenset({"local", "miku-bot-dev", "hoteng-srv-01", "custom_source"})
+RETAINED_HOSTS = frozenset((*RETAINED_EVIDENCE_HOSTS, "scope"))
 EPISODE_KEYS = frozenset(
     {
         "episode_id",
@@ -165,14 +166,14 @@ RISK_PATTERNS = (
     re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)", re.I),
     re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
     re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\"),
-    re.compile(r"\b(?:password|passwd|pwd|credential|secret|token|api[_-]?key|authorization)\s*[:=]", re.I),
+    re.compile(r"(?<![A-Za-z0-9_])[\"']?(?:password|passwd|pwd|credential|secret|token|api[_-]?key|authorization)[\"']?\s*[:=]", re.I),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)"),
     re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
     re.compile(
-        r"\b(?:session|turn|episode)[-_ ]?id\s*[:=]\s*[\"']?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\b",
+        r"(?<![A-Za-z0-9_])[\"']?(?:session|turn|episode)[-_ ]?id[\"']?\s*[:=]\s*[\"']?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\b",
         re.I,
     ),
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
@@ -328,6 +329,10 @@ def valid_safe_token(value: Any) -> bool:
 
 
 def valid_retained_host(value: Any) -> bool:
+    return isinstance(value, str) and value in RETAINED_EVIDENCE_HOSTS
+
+
+def valid_retained_coverage_host(value: Any) -> bool:
     return isinstance(value, str) and value in RETAINED_HOSTS
 
 
@@ -443,7 +448,7 @@ def validate_coverage_gap(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return ["coverage gap must be an object"]
     issues = unexpected_keys(value, COVERAGE_GAP_KEYS)
-    if "host" not in value or not valid_retained_host(value.get("host")):
+    if "host" not in value or not valid_retained_coverage_host(value.get("host")):
         issues.append("coverage gap host must be an allowed retained host")
     if "reason" not in value or value.get("reason") not in COVERAGE_REASONS:
         issues.append("coverage gap reason is invalid")

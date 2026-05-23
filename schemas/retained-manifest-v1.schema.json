@@ -20,7 +20,7 @@
           "type": "integer"
         },
         "host": {
-          "$ref": "#/$defs/retained_host"
+          "$ref": "#/$defs/retained_coverage_host"
         },
         "reason": {
           "enum": [
@@ -55,6 +55,10 @@
       "type": "string"
     },
     "retained_host": {
+      "enum": ["local", "miku-bot-dev", "hoteng-srv-01", "custom_source"],
+      "type": "string"
+    },
+    "retained_coverage_host": {
       "enum": ["local", "miku-bot-dev", "hoteng-srv-01", "custom_source", "scope"],
       "type": "string"
     },
