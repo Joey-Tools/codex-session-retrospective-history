@@ -60,9 +60,9 @@ SENSITIVE_TOKEN_RE = re.compile(
     r"(^|[._-])(?:password|passwd|pwd|credentials?|secret|token|api[._-]?key|authorization|private[._-]?key)($|[._-])",
     re.I,
 )
-RAW_ID_TOKEN_RE = re.compile(r"\b(?:session|turn|episode)[._-]id[._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\b", re.I)
+RAW_ID_TOKEN_RE = re.compile(r"\b(?:session|turn|episode)(?:[._-]?id)[._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\b", re.I)
 RAW_ID_VALUE_RE = re.compile(
-    r"(?<![A-Za-z0-9_])[\"']?(?:session|turn|episode)[._ -]id[\"']?(?:\s*[:=]\s*|\s+)[\"']?"
+    r"(?<![A-Za-z0-9_])[\"']?(?:session|turn|episode)(?:[._ -]?id)[\"']?(?:\s*[:=]\s*|\s+)[\"']?"
     r"(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:|row\.get\b|data\.get\b|value\.get\b)[A-Za-z0-9_.:-]{6,}\b",
     re.I,
 )
@@ -195,6 +195,11 @@ MAX_SAFE_TOKEN_LENGTH = 64
 MAX_TOKEN_ARRAY_ITEMS = 16
 MAX_COUNT_MAP_PROPERTIES = 64
 MAX_COUNT = 1_000_000
+RETAINED_SAFETY_TEXT_RE = re.compile(
+    r"(?:\b(?:secret|token|credential|password|private key|production|destructive|rm -rf|reset --hard|customer data|privacy|pii)\b|"
+    r"客户|客户数据|凭据|凭证|密钥|生产|破坏性)",
+    re.I,
+)
 RISK_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", re.I),
     re.compile(r"\b(?:https?|ssh)://", re.I),
@@ -207,7 +212,7 @@ RISK_PATTERNS = (
     re.compile(
         r"(?<![A-Za-z0-9_])[\"']?"
         r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]*key|authorization|private[\s._-]*key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
-        r"(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]+",
+        r"(?!(?:re\.compile|frozenset)\b)",
         re.I,
     ),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
@@ -220,6 +225,7 @@ RISK_PATTERNS = (
     RAW_ID_VALUE_RE,
     RAW_ID_TOKEN_RE,
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
+    RETAINED_SAFETY_TEXT_RE,
 )
 INFRASTRUCTURE_RISK_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", re.I),
@@ -241,9 +247,9 @@ INFRASTRUCTURE_RISK_PATTERNS = (
     re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\", re.I),
     re.compile(
         r"(?<![A-Za-z0-9_])[\"']?"
-        r"(?!(?:safe[._-]?token[._-]?re|max[._-]?safe[._-]?token[._-]?length|max[._-]?token[._-]?array[._-]?items|sensitive[._-]?token[._-]?re|risk[._-]?patterns?|infrastructure[._-]?risk[._-]?patterns?|safe[._-]?infrastructure[._-]?lines)[\"']?\s*[:=])"
+        r"(?!(?:safe[._-]?token(?:[._-]?re)?|max[._-]?safe[._-]?token[._-]?length|max[._-]?token[._-]?array[._-]?items|sensitive[._-]?token[._-]?re|raw[._-]?id[._-]?token[._-]?re|tokens|risk[._-]?patterns?|infrastructure[._-]?risk[._-]?patterns?|safe[._-]?infrastructure[._-]?lines)[\"']?\s*[:=])"
         r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]*key|authorization|private[\s._-]*key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
-        r"(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]+",
+        r"(?!(?:re\.compile|frozenset)\b)",
         re.I,
     ),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
@@ -376,13 +382,13 @@ def parse_jsonl(path: Path) -> list[Any]:
     return rows
 
 
-def contains_risky_text(value: Any) -> bool:
+def contains_risky_text(value: Any, *, include_safety_markers: bool = True) -> bool:
     if isinstance(value, str):
-        return any(pattern.search(value) for pattern in RISK_PATTERNS)
+        return any(pattern.search(value) for pattern in RISK_PATTERNS if include_safety_markers or pattern is not RETAINED_SAFETY_TEXT_RE)
     if isinstance(value, dict):
-        return any(contains_risky_text(child) for child in value.values())
+        return any(contains_risky_text(child, include_safety_markers=include_safety_markers) for child in value.values())
     if isinstance(value, list):
-        return any(contains_risky_text(child) for child in value)
+        return any(contains_risky_text(child, include_safety_markers=include_safety_markers) for child in value)
     return False
 
 
@@ -1199,7 +1205,8 @@ def validate_root(root: Path) -> list[str]:
             elif relative.parts[0] in {"data", "reports"} and suffix in {".md", ".txt"}:
                 if not allowed_retained_text_artifact(relative):
                     issues.append(f"{relative}: unexpected retained text artifact location")
-                if contains_risky_text(path.read_text(encoding="utf-8")):
+                include_safety_markers = relative.as_posix() not in {"data/README.md", "reports/README.md"}
+                if contains_risky_text(path.read_text(encoding="utf-8"), include_safety_markers=include_safety_markers):
                     issues.append(f"{relative}: retained text contains raw/sensitive evidence")
             elif relative.parts[0] in {"data", "reports"} and suffix not in VALID_RETAINED_SUFFIXES:
                 issues.append(f"{relative}: unexpected retained artifact suffix")

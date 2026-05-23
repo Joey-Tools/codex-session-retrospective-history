@@ -238,6 +238,18 @@ def risky_dotted_episode_pointer() -> str:
     return "episode." + "id: abc123456"
 
 
+def risky_camel_session_pointer() -> str:
+    return "session" + "Id: abc123456"
+
+
+def risky_camel_turn_pointer() -> str:
+    return "turn" + "Id=abc123456"
+
+
+def risky_camel_episode_pointer() -> str:
+    return "episode" + "ID abc123456"
+
+
 def risky_compound_session_token() -> str:
     return "session_" + "id_abc123456"
 
@@ -248,6 +260,14 @@ def risky_compound_turn_token() -> str:
 
 def risky_compound_episode_token() -> str:
     return "episode." + "id.abc123456"
+
+
+def risky_compound_camel_session_token() -> str:
+    return "session" + "Id_abc123456"
+
+
+def risky_compound_camel_turn_token() -> str:
+    return "turn" + "Id-abc123456"
 
 
 def risky_rollout_filename() -> str:
@@ -310,6 +330,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "secret " + "key: abc",
             "private" + "key: abc",
             "private " + "key: abc",
+            "api" + "Key: [REDACTED]",
+            "private" + "Key = <redacted>",
+            "customer data",
+            "PII",
+            "production",
         ):
             with self.subTest(sample=sample):
                 self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
@@ -345,6 +370,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             risky_dotted_session_pointer(),
             risky_space_turn_pointer(),
             risky_dotted_episode_pointer(),
+            risky_camel_session_pointer(),
+            risky_camel_turn_pointer(),
+            risky_camel_episode_pointer(),
         ):
             with self.subTest(text=text):
                 self.assertIsNotNone(raw_id_re.search(text))
@@ -363,7 +391,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy]", patterns)
         self.assertIn("[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?", manifest_patterns)
         self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy]", manifest_patterns)
-        for sample in (risky_compound_session_token(), risky_compound_turn_token(), risky_compound_episode_token()):
+        for sample in (
+            risky_compound_session_token(),
+            risky_compound_turn_token(),
+            risky_compound_episode_token(),
+            risky_compound_camel_session_token(),
+            risky_compound_camel_turn_token(),
+        ):
             with self.subTest(sample=sample):
                 self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
                 self.assertTrue(any(pattern.search(sample) for pattern in manifest_schema_patterns))
@@ -803,10 +837,18 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "Raw dotted session pointer " + risky_dotted_session_pointer(),
             "Raw turn pointer " + risky_space_turn_pointer(),
             "Raw dotted episode pointer " + risky_dotted_episode_pointer(),
+            "Raw camel session pointer " + risky_camel_session_pointer(),
+            "Raw camel turn pointer " + risky_camel_turn_pointer(),
+            "Raw camel episode pointer " + risky_camel_episode_pointer(),
             "Raw compound session pointer " + risky_compound_session_token(),
             "Raw compound turn pointer " + risky_compound_turn_token(),
             "Raw compound episode pointer " + risky_compound_episode_token(),
+            "Raw compound camel session pointer " + risky_compound_camel_session_token(),
+            "Raw compound camel turn pointer " + risky_compound_camel_turn_token(),
             '{"to' + 'ken":"redactedvalue"}',
+            '{"api' + 'Key":"[REDACTED]"}',
+            '{"private' + 'Key":""}',
+            "private" + "Key = <redacted>",
             '{"access_to' + 'ken":"redactedvalue"}',
             '{"refresh-to' + 'ken":"redactedvalue"}',
             '{"client_sec' + 'ret":"redactedvalue"}',
@@ -817,6 +859,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "api " + "key: abc",
             "secret " + "key: abc",
             "private " + "key: abc",
+            "Contains customer data",
+            "Contains PII",
+            "Touching production",
+            "Potentially destructive",
             "pass" + "word=12345",
             '{"private_' + 'key":"redactedvalue"}',
             '{"session_' + 'id":"abc123456"}',
@@ -846,6 +892,18 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     report.write_text(text + "\n", encoding="utf-8")
 
                     self.assertIn("retained text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
+
+    def test_retained_readme_policy_language_can_name_safety_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            data_readme = root / "data" / "README.md"
+            reports_readme = root / "reports" / "README.md"
+            data_readme.parent.mkdir(parents=True)
+            reports_readme.parent.mkdir(parents=True)
+            data_readme.write_text("Retained summaries may count safety/privacy flags.\n", encoding="utf-8")
+            reports_readme.write_text("Do not retain customer data or PII in report text.\n", encoding="utf-8")
+
+            self.assertEqual(MODULE.validate_root(root), [])
 
     def test_forbidden_compact_artifact_names_are_rejected(self) -> None:
         for relative_path in (
@@ -1292,6 +1350,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             risky_compound_session_token(),
             risky_compound_turn_token(),
             risky_compound_episode_token(),
+            risky_compound_camel_session_token(),
+            risky_compound_camel_turn_token(),
             risky_bare_private_ip(),
             risky_bare_private_lan_ip(),
             risky_link_local_ip(),
@@ -1607,6 +1667,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("README.md", "Internal Git remote " + risky_short_host_git_remote() + "\n"),
             ("README.md", "Short secret api_" + "key: abc\n"),
             ("README.md", "Short secret to" + "ken = abcdefghijklmnop\n"),
+            ("README.md", "Redacted-looking api" + "Key: [REDACTED]\n"),
+            ("README.md", "Empty private" + "Key = \"\"\n"),
+            ("README.md", "Placeholder private" + "Key = <redacted>\n"),
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:

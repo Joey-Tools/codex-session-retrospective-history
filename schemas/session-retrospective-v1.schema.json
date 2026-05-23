@@ -296,7 +296,7 @@
             "pattern": "(^|[._-])(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][._-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][._-]?[Kk][Ee][Yy])($|[._-])"
           },
           {
-            "pattern": "\\b(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Tt][Uu][Rr][Nn]|[Ee][Pp][Ii][Ss][Oo][Dd][Ee])[._-][Ii][Dd][._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\\b"
+            "pattern": "\\b(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Tt][Uu][Rr][Nn]|[Ee][Pp][Ii][Ss][Oo][Dd][Ee])(?:[._-]?[Ii][Dd])[._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\\b"
           },
           {
             "pattern": "^[0-9a-fA-F]{64}$"
@@ -344,6 +344,9 @@
             "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?[A-Za-z0-9._-]*(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt](?:[\\s._-]+[Kk][Ee][Yy])?|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][\\s._-]*[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][\\s._-]*[Kk][Ee][Yy])[A-Za-z0-9._-]*(?:\u0022|')?\\s*[:=]"
           },
           {
+            "pattern": "(?:\\b(?:[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]\\s+[Kk][Ee][Yy]|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn]|[Dd][Ee][Ss][Tt][Rr][Uu][Cc][Tt][Ii][Vv][Ee]|rm -rf|reset --hard|[Cc][Uu][Ss][Tt][Oo][Mm][Ee][Rr]\\s+[Dd][Aa][Tt][Aa]|[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Pp][Ii][Ii])\\b|客户|客户数据|凭据|凭证|密钥|生产|破坏性)"
+          },
+          {
             "pattern": "\\b[Bb][Ee][Aa][Rr][Ee][Rr]\\s+[A-Za-z0-9._~+/=-]{12,}\\b"
           },
           {
@@ -365,10 +368,10 @@
             "pattern": "(?<![0-9A-Fa-f:])(?:::1|[Ff][CcDd][0-9A-Fa-f]{0,2}(?::[0-9A-Fa-f]{0,4}){1,7}|[Ff][Ee][89AaBb][0-9A-Fa-f]?(?::[0-9A-Fa-f]{0,4}){1,7})(?![0-9A-Fa-f:])"
           },
           {
-            "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Tt][Uu][Rr][Nn]|[Ee][Pp][Ii][Ss][Oo][Dd][Ee])[._ -][Ii][Dd](?:\u0022|')?(?:\\s*[:=]\\s*|\\s+)(?:\u0022|')?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\\b"
+            "pattern": "(^|[^A-Za-z0-9_])(?:\u0022|')?(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Tt][Uu][Rr][Nn]|[Ee][Pp][Ii][Ss][Oo][Dd][Ee])(?:[._ -]?[Ii][Dd])(?:\u0022|')?(?:\\s*[:=]\\s*|\\s+)(?:\u0022|')?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\\b"
           },
           {
-            "pattern": "\\b(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Tt][Uu][Rr][Nn]|[Ee][Pp][Ii][Ss][Oo][Dd][Ee])[._-][Ii][Dd][._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\\b"
+            "pattern": "\\b(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Tt][Uu][Rr][Nn]|[Ee][Pp][Ii][Ss][Oo][Dd][Ee])(?:[._-]?[Ii][Dd])[._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\\b"
           }
         ]
       },
