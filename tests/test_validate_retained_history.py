@@ -287,6 +287,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         for sample in ("api " + "key: abc", "secret " + "key: abc", "private " + "key: abc"):
             with self.subTest(sample=sample):
                 self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
+        for sample in (risky_bare_private_ip(), risky_bare_private_lan_ip()):
+            with self.subTest(sample=sample):
+                self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
 
     def test_schema_raw_id_pattern_is_fully_case_insensitive(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
@@ -1101,6 +1104,31 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("friction_flags must use allowed issue flags", issues)
         self.assertIn("issue_flags must use allowed issue flags", issues)
         self.assertIn("flags keys must use allowed issue flags", issues)
+
+    def test_retained_flags_allow_collaboration_friction_categories(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = valid_episode()
+            episode["friction_flags"] = ["over_exploration", "under_asking"]
+            episode_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            episode_path.parent.mkdir(parents=True)
+            episode_path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+
+            turn = valid_turn_flag()
+            turn["issue_flags"] = ["over_exploration", "under_asking"]
+            turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            turn_path.parent.mkdir(parents=True)
+            turn_path.write_text(json.dumps(turn) + "\n", encoding="utf-8")
+
+            trend = valid_trend()
+            trend["flags"] = {"over_exploration": 1, "under_asking": 1}
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = MODULE.validate_root(root)
+
+        self.assertEqual(issues, [])
 
     def test_retained_flags_reject_duplicate_issue_flags(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

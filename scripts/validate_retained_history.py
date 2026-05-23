@@ -155,7 +155,9 @@ ISSUE_FLAGS = frozenset(
         "approval_auth_friction",
         "context_loss",
         "failed_command",
+        "over_exploration",
         "safety_privacy_flag",
+        "under_asking",
         "user_correction",
         "verification_gap",
     }
