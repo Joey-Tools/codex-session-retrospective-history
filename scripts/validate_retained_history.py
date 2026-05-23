@@ -200,6 +200,14 @@ INFRASTRUCTURE_RISK_PATTERNS = (
         r"\bhttps?://(?:localhost|miku-bot-dev|hoteng-srv-01|(?:10|127)(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})(?::\d{1,5})?(?:[/?#]|$)",
         re.I,
     ),
+    re.compile(
+        r"\bssh://(?:[A-Za-z0-9._-]+@)?(?:localhost|miku-bot-dev|hoteng-srv-01|(?:10|127)(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2}|[A-Za-z0-9-]+)(?::\d{1,5})?(?:[/:?#]|$)",
+        re.I,
+    ),
+    re.compile(
+        r"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9._-]+@)(?:localhost|miku-bot-dev|hoteng-srv-01|(?:10|127)(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2}|[A-Za-z0-9-]+):[A-Za-z0-9._~/-]+(?:\.git)?\b",
+        re.I,
+    ),
     re.compile(r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/", re.I),
     re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)", re.I),
     re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
@@ -314,8 +322,19 @@ def forbidden_path(relative: Path) -> bool:
     return name in FORBIDDEN_FILENAMES or forbidden_name(name) or name.startswith("rollout")
 
 
+def reject_duplicate_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    seen: set[str] = set()
+    parsed: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValueError("duplicate JSON key is not allowed")
+        seen.add(key)
+        parsed[key] = value
+    return parsed
+
+
 def parse_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicate_json_object)
 
 
 def parse_jsonl(path: Path) -> list[Any]:
@@ -324,8 +343,8 @@ def parse_jsonl(path: Path) -> list[Any]:
         if not line.strip():
             continue
         try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError as exc:
+            rows.append(json.loads(line, object_pairs_hook=reject_duplicate_json_object))
+        except (json.JSONDecodeError, ValueError) as exc:
             raise ValueError(f"line {line_no}: invalid JSONL: {exc}") from exc
     return rows
 
@@ -812,15 +831,23 @@ def validate_retained_export_consistency(
 
     episodes = [row for row in rows.get("episode", []) if isinstance(row, dict)]
     turn_flags = [row for row in rows.get("turn_flag", []) if isinstance(row, dict)]
-    episode_ids = {
-        row["episode_id"]
+    episodes_by_id = {
+        row["episode_id"]: row
         for row in episodes
         if isinstance(row.get("episode_id"), str) and EPISODE_REF_RE.fullmatch(row["episode_id"])
     }
     for index, row in enumerate(turn_flags, 1):
         episode_id = row.get("episode_id")
-        if isinstance(episode_id, str) and EPISODE_REF_RE.fullmatch(episode_id) and episode_id not in episode_ids:
+        if not isinstance(episode_id, str) or not EPISODE_REF_RE.fullmatch(episode_id):
+            continue
+        episode = episodes_by_id.get(episode_id)
+        if episode is None:
             issues.append(f"{export_path}/turn_flags.jsonl:{index}: episode_id is missing from episodes export")
+            continue
+        if row.get("host") != episode.get("host"):
+            issues.append(f"{export_path}/turn_flags.jsonl:{index}: host must match referenced episode")
+        if row.get("session_id") != episode.get("session_id"):
+            issues.append(f"{export_path}/turn_flags.jsonl:{index}: session_id must match referenced episode")
 
     if valid_non_negative_int(trend.get("episode_count")) and trend["episode_count"] != len(episodes):
         issues.append(f"{export_path}/trend_report.json: episode_count must match episodes.jsonl")
@@ -864,6 +891,8 @@ def validate_retained_export_consistency(
 def validate_root(root: Path) -> list[str]:
     root = root.resolve()
     issues: list[str] = []
+    if not root.is_dir():
+        return ["root must be an existing directory"]
     retained_export_files: dict[tuple[str, str], set[str]] = {}
     retained_export_modes: dict[tuple[str, str], dict[str, str]] = {}
     retained_export_rows: dict[tuple[str, str], dict[str, list[Any]]] = {}

@@ -69,7 +69,7 @@ def valid_turn_flag() -> dict:
         "turn_id": "turn_ref_v1:" + "a" * 20,
         "episode_id": "episode_ref_v1:" + "a" * 20,
         "host": "local",
-        "session_id": "session_ref_v1:" + "c" * 20,
+        "session_id": "session_ref_v1:" + "b" * 20,
         "source_path": "path_ref_v1:" + "d" * 16,
         "source_hash": "source_hash_v1:" + "e" * 20,
         "timestamp": "2026-05-21T00:00:00Z",
@@ -136,6 +136,14 @@ def risky_private_ip_url() -> str:
 
 def risky_short_host_url() -> str:
     return "http" + "://miku-bot-dev:8080/status"
+
+
+def risky_private_ip_ssh_url() -> str:
+    return "ssh" + "://git@10.0.0.5/repo"
+
+
+def risky_short_host_git_remote() -> str:
+    return "git" + "@miku-bot-dev:repo.git"
 
 
 def risky_ssh_url() -> str:
@@ -314,6 +322,21 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("retained/daily/trend_report.json: hosts must match episodes.jsonl turn_count totals", issues)
         self.assertIn("retained/daily/trend_report.json: model_eras must match episodes.jsonl turn_count totals", issues)
         self.assertIn("retained/daily/trend_report.json: flags must match turn_flags.jsonl issue_flags", issues)
+
+    def test_flat_retained_export_rejects_turn_flag_episode_identity_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            turn_flag = valid_turn_flag()
+            turn_flag["host"] = "miku-bot-dev"
+            turn_flag["session_id"] = "session_ref_v1:" + "c" * 20
+            (export_dir / "turn_flags.jsonl").write_text(json.dumps(turn_flag) + "\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/daily/turn_flags.jsonl:1: host must match referenced episode", issues)
+        self.assertIn("retained/daily/turn_flags.jsonl:1: session_id must match referenced episode", issues)
 
     def test_forbidden_raw_artifact_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -588,6 +611,58 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             issues = "\n".join(MODULE.validate_root(root))
             self.assertIn("data/episodes/2026/05/episodes.jsonl: line 1: invalid JSONL", issues)
+            self.assertNotIn(str(root), issues)
+
+    def test_duplicate_jsonl_keys_are_rejected_before_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = valid_episode()
+            entries = [
+                ("episode_id", row["episode_id"]),
+                ("host", row["host"]),
+                ("session_id", row["session_id"]),
+                ("start", row["start"]),
+                ("end", row["end"]),
+                ("cwd", row["cwd"]),
+                ("model_era", row["model_era"]),
+                ("topic", risky_local_path()),
+                ("topic", row["topic"]),
+                ("turn_count", row["turn_count"]),
+                ("friction_flags", row["friction_flags"]),
+                ("outcome", row["outcome"]),
+                ("work_report_hint", row["work_report_hint"]),
+            ]
+            artifact = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("{" + ",".join(json.dumps(key) + ":" + json.dumps(value) for key, value in entries) + "}\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("line 1: invalid JSONL: duplicate JSON key is not allowed", issues)
+            self.assertNotIn(str(root), issues)
+
+    def test_duplicate_json_keys_are_rejected_before_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            trend = valid_trend()
+            hidden_key = "raw_" + "secret"
+            entries = [
+                ("schema_version", trend["schema_version"]),
+                ("window", trend["window"]),
+                ("turn_count", trend["turn_count"]),
+                ("flagged_turn_count", trend["flagged_turn_count"]),
+                ("episode_count", trend["episode_count"]),
+                ("flags", {hidden_key: 1}),
+                ("flags", trend["flags"]),
+                ("hosts", trend["hosts"]),
+                ("model_eras", trend["model_eras"]),
+                ("coverage_gaps", trend["coverage_gaps"]),
+            ]
+            artifact = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("{" + ",".join(json.dumps(key) + ":" + json.dumps(value) for key, value in entries) + "}\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("duplicate JSON key is not allowed", issues)
             self.assertNotIn(str(root), issues)
 
     def test_unknown_retained_artifact_suffixes_are_rejected(self) -> None:
@@ -901,6 +976,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("README.md", "Internal localhost URL " + risky_localhost_url() + "\n"),
             ("README.md", "Internal private IP URL " + risky_private_ip_url() + "\n"),
             ("README.md", "Internal short host URL " + risky_short_host_url() + "\n"),
+            ("README.md", "Internal SSH URL " + risky_private_ip_ssh_url() + "\n"),
+            ("README.md", "Internal Git remote " + risky_short_host_git_remote() + "\n"),
             ("README.md", "Short secret api_" + "key: abc\n"),
             ("README.md", "Short secret to" + "ken = abcdefghijklmnop\n"),
         ):
@@ -1026,6 +1103,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
             self.assertEqual(MODULE.validate_root(root), [])
+
+    def test_missing_root_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "missing"
+
+            self.assertEqual(MODULE.validate_root(root), ["root must be an existing directory"])
 
     def test_count_maps_are_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
