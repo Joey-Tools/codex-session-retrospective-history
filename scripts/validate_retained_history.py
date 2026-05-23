@@ -785,6 +785,7 @@ def validate_root(root: Path) -> list[str]:
     root = root.resolve()
     issues: list[str] = []
     retained_export_files: dict[tuple[str, str], set[str]] = {}
+    retained_export_modes: dict[tuple[str, str], dict[str, str]] = {}
     for path in iter_files(root):
         relative = path.relative_to(root)
         if len(relative.parts) == 3 and relative.parts[:2] in RETAINED_EXPORT_DIRS:
@@ -806,9 +807,15 @@ def validate_root(root: Path) -> list[str]:
                 if json_kind == "manifest":
                     expected_mode = expected_mode_from_retained_export_path(relative)
                     issues.extend(f"{relative}: {issue}" for issue in validate_manifest(data, expected_mode=expected_mode))
+                    if expected_mode is not None and isinstance(data, dict) and isinstance(data.get("mode"), str):
+                        retained_export_modes.setdefault(tuple(relative.parts[:2]), {})["manifest"] = data["mode"]
                 elif json_kind == "trend":
                     expected_mode = expected_mode_from_retained_export_path(relative)
                     issues.extend(f"{relative}: {issue}" for issue in validate_trend(data, expected_mode=expected_mode))
+                    if expected_mode is not None and isinstance(data, dict):
+                        window = data.get("window")
+                        if isinstance(window, dict) and isinstance(window.get("mode"), str):
+                            retained_export_modes.setdefault(tuple(relative.parts[:2]), {})["trend"] = window["mode"]
                 elif relative.parts[0] in {"data", "reports"} or not allowed_infrastructure_artifact(relative):
                     issues.append(f"{relative}: unexpected JSON artifact")
                     if contains_risky_key(data):
@@ -849,6 +856,9 @@ def validate_root(root: Path) -> list[str]:
     for export_dir, names in sorted(retained_export_files.items()):
         if names != RETAINED_EXPORT_FILES:
             issues.append(f"{Path(*export_dir)}: retained export directory is incomplete or has extra files")
+        modes = retained_export_modes.get(export_dir, {})
+        if modes.get("trend") and modes.get("manifest") and modes["trend"] != modes["manifest"]:
+            issues.append(f"{Path(*export_dir)}: retained export mode differs between trend and manifest")
     return issues
 
 

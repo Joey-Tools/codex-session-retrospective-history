@@ -777,6 +777,25 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("retained/daily/trend_report.json: trend window.mode must match retained/daily export directory", issues)
         self.assertIn("retained/daily/retained_manifest.json: manifest mode must match retained/daily export directory", issues)
 
+    def test_baseline_retained_export_requires_single_concrete_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "baseline"
+            write_retained_export(root, export_dir)
+            trend_path = export_dir / "trend_report.json"
+            trend = json.loads(trend_path.read_text(encoding="utf-8"))
+            trend["window"]["mode"] = "baseline-30d"
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+            manifest_path = export_dir / "retained_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["mode"] = "baseline-90d"
+            manifest["window"]["mode"] = "baseline-90d"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/baseline: retained export mode differs between trend and manifest", issues)
+
     def test_customer_like_modes_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
