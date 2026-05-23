@@ -15,6 +15,7 @@
       },
       "properties": {
         "bytes": {
+          "maximum": 1000000,
           "minimum": 0,
           "type": "integer"
         },
@@ -54,6 +55,7 @@
       "type": "string"
     },
     "safe_token": {
+      "maxLength": 64,
       "pattern": "^[A-Za-z0-9_.-]+$",
       "type": "string"
     },
@@ -127,6 +129,7 @@
           "$ref": "#/$defs/safe_token"
         },
         "rollout_count": {
+          "maximum": 1000000,
           "minimum": 0,
           "type": "integer"
         },
@@ -137,6 +140,7 @@
           "enum": ["empty", "missing", "ready", "stale"]
         },
         "summary_count": {
+          "maximum": 1000000,
           "minimum": 0,
           "type": "integer"
         }

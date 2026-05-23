@@ -45,6 +45,7 @@ TIMESTAMP_RE = re.compile(
     r"^\d{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\d|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9]))T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$"
 )
 TEXT_ARTIFACT_SUFFIXES = frozenset({".json", ".jsonl", ".md", ".txt"})
+VALID_RETAINED_SUFFIXES = TEXT_ARTIFACT_SUFFIXES
 EPISODE_KEYS = frozenset(
     {
         "episode_id",
@@ -131,6 +132,10 @@ COVERAGE_REASONS = frozenset(
 )
 MAX_MANIFEST_SOURCES = 16
 MAX_COVERAGE_GAPS = 100
+MAX_SAFE_TOKEN_LENGTH = 64
+MAX_TOKEN_ARRAY_ITEMS = 16
+MAX_COUNT_MAP_PROPERTIES = 64
+MAX_COUNT = 1_000_000
 RISK_PATTERNS = (
     re.compile(r"\b(?:https?|ssh)://", re.I),
     re.compile(r"\bgit@[A-Za-z0-9_.-]+:"),
@@ -271,22 +276,41 @@ def valid_timestamp_or_null(value: Any) -> bool:
 
 
 def valid_non_negative_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_COUNT
 
 
 def valid_safe_token(value: Any) -> bool:
-    return isinstance(value, str) and SAFE_TOKEN_RE.fullmatch(value) is not None
+    return (
+        isinstance(value, str)
+        and len(value) <= MAX_SAFE_TOKEN_LENGTH
+        and SAFE_TOKEN_RE.fullmatch(value) is not None
+    )
+
+
+def validate_safe_token_array(value: Any, label: str, *, min_items: int = 0) -> list[str]:
+    if not isinstance(value, list):
+        return [f"{label} must be safe-token array"]
+    issues: list[str] = []
+    if len(value) < min_items:
+        issues.append(f"{label} must contain at least {min_items} item")
+    if len(value) > MAX_TOKEN_ARRAY_ITEMS:
+        issues.append(f"{label} must contain at most {MAX_TOKEN_ARRAY_ITEMS} items")
+    if not all(valid_safe_token(item) for item in value):
+        issues.append(f"{label} must be safe-token array")
+    return issues
 
 
 def validate_count_map(value: Any, label: str) -> list[str]:
     if not isinstance(value, dict):
         return [f"{label} must be an object"]
     issues: list[str] = []
+    if len(value) > MAX_COUNT_MAP_PROPERTIES:
+        issues.append(f"{label} must contain at most {MAX_COUNT_MAP_PROPERTIES} keys")
     for key, count in value.items():
         if not valid_safe_token(key):
             issues.append(f"{label} key must be a safe token")
         if not valid_non_negative_int(count):
-            issues.append(f"{label}.{key} must be a non-negative integer")
+            issues.append(f"{label} value must be a bounded non-negative integer")
     return issues
 
 
@@ -339,10 +363,17 @@ def validate_source_summary(value: Any) -> list[str]:
         issues.append("source root_ref must be path_ref_v1")
     if value.get("status") not in SOURCE_STATUSES:
         issues.append("source status is invalid")
+    count_values: dict[str, int] = {}
     for key in ("rollout_count", "summary_count"):
-        if not valid_non_negative_int(value.get(key)):
-            issues.append(f"source {key} must be a non-negative integer")
-    if value.get("status") == "ready" and not (value.get("rollout_count", 0) >= 1 or value.get("summary_count", 0) >= 1):
+        count = value.get(key)
+        if valid_non_negative_int(count):
+            count_values[key] = count
+        else:
+            count_values[key] = 0
+            issues.append(f"source {key} must be a bounded non-negative integer")
+    if value.get("status") == "ready" and not (
+        count_values["rollout_count"] >= 1 or count_values["summary_count"] >= 1
+    ):
         issues.append("ready source must have rollout_count or summary_count")
     if value.get("status") in {"empty", "missing", "stale"} and (
         value.get("rollout_count") != 0 or value.get("summary_count") != 0
@@ -385,9 +416,8 @@ def validate_episode(row: Any) -> list[str]:
         issues.append("model_era must be a safe token")
     issues.extend(validate_retained_text(row.get("topic"), "topic"))
     if not valid_non_negative_int(row.get("turn_count")):
-        issues.append("turn_count must be a non-negative integer")
-    if not isinstance(row.get("friction_flags"), list) or not all(valid_safe_token(flag) for flag in row.get("friction_flags", [])):
-        issues.append("friction_flags must be safe-token array")
+        issues.append("turn_count must be a bounded non-negative integer")
+    issues.extend(validate_safe_token_array(row.get("friction_flags"), "friction_flags"))
     if row.get("outcome") not in OUTCOMES:
         issues.append("outcome is invalid")
     issues.extend(validate_retained_text(row.get("work_report_hint"), "work_report_hint", nullable=True))
@@ -424,10 +454,7 @@ def validate_turn_flag(row: Any) -> list[str]:
         issues.append("model_era must be a safe token")
     for key in ("redacted_user_prompt_summary", "assistant_action_summary", "prompt_improvement"):
         issues.extend(validate_retained_text(row.get(key), key, nullable=(key == "prompt_improvement")))
-    if not isinstance(row.get("issue_flags"), list) or not row.get("issue_flags") or not all(
-        valid_safe_token(flag) for flag in row.get("issue_flags", [])
-    ):
-        issues.append("issue_flags must be a non-empty safe-token array")
+    issues.extend(validate_safe_token_array(row.get("issue_flags"), "issue_flags", min_items=1))
     return issues
 
 
@@ -487,8 +514,9 @@ def validate_root(root: Path) -> list[str]:
         if forbidden_path(relative):
             issues.append(f"{relative}: forbidden raw/transient artifact")
             continue
+        suffix = relative.suffix.lower()
         try:
-            if relative.suffix == ".json":
+            if suffix == ".json":
                 data = parse_json(path)
                 if relative.parts[:2] == ("data", "manifests"):
                     issues.extend(f"{relative}: {issue}" for issue in validate_manifest(data))
@@ -498,7 +526,7 @@ def validate_root(root: Path) -> list[str]:
                     issues.append(f"{relative}: unexpected JSON artifact")
                     if contains_risky_text(data):
                         issues.append(f"{relative}: retained text contains raw/sensitive evidence")
-            elif relative.suffix == ".jsonl":
+            elif suffix == ".jsonl":
                 rows = parse_jsonl(path)
                 validator = validate_episode if relative.parts[:2] == ("data", "episodes") else validate_turn_flag if relative.parts[:2] == ("data", "turn_flags") else None
                 if validator is None:
@@ -506,9 +534,16 @@ def validate_root(root: Path) -> list[str]:
                 else:
                     for index, row in enumerate(rows, 1):
                         issues.extend(f"{relative}:{index}: {issue}" for issue in validator(row))
-            elif relative.parts[0] in {"data", "reports"} and relative.suffix.lower() in {".md", ".txt"}:
+            elif relative.parts[0] in {"data", "reports"} and suffix in {".md", ".txt"}:
                 if contains_risky_text(path.read_text(encoding="utf-8")):
                     issues.append(f"{relative}: retained text contains raw/sensitive evidence")
+            elif relative.parts[0] in {"data", "reports"} and suffix not in VALID_RETAINED_SUFFIXES:
+                issues.append(f"{relative}: unexpected retained artifact suffix")
+                try:
+                    if contains_risky_text(path.read_text(encoding="utf-8")):
+                        issues.append(f"{relative}: retained text contains raw/sensitive evidence")
+                except UnicodeDecodeError:
+                    pass
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             issues.append(f"{relative}: {exc}")
     return issues

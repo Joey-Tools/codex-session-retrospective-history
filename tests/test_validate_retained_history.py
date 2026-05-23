@@ -141,7 +141,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertIn("unexpected field: raw_path", "\n".join(MODULE.validate_root(root)))
 
     def test_unknown_json_artifacts_are_rejected(self) -> None:
-        for relative_path in ("data/worklist.json", "data/source-map.json", "reports/weekly/notes.json"):
+        for relative_path in ("data/worklist.json", "data/source-map.JSON", "reports/weekly/notes.json"):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
                     root = Path(raw)
@@ -150,6 +150,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     artifact.write_text(json.dumps({"items": [{"source": "opaque"}]}), encoding="utf-8")
 
                     self.assertIn("unexpected JSON artifact", "\n".join(MODULE.validate_root(root)))
+
+    def test_unknown_retained_artifact_suffixes_are_rejected(self) -> None:
+        for relative_path in ("data/source-map.csv", "reports/weekly/notes.yaml"):
+            with self.subTest(relative_path=relative_path):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    artifact = root / relative_path
+                    artifact.parent.mkdir(parents=True)
+                    artifact.write_text("opaque,summary\n", encoding="utf-8")
+
+                    self.assertIn("unexpected retained artifact suffix", "\n".join(MODULE.validate_root(root)))
 
     def test_boolean_count_fields_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -172,7 +183,81 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
-            self.assertIn("turn_count must be a non-negative integer", "\n".join(MODULE.validate_root(root)))
+            self.assertIn("turn_count must be a bounded non-negative integer", "\n".join(MODULE.validate_root(root)))
+
+    def test_token_arrays_are_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = {
+                "episode_id": "episode_ref_v1:" + "a" * 20,
+                "host": "local",
+                "session_id": "session_ref_v1:" + "b" * 20,
+                "start": "2026-05-21T00:00:00Z",
+                "end": "2026-05-21T01:00:00Z",
+                "cwd": None,
+                "model_era": "unknown",
+                "topic": "Redacted topic",
+                "turn_count": 1,
+                "friction_flags": [f"flag{index}" for index in range(17)],
+                "outcome": "needs_review",
+                "work_report_hint": None,
+            }
+            path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            self.assertIn("friction_flags must contain at most 16 items", "\n".join(MODULE.validate_root(root)))
+
+    def test_safe_tokens_are_length_limited(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = {
+                "turn_id": "turn_ref_v1:" + "a" * 20,
+                "episode_id": "episode_ref_v1:" + "b" * 20,
+                "host": "local",
+                "session_id": "session_ref_v1:" + "c" * 20,
+                "source_path": "path_ref_v1:" + "d" * 16,
+                "source_hash": "e" * 64,
+                "timestamp": "2026-05-21T00:00:00Z",
+                "cwd": None,
+                "model": None,
+                "model_era": "unknown",
+                "redacted_user_prompt_summary": "Redacted prompt summary",
+                "assistant_action_summary": "Redacted assistant summary",
+                "issue_flags": ["x" * 65],
+                "prompt_improvement": None,
+            }
+            path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            self.assertIn("issue_flags must be safe-token array", "\n".join(MODULE.validate_root(root)))
+
+    def test_count_maps_are_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            trend = {
+                "schema_version": 1,
+                "window": {
+                    "mode": "daily",
+                    "start": "2026-05-21T00:00:00Z",
+                    "end": "2026-05-22T00:00:00Z",
+                },
+                "turn_count": 1,
+                "flagged_turn_count": 1,
+                "episode_count": 1,
+                "flags": {f"flag{index}": 1 for index in range(65)},
+                "hosts": {"local": 1_000_001},
+                "model_eras": {"unknown": 1},
+                "coverage_gaps": [],
+            }
+            path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("flags must contain at most 64 keys", issues)
+            self.assertIn("hosts value must be a bounded non-negative integer", issues)
 
     def test_manifest_max_item_limits_are_enforced(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -199,6 +284,21 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             issues = "\n".join(MODULE.validate_root(root))
             self.assertIn("manifest sources must contain at most 16 items", issues)
             self.assertIn("coverage_gaps must contain at most 100 items", issues)
+
+    def test_invalid_ready_source_counts_do_not_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = valid_manifest()
+            manifest["sources"][0]["rollout_count"] = "1"
+            manifest["sources"][0]["summary_count"] = None
+            path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("source rollout_count must be a bounded non-negative integer", issues)
+            self.assertIn("source summary_count must be a bounded non-negative integer", issues)
+            self.assertIn("ready source must have rollout_count or summary_count", issues)
 
     def test_git_ignored_local_temp_dirs_are_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

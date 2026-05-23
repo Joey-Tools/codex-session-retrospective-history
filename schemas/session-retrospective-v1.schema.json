@@ -3,9 +3,11 @@
   "$defs": {
     "count_map": {
       "additionalProperties": {
+        "maximum": 1000000,
         "minimum": 0,
         "type": "integer"
       },
+      "maxProperties": 64,
       "propertyNames": {
         "$ref": "#/$defs/safe_token"
       },
@@ -25,6 +27,7 @@
       },
       "properties": {
         "bytes": {
+          "maximum": 1000000,
           "minimum": 0,
           "type": "integer"
         },
@@ -81,6 +84,7 @@
           "items": {
             "$ref": "#/$defs/safe_token"
           },
+          "maxItems": 16,
           "type": "array"
         },
         "host": {
@@ -102,6 +106,7 @@
           "$ref": "#/$defs/retained_text"
         },
         "turn_count": {
+          "maximum": 1000000,
           "minimum": 0,
           "type": "integer"
         },
@@ -202,6 +207,7 @@
       "type": "string"
     },
     "safe_token": {
+      "maxLength": 64,
       "pattern": "^[A-Za-z0-9_.-]+$",
       "type": "string"
     },
@@ -327,6 +333,7 @@
           "$ref": "#/$defs/safe_token"
         },
         "rollout_count": {
+          "maximum": 1000000,
           "minimum": 0,
           "type": "integer"
         },
@@ -337,6 +344,7 @@
           "enum": ["empty", "missing", "ready", "stale"]
         },
         "summary_count": {
+          "maximum": 1000000,
           "minimum": 0,
           "type": "integer"
         }
@@ -375,10 +383,12 @@
           "type": "array"
         },
         "episode_count": {
+          "maximum": 1000000,
           "minimum": 0,
           "type": "integer"
         },
         "flagged_turn_count": {
+          "maximum": 1000000,
           "minimum": 0,
           "type": "integer"
         },
@@ -395,6 +405,7 @@
           "const": 1
         },
         "turn_count": {
+          "maximum": 1000000,
           "minimum": 0,
           "type": "integer"
         },
@@ -441,6 +452,7 @@
           "items": {
             "$ref": "#/$defs/safe_token"
           },
+          "maxItems": 16,
           "minItems": 1,
           "type": "array"
         },
