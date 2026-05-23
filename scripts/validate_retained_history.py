@@ -206,7 +206,7 @@ RISK_PATTERNS = (
     re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\", re.I),
     re.compile(
         r"(?<![A-Za-z0-9_])[\"']?"
-        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]+key|authorization|private[\s._-]+key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
+        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]*key|authorization|private[\s._-]*key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
         r"(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]+",
         re.I,
     ),
@@ -242,7 +242,7 @@ INFRASTRUCTURE_RISK_PATTERNS = (
     re.compile(
         r"(?<![A-Za-z0-9_])[\"']?"
         r"(?!(?:safe[._-]?token[._-]?re|max[._-]?safe[._-]?token[._-]?length|max[._-]?token[._-]?array[._-]?items|sensitive[._-]?token[._-]?re|risk[._-]?patterns?|infrastructure[._-]?risk[._-]?patterns?|safe[._-]?infrastructure[._-]?lines)[\"']?\s*[:=])"
-        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]+key|authorization|private[\s._-]+key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
+        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]*key|authorization|private[\s._-]*key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
         r"(?!(?:re\.compile|frozenset)\b)[A-Za-z0-9._~+/=-]+",
         re.I,
     ),

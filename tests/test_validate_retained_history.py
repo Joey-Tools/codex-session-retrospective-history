@@ -301,10 +301,16 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         patterns = "\n".join(pattern.pattern for pattern in schema_patterns)
 
         self.assertIn("[A-Za-z0-9._-]*(?:", patterns)
-        self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][\\s._-]+[Kk][Ee][Yy]", patterns)
+        self.assertIn("[Pp][Rr][Ii][Vv][Aa][Tt][Ee][\\s._-]*[Kk][Ee][Yy]", patterns)
         self.assertIn("[Uu][Ss][Ee][Rr][Ss]", patterns)
         self.assertIn("[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]", patterns)
-        for sample in ("api " + "key: abc", "secret " + "key: abc", "private " + "key: abc"):
+        for sample in (
+            "api" + "key: abc",
+            "api " + "key: abc",
+            "secret " + "key: abc",
+            "private" + "key: abc",
+            "private " + "key: abc",
+        ):
             with self.subTest(sample=sample):
                 self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
         for sample in (
@@ -805,7 +811,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             '{"refresh-to' + 'ken":"redactedvalue"}',
             '{"client_sec' + 'ret":"redactedvalue"}',
             '{"db_pass' + 'word":"redactedvalue"}',
+            '{"api' + 'key":"abc"}',
             '{"api_' + 'key":"abc"}',
+            '{"private' + 'key":"abc"}',
             "api " + "key: abc",
             "secret " + "key: abc",
             "private " + "key: abc",
