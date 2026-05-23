@@ -63,6 +63,9 @@ STRIPPABLE_ARTIFACT_SUFFIXES = TEXT_ARTIFACT_SUFFIXES | COMPRESSED_ARTIFACT_SUFF
 ROOT_DOC_FILES = frozenset({".gitignore", "AGENTS.md", "README.md", "data/README.md", "reports/README.md"})
 WORKFLOW_SUFFIXES = frozenset({".yaml", ".yml"})
 SCHEMA_FILES = frozenset({"retained-manifest-v1.schema.json", "session-retrospective-v1.schema.json"})
+RETAINED_EXPORT_DIRS = frozenset({("retained", "daily"), ("retained", "weekly"), ("retained", "baseline")})
+RETAINED_EXPORT_FILES = frozenset({"episodes.jsonl", "turn_flags.jsonl", "trend_report.json", "retained_manifest.json"})
+RETAINED_HOSTS = frozenset({"local", "miku-bot-dev", "hoteng-srv-01", "custom_source", "scope"})
 EPISODE_KEYS = frozenset(
     {
         "episode_id",
@@ -324,6 +327,10 @@ def valid_safe_token(value: Any) -> bool:
     )
 
 
+def valid_retained_host(value: Any) -> bool:
+    return isinstance(value, str) and value in RETAINED_HOSTS
+
+
 def allowed_infrastructure_artifact(relative: Path) -> bool:
     path_text = relative.as_posix()
     if path_text in ROOT_DOC_FILES:
@@ -366,6 +373,10 @@ def valid_year_month(parts: tuple[str, ...], start: int) -> bool:
 
 def allowed_retained_json_artifact(relative: Path) -> str | None:
     parts = relative.parts
+    if len(parts) == 3 and parts[:2] in RETAINED_EXPORT_DIRS and relative.name == "trend_report.json":
+        return "trend"
+    if len(parts) == 3 and parts[:2] in RETAINED_EXPORT_DIRS and relative.name == "retained_manifest.json":
+        return "manifest"
     if len(parts) == 5 and parts[:2] == ("data", "trends") and valid_year_month(parts, 2) and relative.name == "trend_report.json":
         return "trend"
     if len(parts) == 5 and parts[:2] == ("data", "manifests") and valid_year_month(parts, 2) and relative.name == "retained_manifest.json":
@@ -375,6 +386,10 @@ def allowed_retained_json_artifact(relative: Path) -> str | None:
 
 def allowed_retained_jsonl_artifact(relative: Path) -> str | None:
     parts = relative.parts
+    if len(parts) == 3 and parts[:2] in RETAINED_EXPORT_DIRS and relative.name == "episodes.jsonl":
+        return "episode"
+    if len(parts) == 3 and parts[:2] in RETAINED_EXPORT_DIRS and relative.name == "turn_flags.jsonl":
+        return "turn_flag"
     if len(parts) == 5 and parts[:2] == ("data", "episodes") and valid_year_month(parts, 2) and relative.name == "episodes.jsonl":
         return "episode"
     if len(parts) == 5 and parts[:2] == ("data", "turn_flags") and valid_year_month(parts, 2) and relative.name == "turn_flags.jsonl":
@@ -404,6 +419,8 @@ def validate_count_map(value: Any, label: str) -> list[str]:
     for key, count in value.items():
         if not valid_safe_token(key):
             issues.append(f"{label} key must be a safe token")
+        if label == "hosts" and not valid_retained_host(key):
+            issues.append("hosts key must be an allowed retained host")
         if not valid_non_negative_int(count):
             issues.append(f"{label} value must be a bounded non-negative integer")
     return issues
@@ -426,8 +443,8 @@ def validate_coverage_gap(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return ["coverage gap must be an object"]
     issues = unexpected_keys(value, COVERAGE_GAP_KEYS)
-    if "host" not in value or not valid_safe_token(value.get("host")):
-        issues.append("coverage gap host must be a safe token")
+    if "host" not in value or not valid_retained_host(value.get("host")):
+        issues.append("coverage gap host must be an allowed retained host")
     if "reason" not in value or value.get("reason") not in COVERAGE_REASONS:
         issues.append("coverage gap reason is invalid")
     if "root_ref" in value and not PATH_REF_RE.fullmatch(str(value.get("root_ref", ""))):
@@ -452,8 +469,8 @@ def validate_source_summary(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return ["source summary must be an object"]
     issues = unexpected_keys(value, SOURCE_SUMMARY_KEYS) + missing_keys(value, SOURCE_SUMMARY_KEYS)
-    if not valid_safe_token(value.get("host")):
-        issues.append("source host must be a safe token")
+    if not valid_retained_host(value.get("host")):
+        issues.append("source host must be an allowed retained host")
     if not PATH_REF_RE.fullmatch(str(value.get("root_ref", ""))):
         issues.append("source root_ref must be path_ref_v1")
     if value.get("status") not in SOURCE_STATUSES:
@@ -499,8 +516,8 @@ def validate_episode(row: Any) -> list[str]:
         issues.append("episode JSON key contains raw/sensitive evidence")
     if not EPISODE_REF_RE.fullmatch(str(row.get("episode_id", ""))):
         issues.append("episode_id must be episode_ref_v1")
-    if not valid_safe_token(row.get("host")):
-        issues.append("host must be a safe token")
+    if not valid_retained_host(row.get("host")):
+        issues.append("host must be an allowed retained host")
     if not SESSION_REF_RE.fullmatch(str(row.get("session_id", ""))):
         issues.append("session_id must be session_ref_v1")
     if not valid_timestamp_or_null(row.get("start")):
@@ -535,8 +552,8 @@ def validate_turn_flag(row: Any) -> list[str]:
         issues.append("turn_id must be turn_ref_v1")
     if not EPISODE_REF_RE.fullmatch(str(row.get("episode_id", ""))):
         issues.append("episode_id must be episode_ref_v1")
-    if not valid_safe_token(row.get("host")):
-        issues.append("host must be a safe token")
+    if not valid_retained_host(row.get("host")):
+        issues.append("host must be an allowed retained host")
     if not SESSION_REF_RE.fullmatch(str(row.get("session_id", ""))):
         issues.append("session_id must be session_ref_v1")
     if not PATH_REF_RE.fullmatch(str(row.get("source_path", ""))):
@@ -612,8 +629,11 @@ def validate_manifest(data: Any) -> list[str]:
 def validate_root(root: Path) -> list[str]:
     root = root.resolve()
     issues: list[str] = []
+    retained_export_files: dict[tuple[str, str], set[str]] = {}
     for path in iter_files(root):
         relative = path.relative_to(root)
+        if len(relative.parts) == 3 and relative.parts[:2] in RETAINED_EXPORT_DIRS:
+            retained_export_files.setdefault(tuple(relative.parts[:2]), set()).add(relative.name)
         if path.is_symlink():
             issues.append(f"{relative}: symlink artifact is not allowed")
             continue
@@ -666,6 +686,9 @@ def validate_root(root: Path) -> list[str]:
                         pass
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             issues.append(f"{relative}: {exc}")
+    for export_dir, names in sorted(retained_export_files.items()):
+        if names != RETAINED_EXPORT_FILES:
+            issues.append(f"{Path(*export_dir)}: retained export directory is incomplete or has extra files")
     return issues
 
 

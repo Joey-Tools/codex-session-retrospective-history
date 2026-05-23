@@ -45,6 +45,68 @@ def valid_manifest() -> dict:
     }
 
 
+def valid_episode() -> dict:
+    return {
+        "episode_id": "episode_ref_v1:" + "a" * 20,
+        "host": "local",
+        "session_id": "session_ref_v1:" + "b" * 20,
+        "start": "2026-05-21T00:00:00Z",
+        "end": "2026-05-21T01:00:00Z",
+        "cwd": None,
+        "model_era": "unknown",
+        "topic": "Redacted topic",
+        "turn_count": 1,
+        "friction_flags": [],
+        "outcome": "needs_review",
+        "work_report_hint": None,
+    }
+
+
+def valid_turn_flag() -> dict:
+    return {
+        "turn_id": "turn_ref_v1:" + "a" * 20,
+        "episode_id": "episode_ref_v1:" + "b" * 20,
+        "host": "local",
+        "session_id": "session_ref_v1:" + "c" * 20,
+        "source_path": "path_ref_v1:" + "d" * 16,
+        "source_hash": "e" * 64,
+        "timestamp": "2026-05-21T00:00:00Z",
+        "cwd": None,
+        "model": None,
+        "model_era": "unknown",
+        "redacted_user_prompt_summary": "Redacted prompt summary",
+        "assistant_action_summary": "Redacted assistant summary",
+        "issue_flags": ["verification_gap"],
+        "prompt_improvement": None,
+    }
+
+
+def valid_trend() -> dict:
+    return {
+        "schema_version": 1,
+        "window": {
+            "mode": "daily",
+            "start": "2026-05-21T00:00:00Z",
+            "end": "2026-05-22T00:00:00Z",
+        },
+        "turn_count": 1,
+        "flagged_turn_count": 1,
+        "episode_count": 1,
+        "flags": {"verification_gap": 1},
+        "hosts": {"local": 1},
+        "model_eras": {"unknown": 1},
+        "coverage_gaps": [],
+    }
+
+
+def write_retained_export(root: Path, export_dir: Path) -> None:
+    export_dir.mkdir(parents=True)
+    (export_dir / "episodes.jsonl").write_text(json.dumps(valid_episode()) + "\n", encoding="utf-8")
+    (export_dir / "turn_flags.jsonl").write_text(json.dumps(valid_turn_flag()) + "\n", encoding="utf-8")
+    (export_dir / "trend_report.json").write_text(json.dumps(valid_trend()), encoding="utf-8")
+    (export_dir / "retained_manifest.json").write_text(json.dumps(valid_manifest()), encoding="utf-8")
+
+
 class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_bundle_schema_includes_manifest_root(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
@@ -59,6 +121,22 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             report.write_text("# Weekly retrospective\n\nNo raw transcript excerpts retained.\n", encoding="utf-8")
 
             self.assertEqual(MODULE.validate_root(root), [])
+
+    def test_flat_retained_export_layout_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_retained_export(root, root / "retained" / "daily")
+
+            self.assertEqual(MODULE.validate_root(root), [])
+
+    def test_flat_retained_export_rejects_extra_or_missing_files(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            (export_dir / "retained_manifest.json").unlink()
+
+            self.assertIn("retained export directory is incomplete or has extra files", "\n".join(MODULE.validate_root(root)))
 
     def test_forbidden_raw_artifact_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -443,11 +521,40 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
             issues = "\n".join(MODULE.validate_root(root))
-            self.assertIn("host must be a safe token", issues)
+            self.assertIn("host must be an allowed retained host", issues)
             self.assertIn("flags key must be a safe token", issues)
             self.assertIn("hosts key must be a safe token", issues)
+            self.assertIn("hosts key must be an allowed retained host", issues)
             self.assertIn("model_eras key must be a safe token", issues)
-            self.assertIn("source host must be a safe token", issues)
+            self.assertIn("source host must be an allowed retained host", issues)
+
+    def test_customer_like_host_labels_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = valid_episode()
+            episode["host"] = "customer-acme"
+            episode_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            episode_path.parent.mkdir(parents=True)
+            episode_path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+
+            trend = valid_trend()
+            trend["hosts"] = {"customer-acme": 1}
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            trend_path.parent.mkdir(parents=True)
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+
+            manifest = valid_manifest()
+            manifest["sources"][0]["host"] = "customer-acme"
+            manifest["coverage_gaps"] = [{"host": "customer-acme", "reason": "stale_host"}]
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("host must be an allowed retained host", issues)
+            self.assertIn("hosts key must be an allowed retained host", issues)
+            self.assertIn("source host must be an allowed retained host", issues)
+            self.assertIn("coverage gap host must be an allowed retained host", issues)
 
     def test_count_maps_are_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
