@@ -865,9 +865,7 @@ def validate_retained_export_consistency(
             continue
         turn_ids.add(turn_id)
 
-    if not episodes and not turn_flags:
-        return issues
-    if not isinstance(trend, dict):
+    if not episodes and not turn_flags and "episode" not in rows and "turn_flag" not in rows:
         return issues
 
     for index, row in enumerate(turn_flags, 1):
@@ -882,6 +880,9 @@ def validate_retained_export_consistency(
             issues.append(f"{turn_flags_path}:{index}: host must match referenced episode")
         if row.get("session_id") != episode.get("session_id"):
             issues.append(f"{turn_flags_path}:{index}: session_id must match referenced episode")
+
+    if not isinstance(trend, dict):
+        return issues
 
     if valid_non_negative_int(trend.get("episode_count")) and trend["episode_count"] != len(episodes):
         issues.append(f"{trend_path}: episode_count must match episodes.jsonl")

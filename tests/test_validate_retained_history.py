@@ -379,6 +379,51 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("retained/daily/episodes.jsonl:2: duplicate episode_id", issues)
         self.assertIn("retained/daily/turn_flags.jsonl:2: duplicate turn_id", issues)
 
+    def test_empty_retained_exports_reject_nonzero_trends(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            (export_dir / "episodes.jsonl").write_text("", encoding="utf-8")
+            (export_dir / "turn_flags.jsonl").write_text("", encoding="utf-8")
+            flat_trend = valid_trend()
+            (export_dir / "trend_report.json").write_text(json.dumps(flat_trend), encoding="utf-8")
+            write_monthly_export(root)
+            monthly_episodes = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            monthly_turn_flags = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            monthly_trend = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            monthly_episodes.write_text("", encoding="utf-8")
+            monthly_turn_flags.write_text("", encoding="utf-8")
+            monthly_trend.write_text(json.dumps(valid_trend()), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/daily/trend_report.json: episode_count must match episodes.jsonl", issues)
+        self.assertIn("retained/daily/trend_report.json: flagged_turn_count must match turn_flags.jsonl", issues)
+        self.assertIn("retained/daily/trend_report.json: turn_count must match episodes.jsonl turn_count total", issues)
+        self.assertIn("retained/daily/trend_report.json: hosts must match episodes.jsonl turn_count totals", issues)
+        self.assertIn("retained/daily/trend_report.json: model_eras must match episodes.jsonl turn_count totals", issues)
+        self.assertIn("retained/daily/trend_report.json: flags must match turn_flags.jsonl issue_flags", issues)
+        self.assertIn("data/trends/2026/05/trend_report.json: episode_count must match episodes.jsonl", issues)
+        self.assertIn(
+            "data/trends/2026/05/trend_report.json: flagged_turn_count must match turn_flags.jsonl",
+            issues,
+        )
+
+    def test_monthly_turn_flags_check_episode_refs_without_trend(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            turn_flags_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            turn_flags_path.parent.mkdir(parents=True)
+            turn_flags_path.write_text(json.dumps(valid_turn_flag()) + "\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn(
+            "data/turn_flags/2026/05/turn_flags.jsonl:1: episode_id is missing from episodes export",
+            issues,
+        )
+
     def test_monthly_retained_artifacts_reject_inconsistent_rows_and_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
