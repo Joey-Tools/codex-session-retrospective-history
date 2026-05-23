@@ -132,6 +132,22 @@ def risky_secret_token() -> str:
     return "s" + "k-" + "proj-" + "abcdefghijklmnop123456"
 
 
+def risky_session_pointer() -> str:
+    return "Session " + "ID: abc123456"
+
+
+def risky_turn_pointer() -> str:
+    return "turn-" + "id=abc123456"
+
+
+def risky_episode_pointer() -> str:
+    return "episode_" + "id=abc123456"
+
+
+def risky_rollout_filename() -> str:
+    return "rollout-" + "2026-05-22T10-00-00-abc.jsonl"
+
+
 class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_bundle_schema_includes_manifest_root(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
@@ -248,7 +264,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     self.assertIn("forbidden raw/transient artifact", "\n".join(MODULE.validate_root(root)))
 
     def test_compressed_raw_artifact_names_are_rejected(self) -> None:
-        for relative_path in ("rollout-2026-05-22.jsonl.gz", "session_index.jsonl.gz"):
+        for relative_path in ("rollout-" + "2026-05-22.jsonl.gz", "session_index.jsonl.gz"):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
                     root = Path(raw)
@@ -269,26 +285,27 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         risky_examples = (
             "Upper-case URL " + risky_internal_url(),
             "SSH URL " + risky_ssh_url(),
-            "Raw session pointer Session ID: abc123456",
-            "Raw turn pointer turn-id=abc123456",
+            "Raw session pointer " + risky_session_pointer(),
+            "Raw turn pointer " + risky_turn_pointer(),
+            "Raw episode pointer " + risky_episode_pointer(),
             '{"to' + 'ken":"redactedvalue"}',
             '{"access_to' + 'ken":"redactedvalue"}',
             '{"refresh-to' + 'ken":"redactedvalue"}',
             '{"client_sec' + 'ret":"redactedvalue"}',
             '{"db_pass' + 'word":"redactedvalue"}',
             '{"private_' + 'key":"redactedvalue"}',
-            '{"session_id":"abc123456"}',
+            '{"session_' + 'id":"abc123456"}',
             "Private key block -----BEGIN PRIVATE " + "KEY-----\nredacted",
             "PGP private key block -----BEGIN PGP PRIVATE " + "KEY BLOCK-----\nredacted",
             "Relative source path ./.cod" + "ex/sess" + "ions/2026/05/22/rollout.jsonl",
-            "Case-variant source path ./.Cod" + "ex/Sess" + "ions/2026/05/22/Rollout-ABC.JSONL",
+            "Case-variant source path ./.Cod" + "ex/Sess" + "ions/2026/05/22/Rollout-" + "ABC.JSONL",
             "Relative local source path .codex" + "-local/session-retrospective/out/state.json",
             "Relative temp source path .codex" + "-tmp/isolated-review/stdout.log",
             "Lower-case POSIX path /us" + "ers/hoteng/project",
             "Windows path C:\\Users\\hoteng\\project",
             "Lower-case Windows path C:\\users\\hoteng\\project",
             "Internal hostname " + risky_internal_host(),
-            "Rollout file rollout-2026-05-22T10-00-00-abc.jsonl",
+            "Rollout file " + risky_rollout_filename(),
         )
         for text in risky_examples:
             with self.subTest(text=text):
@@ -677,6 +694,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("schemas/session-retrospective-v1.schema.json", json.dumps({"source": risky_project_path()}) + "\n"),
             ("tests/probe.py", "# " + risky_internal_host() + "\n"),
             (".gitignore", ".codex" + "-tmp/\n# " + risky_project_path() + "\n"),
+            ("README.md", "Raw pointer " + risky_session_pointer() + "\n"),
+            ("scripts/probe.py", "# " + risky_rollout_filename() + "\n"),
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:

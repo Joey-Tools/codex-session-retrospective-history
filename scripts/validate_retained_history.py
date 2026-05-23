@@ -202,6 +202,11 @@ INFRASTRUCTURE_RISK_PATTERNS = (
     ),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
+    re.compile(
+        r"(?<![A-Za-z0-9_])[\"']?(?:session|turn|episode)[-_ ]?id[\"']?\s*[:=]\s*[\"']?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\b",
+        re.I,
+    ),
     re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
 )
 SAFE_INFRASTRUCTURE_LINES = frozenset(
