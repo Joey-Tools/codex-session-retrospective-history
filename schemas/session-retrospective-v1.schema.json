@@ -218,6 +218,9 @@
           },
           {
             "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          {
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
           }
         ]
       },
@@ -235,6 +238,9 @@
             "pattern": "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
           },
           {
+            "pattern": "\\bgit@[A-Za-z0-9_.-]+:"
+          },
+          {
             "pattern": "\\b(?:[A-Za-z0-9-]+\\.)+(?:[Ii][Nn][Tt][Ee][Rr][Nn][Aa][Ll]|[Cc][Oo][Rr][Pp]|[Ll][Oo][Cc][Aa][Ll]|[Ll][Aa][Nn]|[Ee][Xx][Aa][Mm][Pp][Ll][Ee]|[Ii][Nn][Vv][Aa][Ll][Ii][Dd]|[Tt][Ee][Ss][Tt])\\b"
           },
           {
@@ -244,16 +250,16 @@
               "pattern": "(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/"
             },
           {
-            "pattern": "(^|[^A-Za-z0-9_])(?:\\./|\\.\\./)?\\.codex(?:-local|-tmp)?(?:/|\\\\)"
+            "pattern": "(^|[^A-Za-z0-9_])(?:\\./|\\.\\./)?\\.[Cc][Oo][Dd][Ee][Xx](?:-[Ll][Oo][Cc][Aa][Ll]|-[Tt][Mm][Pp])?(?:/|\\\\)"
           },
           {
-            "pattern": "(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\\\)"
+            "pattern": "(^|[^A-Za-z0-9_])(?:[Ss][Ee][Ss][Ss][Ii][Oo][Nn][Ss]|[Aa][Rr][Cc][Hh][Ii][Vv][Ee][Dd]_[Ss][Ee][Ss][Ss][Ii][Oo][Nn][Ss])(?:/|\\\\)"
           },
           {
             "pattern": "\\b[A-Za-z]:\\\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\\\"
           },
           {
-            "pattern": "\\b(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn])\\s*[:=]"
+            "pattern": "\\b(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn])\\s*[:=]"
           },
           {
             "pattern": "\\b[Bb][Ee][Aa][Rr][Ee][Rr]\\s+[A-Za-z0-9._~+/=-]{12,}\\b"
@@ -268,7 +274,7 @@
             "pattern": "\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b"
           },
           {
-            "pattern": "\\brollout(?:-summary)?-[A-Za-z0-9_.-]+\\.jsonl\\b"
+            "pattern": "\\b[Rr][Oo][Ll][Ll][Oo][Uu][Tt](?:-[Ss][Uu][Mm][Mm][Aa][Rr][Yy])?-[A-Za-z0-9_.-]+\\.[Jj][Ss][Oo][Nn][Ll]\\b"
           },
           {
             "pattern": "\\b(?:[Ss]ession|[Tt]urn|[Ee]pisode)[-_ ]?[Ii][Dd]\\s*[:=]\\s*[\"']?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\\b"

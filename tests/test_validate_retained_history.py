@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -83,6 +84,15 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
                     self.assertIn("forbidden raw/transient artifact", "\n".join(MODULE.validate_root(root)))
 
+    def test_symlink_artifacts_are_rejected_without_following_target(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            link = root / "reports" / "weekly" / "linked.md"
+            link.parent.mkdir(parents=True)
+            os.symlink("/Users/hoteng/.codex/sessions/raw.txt", link)
+
+            self.assertIn("symlink artifact is not allowed", "\n".join(MODULE.validate_root(root)))
+
     def test_retained_text_risks_are_rejected(self) -> None:
         risky_examples = (
             "Upper-case URL HTTPS://internal.example/path",
@@ -92,6 +102,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "Private key block -----BEGIN PRIVATE KEY-----\nredacted",
             "PGP private key block -----BEGIN PGP PRIVATE KEY BLOCK-----\nredacted",
             "Relative source path ./.codex/sessions/2026/05/22/rollout.jsonl",
+            "Case-variant source path ./.Codex/Sessions/2026/05/22/Rollout-ABC.JSONL",
             "Relative local source path .codex-local/session-retrospective/out/state.json",
             "Relative temp source path .codex-tmp/isolated-review/stdout.log",
             "Windows path C:\\Users\\hoteng\\project",
@@ -178,6 +189,22 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertIn("unexpected retained artifact location", issues)
             self.assertIn("retained text contains raw/sensitive evidence", issues)
 
+    def test_unexpected_infrastructure_text_artifacts_are_rejected_and_scanned(self) -> None:
+        for relative_path in (".github/notes.md", "tests/fixtures/source.json"):
+            with self.subTest(relative_path=relative_path):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    artifact = root / relative_path
+                    artifact.parent.mkdir(parents=True)
+                    if artifact.suffix == ".json":
+                        artifact.write_text(json.dumps({"source": "HTTPS://internal.example/path"}), encoding="utf-8")
+                    else:
+                        artifact.write_text("HTTPS://internal.example/path\n", encoding="utf-8")
+
+                    issues = "\n".join(MODULE.validate_root(root))
+                    self.assertIn("unexpected", issues)
+                    self.assertIn("retained text contains raw/sensitive evidence", issues)
+
     def test_unknown_json_artifacts_are_rejected(self) -> None:
         for relative_path in ("data/worklist.json", "data/source-map.JSON", "reports/weekly/notes.json"):
             with self.subTest(relative_path=relative_path):
@@ -188,6 +215,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     artifact.write_text(json.dumps({"items": [{"source": "opaque"}]}), encoding="utf-8")
 
                     self.assertIn("unexpected JSON artifact", "\n".join(MODULE.validate_root(root)))
+
+    def test_invalid_jsonl_errors_do_not_include_absolute_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            artifact = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("{bad json\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("data/episodes/2026/05/episodes.jsonl: line 1: invalid JSONL", issues)
+            self.assertNotIn(str(root), issues)
 
     def test_unknown_retained_artifact_suffixes_are_rejected(self) -> None:
         for relative_path in ("data/source-map.csv", "reports/weekly/notes.yaml"):
@@ -303,7 +341,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "episode_count": 1,
                 "flags": {"sk-proj-abcdefghijklmnop123456": 1},
                 "hosts": {"jira.cisco.example": 1},
-                "model_eras": {"a" * 64: 1},
+                "model_eras": {"01234567-89ab-cdef-0123-456789abcdef": 1},
                 "coverage_gaps": [],
             }
             trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"

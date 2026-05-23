@@ -61,7 +61,7 @@ TEXT_ARTIFACT_SUFFIXES = frozenset({".json", ".jsonl", ".md", ".txt"})
 VALID_RETAINED_SUFFIXES = TEXT_ARTIFACT_SUFFIXES
 STRIPPABLE_ARTIFACT_SUFFIXES = TEXT_ARTIFACT_SUFFIXES | COMPRESSED_ARTIFACT_SUFFIXES
 ROOT_DOC_FILES = frozenset({".gitignore", "AGENTS.md", "README.md", "data/README.md", "reports/README.md"})
-INFRASTRUCTURE_TOP_LEVELS = frozenset({".github", "scripts", "schemas", "tests"})
+WORKFLOW_SUFFIXES = frozenset({".yaml", ".yml"})
 EPISODE_KEYS = frozenset(
     {
         "episode_id",
@@ -158,15 +158,15 @@ RISK_PATTERNS = (
     re.compile(r"\bgit@[A-Za-z0-9_.-]+:"),
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     re.compile(r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/"),
-    re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)"),
-    re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)"),
+    re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)", re.I),
+    re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
     re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\"),
     re.compile(r"\b(?:password|passwd|pwd|credential|secret|token|api[_-]?key|authorization)\s*[:=]", re.I),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)"),
     re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),
-    re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b"),
+    re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
     re.compile(
         r"\b(?:session|turn|episode)[-_ ]?id\s*[:=]\s*[\"']?(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:)[A-Za-z0-9_.:-]{6,}\b",
         re.I,
@@ -204,7 +204,7 @@ def git_visible_files(root: Path) -> list[Path] | None:
         if not raw_path:
             continue
         path = top / raw_path.decode("utf-8")
-        if path.is_file():
+        if path.is_file() or path.is_symlink():
             files.append(path)
     return sorted(files)
 
@@ -216,7 +216,9 @@ def iter_files(root: Path) -> list[Path]:
     return sorted(
         path
         for path in root.rglob("*")
-        if path.is_file() and ".git" not in path.relative_to(root).parts and "__pycache__" not in path.relative_to(root).parts
+        if (path.is_file() or path.is_symlink())
+        and ".git" not in path.relative_to(root).parts
+        and "__pycache__" not in path.relative_to(root).parts
     )
 
 
@@ -258,7 +260,7 @@ def parse_jsonl(path: Path) -> list[Any]:
         try:
             rows.append(json.loads(line))
         except json.JSONDecodeError as exc:
-            raise ValueError(f"{path}:{line_no}: invalid JSONL: {exc}") from exc
+            raise ValueError(f"line {line_no}: invalid JSONL: {exc}") from exc
     return rows
 
 
@@ -311,7 +313,20 @@ def valid_safe_token(value: Any) -> bool:
 
 def allowed_infrastructure_artifact(relative: Path) -> bool:
     path_text = relative.as_posix()
-    return path_text in ROOT_DOC_FILES or relative.parts[0] in INFRASTRUCTURE_TOP_LEVELS
+    if path_text in ROOT_DOC_FILES:
+        return True
+    parts = relative.parts
+    if not parts:
+        return False
+    if parts[0] == ".github":
+        return len(parts) >= 3 and parts[1] == "workflows" and relative.suffix.lower() in WORKFLOW_SUFFIXES
+    if parts[0] == "scripts":
+        return len(parts) == 2 and relative.suffix.lower() == ".py"
+    if parts[0] == "schemas":
+        return len(parts) == 2 and relative.name.endswith(".schema.json")
+    if parts[0] == "tests":
+        return len(parts) == 2 and relative.suffix.lower() == ".py"
+    return False
 
 
 def validate_safe_token_array(value: Any, label: str, *, min_items: int = 0) -> list[str]:
@@ -538,6 +553,9 @@ def validate_root(root: Path) -> list[str]:
     issues: list[str] = []
     for path in iter_files(root):
         relative = path.relative_to(root)
+        if path.is_symlink():
+            issues.append(f"{relative}: symlink artifact is not allowed")
+            continue
         if forbidden_path(relative):
             issues.append(f"{relative}: forbidden raw/transient artifact")
             continue
