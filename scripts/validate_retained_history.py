@@ -241,6 +241,7 @@ INFRASTRUCTURE_RISK_PATTERNS = (
         r"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9._-]+@)(?:localhost|miku-bot-dev|hoteng-srv-01|(?:10|127)(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2}|[A-Za-z0-9-]+):[A-Za-z0-9._~/-]+(?:\.git)?\b",
         re.I,
     ),
+    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     re.compile(r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/", re.I),
     re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)", re.I),
     re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
@@ -1039,6 +1040,17 @@ def validate_retained_export_consistency(
             issues.append(f"{turn_flags_path}:{index}: host must match referenced episode")
         if row.get("session_id") != episode.get("session_id"):
             issues.append(f"{turn_flags_path}:{index}: session_id must match referenced episode")
+        timestamp_key = valid_timestamp_key(row.get("timestamp"))
+        episode_start_key = valid_timestamp_key(episode.get("start"))
+        episode_end_key = valid_timestamp_key(episode.get("end"))
+        if (
+            timestamp_key is not None
+            and (
+                (episode_start_key is not None and timestamp_key < episode_start_key)
+                or (episode_end_key is not None and timestamp_key > episode_end_key)
+            )
+        ):
+            issues.append(f"{turn_flags_path}:{index}: timestamp must be within referenced episode")
 
     if data_month is not None:
         month_start, month_end = data_month_window(data_month)

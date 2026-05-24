@@ -206,6 +206,10 @@ def risky_internal_host() -> str:
     return "jira.cisco" + ".example"
 
 
+def risky_email() -> str:
+    return "operator" + "@" + "redacted" + ".com"
+
+
 def risky_secret_token() -> str:
     return "s" + "k-" + "proj-" + "abcdefghijklmnop123456"
 
@@ -521,6 +525,19 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
         self.assertIn("retained/daily/turn_flags.jsonl:1: host must match referenced episode", issues)
         self.assertIn("retained/daily/turn_flags.jsonl:1: session_id must match referenced episode", issues)
+
+    def test_flat_retained_export_rejects_turn_flag_outside_episode_window(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            turn_flag = valid_turn_flag()
+            turn_flag["timestamp"] = "2026-05-21T23:00:00Z"
+            (export_dir / "turn_flags.jsonl").write_text(json.dumps(turn_flag) + "\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/daily/turn_flags.jsonl:1: timestamp must be within referenced episode", issues)
 
     def test_flat_retained_export_rejects_rows_outside_trend_window(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -1676,6 +1693,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("README.md", "Internal short host URL " + risky_short_host_url() + "\n"),
             ("README.md", "Internal SSH URL " + risky_private_ip_ssh_url() + "\n"),
             ("README.md", "Internal Git remote " + risky_short_host_git_remote() + "\n"),
+            ("README.md", "Operator email " + risky_email() + "\n"),
             ("README.md", "Short secret api_" + "key: abc\n"),
             ("README.md", "Short secret to" + "ken = abcdefghijklmnop\n"),
             ("README.md", "Redacted-looking api" + "Key: [REDACTED]\n"),
