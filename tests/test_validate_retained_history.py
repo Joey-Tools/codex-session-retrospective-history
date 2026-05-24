@@ -539,6 +539,32 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
         self.assertIn("retained/daily/turn_flags.jsonl:1: timestamp must be within referenced episode", issues)
 
+    def test_flat_retained_export_rejects_flagged_turn_count_above_episode_turn_count(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            export_dir = root / "retained" / "daily"
+            write_retained_export(root, export_dir)
+            episode_one = valid_episode()
+            episode_one["turn_count"] = 0
+            episode_two = valid_episode()
+            episode_two["episode_id"] = "episode_ref_v1:" + "b" * 20
+            episode_two["turn_count"] = 2
+            trend = valid_trend()
+            trend["episode_count"] = 2
+            trend["turn_count"] = 2
+            trend["flagged_turn_count"] = 1
+            trend["hosts"] = {"local": 2}
+            trend["model_eras"] = {"unknown": 2}
+            (export_dir / "episodes.jsonl").write_text(
+                json.dumps(episode_one) + "\n" + json.dumps(episode_two) + "\n",
+                encoding="utf-8",
+            )
+            (export_dir / "trend_report.json").write_text(json.dumps(trend), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("retained/daily/turn_flags.jsonl: flagged turns must not exceed referenced episode turn_count", issues)
+
     def test_flat_retained_export_rejects_rows_outside_trend_window(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -685,6 +711,45 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
         self.assertIn("data/trends/2026/05/trend_report.json: window must overlap data month", issues)
         self.assertIn("data/manifests/2026/05/retained_manifest.json: window must overlap data month", issues)
+
+    def test_monthly_cross_month_weekly_export_allows_full_window_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            window = {
+                "mode": "weekly",
+                "start": "2026-04-28T00:00:00Z",
+                "end": "2026-05-05T00:00:00Z",
+            }
+            episode = valid_episode()
+            episode["start"] = "2026-04-30T10:00:00Z"
+            episode["end"] = "2026-04-30T11:00:00Z"
+            turn_flag = valid_turn_flag()
+            turn_flag["timestamp"] = "2026-04-30T10:30:00Z"
+            trend = valid_trend()
+            trend["window"] = window
+            manifest = valid_manifest()
+            manifest["mode"] = "weekly"
+            manifest["window"] = window
+
+            episode_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            trend_path = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            episode_path.parent.mkdir(parents=True)
+            turn_path.parent.mkdir(parents=True)
+            trend_path.parent.mkdir(parents=True)
+            manifest_path.parent.mkdir(parents=True)
+            episode_path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+            turn_path.write_text(json.dumps(turn_flag) + "\n", encoding="utf-8")
+            trend_path.write_text(json.dumps(trend), encoding="utf-8")
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertNotIn("episode start/end must be within data month", issues)
+        self.assertNotIn("timestamp must be within data month", issues)
+        self.assertNotIn("must match episodes.jsonl", issues)
+        self.assertNotIn("must match turn_flags.jsonl", issues)
 
     def test_invalid_data_month_paths_report_errors_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

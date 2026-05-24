@@ -1052,8 +1052,30 @@ def validate_retained_export_consistency(
         ):
             issues.append(f"{turn_flags_path}:{index}: timestamp must be within referenced episode")
 
+    flagged_turn_counts_by_episode = Counter[str]()
+    for row in turn_flags:
+        episode_id = row.get("episode_id")
+        if isinstance(episode_id, str) and EPISODE_REF_RE.fullmatch(episode_id):
+            flagged_turn_counts_by_episode[episode_id] += 1
+    for episode_id, flagged_count in flagged_turn_counts_by_episode.items():
+        episode = episodes_by_id.get(episode_id)
+        if episode is None:
+            continue
+        turn_count = episode.get("turn_count")
+        if valid_non_negative_int(turn_count) and flagged_count > turn_count:
+            issues.append(f"{turn_flags_path}: flagged turns must not exceed referenced episode turn_count")
+
     if data_month is not None:
         month_start, month_end = data_month_window(data_month)
+        row_scope_identity = retained_window_identity(trend.get("window")) if isinstance(trend, dict) else None
+        if row_scope_identity is None and isinstance(manifest, dict):
+            row_scope_identity = retained_window_identity(manifest.get("window"))
+        row_scope_crosses_into_data_month = (
+            row_scope_identity is not None
+            and row_scope_identity[0] in {"weekly", "baseline-90d"}
+            and row_scope_identity[1] < month_start
+            and row_scope_identity[2] <= month_end
+        )
         for artifact, path in ((trend, trend_path), (manifest, manifest_path)):
             if isinstance(artifact, dict):
                 window_identity = retained_window_identity(artifact.get("window"))
@@ -1063,17 +1085,18 @@ def validate_retained_export_consistency(
                         issues.append(f"{path}: window must overlap data month")
                     elif window_end > month_end:
                         issues.append(f"{path}: window end must be within data month")
-        for index, row in enumerate(episodes, 1):
-            start_key = valid_timestamp_key(row.get("start"))
-            end_key = valid_timestamp_key(row.get("end"))
-            if (start_key is not None and (start_key < month_start or start_key >= month_end)) or (
-                end_key is not None and (end_key < month_start or end_key > month_end)
-            ):
-                issues.append(f"{episodes_path}:{index}: episode start/end must be within data month")
-        for index, row in enumerate(turn_flags, 1):
-            timestamp_key = valid_timestamp_key(row.get("timestamp"))
-            if timestamp_key is not None and (timestamp_key < month_start or timestamp_key >= month_end):
-                issues.append(f"{turn_flags_path}:{index}: timestamp must be within data month")
+        if not row_scope_crosses_into_data_month:
+            for index, row in enumerate(episodes, 1):
+                start_key = valid_timestamp_key(row.get("start"))
+                end_key = valid_timestamp_key(row.get("end"))
+                if (start_key is not None and (start_key < month_start or start_key >= month_end)) or (
+                    end_key is not None and (end_key < month_start or end_key > month_end)
+                ):
+                    issues.append(f"{episodes_path}:{index}: episode start/end must be within data month")
+            for index, row in enumerate(turn_flags, 1):
+                timestamp_key = valid_timestamp_key(row.get("timestamp"))
+                if timestamp_key is not None and (timestamp_key < month_start or timestamp_key >= month_end):
+                    issues.append(f"{turn_flags_path}:{index}: timestamp must be within data month")
 
     if not episodes and not turn_flags and "episode" not in rows and "turn_flag" not in rows and not isinstance(trend, dict):
         return issues
