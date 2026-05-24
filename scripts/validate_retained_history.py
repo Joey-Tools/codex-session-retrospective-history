@@ -342,15 +342,49 @@ def forbidden_name(name: str) -> bool:
         if next_stem == stem:
             break
         stem = next_stem
+    if RAW_ID_TOKEN_RE.search(stem):
+        return True
     separated = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", stem)
     tokens = [token for token in re.split(r"[^a-z0-9]+", separated.lower()) if token]
     normalized = "_".join(tokens)
+    if RAW_ID_TOKEN_RE.search(normalized):
+        return True
     if normalized in FORBIDDEN_NAME_STEMS:
         return True
     compacted = "".join(tokens)
     if any(compacted.startswith(prefix) for prefix in FORBIDDEN_COMPACT_NAME_PREFIXES):
         return True
     return any(part in compacted for part in FORBIDDEN_COMPACT_NAME_PARTS)
+
+
+def display_path_component(part: str) -> str:
+    stem = part
+    suffixes: list[str] = []
+    while Path(stem).suffix.lower() in STRIPPABLE_ARTIFACT_SUFFIXES:
+        suffix = Path(stem).suffix
+        next_stem = Path(stem).with_suffix("").name
+        if next_stem == stem:
+            break
+        suffixes.insert(0, suffix)
+        stem = next_stem
+    if RAW_ID_TOKEN_RE.search(part) or RAW_ID_TOKEN_RE.search(stem) or SENSITIVE_TOKEN_RE.search(stem):
+        return "[redacted]" + "".join(suffixes)
+    return part
+
+
+def display_relative_path(relative: Path) -> str:
+    return Path(*(display_path_component(part) for part in relative.parts)).as_posix()
+
+
+def safe_exception_message(exc: Exception) -> str:
+    if isinstance(exc, OSError):
+        reason = exc.strerror or exc.__class__.__name__
+        return f"{exc.__class__.__name__}: {reason}"
+    if isinstance(exc, UnicodeDecodeError):
+        return "UnicodeDecodeError: failed to decode as UTF-8"
+    if isinstance(exc, json.JSONDecodeError):
+        return f"JSONDecodeError: {exc.msg}"
+    return str(exc)
 
 
 def forbidden_path(relative: Path) -> bool:
@@ -1183,27 +1217,28 @@ def validate_root(root: Path) -> list[str]:
     data_month_paths: dict[tuple[str, str, str], dict[str, Path]] = {}
     for path in iter_files(root):
         relative = path.relative_to(root)
+        display_relative = display_relative_path(relative)
         export_key = retained_export_key(relative)
         data_month_key = retained_data_month_key(relative)
         if export_key is not None:
             retained_export_files.setdefault(export_key, set()).add(relative.name)
         if path.is_symlink():
-            issues.append(f"{relative}: symlink artifact is not allowed")
+            issues.append(f"{display_relative}: symlink artifact is not allowed")
             continue
         if forbidden_path(relative):
-            issues.append(f"{relative}: forbidden raw/transient artifact")
+            issues.append(f"{display_relative}: forbidden raw/transient artifact")
             continue
         suffix = relative.suffix.lower()
         try:
             if content_scanned_infrastructure_artifact(relative):
                 if contains_infrastructure_risk_text(path.read_text(encoding="utf-8")):
-                    issues.append(f"{relative}: infrastructure text contains raw/sensitive evidence")
+                    issues.append(f"{display_relative}: infrastructure text contains raw/sensitive evidence")
             if suffix == ".json":
                 data = parse_json(path)
                 json_kind = allowed_retained_json_artifact(relative)
                 if json_kind == "manifest":
                     expected_mode = expected_mode_from_retained_export_path(relative)
-                    issues.extend(f"{relative}: {issue}" for issue in validate_manifest(data, expected_mode=expected_mode))
+                    issues.extend(f"{display_relative}: {issue}" for issue in validate_manifest(data, expected_mode=expected_mode))
                     if expected_mode is not None and isinstance(data, dict) and isinstance(data.get("mode"), str):
                         retained_export_modes.setdefault(tuple(relative.parts[:2]), {})["manifest"] = data["mode"]
                     if export_key is not None and isinstance(data, dict):
@@ -1215,7 +1250,7 @@ def validate_root(root: Path) -> list[str]:
                         data_month_paths.setdefault(data_month_key, {})["manifest"] = relative
                 elif json_kind == "trend":
                     expected_mode = expected_mode_from_retained_export_path(relative)
-                    issues.extend(f"{relative}: {issue}" for issue in validate_trend(data, expected_mode=expected_mode))
+                    issues.extend(f"{display_relative}: {issue}" for issue in validate_trend(data, expected_mode=expected_mode))
                     if expected_mode is not None and isinstance(data, dict):
                         window = data.get("window")
                         if isinstance(window, dict) and isinstance(window.get("mode"), str):
@@ -1229,20 +1264,20 @@ def validate_root(root: Path) -> list[str]:
                         data_month_trends[data_month_key] = data
                         data_month_paths.setdefault(data_month_key, {})["trend"] = relative
                 elif relative.parts[0] in {"data", "reports"} or not allowed_infrastructure_artifact(relative):
-                    issues.append(f"{relative}: unexpected JSON artifact")
+                    issues.append(f"{display_relative}: unexpected JSON artifact")
                     if contains_risky_key(data):
-                        issues.append(f"{relative}: JSON key contains raw/sensitive evidence")
+                        issues.append(f"{display_relative}: JSON key contains raw/sensitive evidence")
                     if contains_risky_text(data):
-                        issues.append(f"{relative}: retained text contains raw/sensitive evidence")
+                        issues.append(f"{display_relative}: retained text contains raw/sensitive evidence")
             elif suffix == ".jsonl":
                 rows = parse_jsonl(path)
                 jsonl_kind = allowed_retained_jsonl_artifact(relative)
                 if jsonl_kind is None:
-                    issues.append(f"{relative}: unexpected JSONL artifact")
+                    issues.append(f"{display_relative}: unexpected JSONL artifact")
                 else:
                     validator = validate_episode if jsonl_kind == "episode" else validate_turn_flag
                     for index, row in enumerate(rows, 1):
-                        issues.extend(f"{relative}:{index}: {issue}" for issue in validator(row))
+                        issues.extend(f"{display_relative}:{index}: {issue}" for issue in validator(row))
                     if export_key is not None:
                         retained_export_rows.setdefault(export_key, {}).setdefault(jsonl_kind, []).extend(rows)
                     if data_month_key is not None:
@@ -1250,27 +1285,27 @@ def validate_root(root: Path) -> list[str]:
                         data_month_paths.setdefault(data_month_key, {})[jsonl_kind] = relative
             elif relative.parts[0] in {"data", "reports"} and suffix in {".md", ".txt"}:
                 if not allowed_retained_text_artifact(relative):
-                    issues.append(f"{relative}: unexpected retained text artifact location")
+                    issues.append(f"{display_relative}: unexpected retained text artifact location")
                 include_safety_markers = relative.as_posix() not in {"data/README.md", "reports/README.md"}
                 if contains_risky_text(path.read_text(encoding="utf-8"), include_safety_markers=include_safety_markers):
-                    issues.append(f"{relative}: retained text contains raw/sensitive evidence")
+                    issues.append(f"{display_relative}: retained text contains raw/sensitive evidence")
             elif relative.parts[0] in {"data", "reports"} and suffix not in VALID_RETAINED_SUFFIXES:
-                issues.append(f"{relative}: unexpected retained artifact suffix")
+                issues.append(f"{display_relative}: unexpected retained artifact suffix")
                 try:
                     if contains_risky_text(path.read_text(encoding="utf-8")):
-                        issues.append(f"{relative}: retained text contains raw/sensitive evidence")
+                        issues.append(f"{display_relative}: retained text contains raw/sensitive evidence")
                 except UnicodeDecodeError:
                     pass
             elif not allowed_infrastructure_artifact(relative):
-                issues.append(f"{relative}: unexpected retained artifact location")
+                issues.append(f"{display_relative}: unexpected retained artifact location")
                 if suffix in TEXT_ARTIFACT_SUFFIXES:
                     try:
                         if contains_risky_text(path.read_text(encoding="utf-8")):
-                            issues.append(f"{relative}: retained text contains raw/sensitive evidence")
+                            issues.append(f"{display_relative}: retained text contains raw/sensitive evidence")
                     except UnicodeDecodeError:
                         pass
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            issues.append(f"{relative}: {exc}")
+            issues.append(f"{display_relative}: {safe_exception_message(exc)}")
     for export_dir, names in sorted(retained_export_files.items()):
         if names != RETAINED_EXPORT_FILES:
             issues.append(f"{Path(*export_dir)}: retained export directory is incomplete or has extra files")

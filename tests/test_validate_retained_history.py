@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "validate_retained_history.py"
@@ -1195,7 +1196,6 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "data/episodes/customer-acme/episodes.jsonl",
             "data/episodes/2026/05/customer-acme.jsonl",
             "data/turn_flags/customer-acme/turn_flags.jsonl",
-            "data/turn_flags/2026/05/" + "session_" + "id-rawabcdef123456.jsonl",
         ):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as raw:
@@ -1205,6 +1205,19 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     artifact.write_text("\n", encoding="utf-8")
 
                     self.assertIn("unexpected JSONL artifact", "\n".join(MODULE.validate_root(root)))
+
+    def test_raw_identifier_path_components_are_redacted_in_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            raw_component = "session_" + "id-rawabcdef123456.jsonl"
+            artifact = root / "data" / "turn_flags" / "2026" / "05" / raw_component
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("data/turn_flags/2026/05/[redacted].jsonl: forbidden raw/transient artifact", issues)
+        self.assertNotIn(raw_component, issues)
 
     def test_invalid_jsonl_errors_do_not_include_absolute_paths(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -1216,6 +1229,20 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             issues = "\n".join(MODULE.validate_root(root))
             self.assertIn("data/episodes/2026/05/episodes.jsonl: line 1: invalid JSONL", issues)
             self.assertNotIn(str(root), issues)
+
+    def test_os_errors_do_not_include_absolute_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            artifact = root / "data" / "trends" / "2026" / "05" / "trend_report.json"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("{}", encoding="utf-8")
+
+            with mock.patch.object(MODULE, "parse_json", side_effect=PermissionError(13, "Permission denied", str(artifact))):
+                issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("data/trends/2026/05/trend_report.json: PermissionError: Permission denied", issues)
+        self.assertNotIn(str(root), issues)
+        self.assertNotIn(str(artifact), issues)
 
     def test_duplicate_jsonl_keys_are_rejected_before_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
