@@ -1219,6 +1219,24 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIn("data/turn_flags/2026/05/[redacted].jsonl: forbidden raw/transient artifact", issues)
         self.assertNotIn(raw_component, issues)
 
+    def test_risky_value_path_components_are_redacted_in_diagnostics(self) -> None:
+        for leaked_component in (
+            risky_github_classic_token() + ".json",
+            risky_fine_grained_github_token() + ".jsonl",
+            risky_secret_token() + ".md",
+        ):
+            with self.subTest(leaked_component=leaked_component):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    artifact = root / "data" / "episodes" / "2026" / "05" / leaked_component
+                    artifact.parent.mkdir(parents=True)
+                    artifact.write_text("{}\n", encoding="utf-8")
+
+                    issues = "\n".join(MODULE.validate_root(root))
+
+                self.assertIn("data/episodes/2026/05/[redacted]", issues)
+                self.assertNotIn(leaked_component, issues)
+
     def test_invalid_jsonl_errors_do_not_include_absolute_paths(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

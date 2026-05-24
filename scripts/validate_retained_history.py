@@ -342,12 +342,12 @@ def forbidden_name(name: str) -> bool:
         if next_stem == stem:
             break
         stem = next_stem
-    if RAW_ID_TOKEN_RE.search(stem):
+    if sensitive_path_component(name, stem=stem):
         return True
     separated = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", stem)
     tokens = [token for token in re.split(r"[^a-z0-9]+", separated.lower()) if token]
     normalized = "_".join(tokens)
-    if RAW_ID_TOKEN_RE.search(normalized):
+    if sensitive_path_component(normalized):
         return True
     if normalized in FORBIDDEN_NAME_STEMS:
         return True
@@ -355,6 +355,19 @@ def forbidden_name(name: str) -> bool:
     if any(compacted.startswith(prefix) for prefix in FORBIDDEN_COMPACT_NAME_PREFIXES):
         return True
     return any(part in compacted for part in FORBIDDEN_COMPACT_NAME_PARTS)
+
+
+def sensitive_path_component(part: str, *, stem: str | None = None) -> bool:
+    stem = part if stem is None else stem
+    if RAW_ID_TOKEN_RE.search(part) or RAW_ID_TOKEN_RE.search(stem):
+        return True
+    if SENSITIVE_TOKEN_RE.search(stem):
+        return True
+    return any(
+        pattern.search(part) or pattern.search(stem)
+        for pattern in RISK_PATTERNS
+        if pattern is not RETAINED_SAFETY_TEXT_RE
+    )
 
 
 def display_path_component(part: str) -> str:
@@ -367,7 +380,7 @@ def display_path_component(part: str) -> str:
             break
         suffixes.insert(0, suffix)
         stem = next_stem
-    if RAW_ID_TOKEN_RE.search(part) or RAW_ID_TOKEN_RE.search(stem) or SENSITIVE_TOKEN_RE.search(stem):
+    if sensitive_path_component(part, stem=stem):
         return "[redacted]" + "".join(suffixes)
     return part
 
