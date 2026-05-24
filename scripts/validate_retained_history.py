@@ -200,6 +200,7 @@ RETAINED_SAFETY_TEXT_RE = re.compile(
     r"客户|客户数据|凭据|凭证|密钥|生产|破坏性)",
     re.I,
 )
+COMMON_BARE_TOKEN_RE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b")
 RISK_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", re.I),
     re.compile(r"\b(?:https?|ssh)://", re.I),
@@ -217,6 +218,7 @@ RISK_PATTERNS = (
     ),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
+    COMMON_BARE_TOKEN_RE,
     re.compile(r"(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)"),
     re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
@@ -248,13 +250,14 @@ INFRASTRUCTURE_RISK_PATTERNS = (
     re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\", re.I),
     re.compile(
         r"(?<![A-Za-z0-9_])[\"']?"
-        r"(?!(?:safe[._-]?token(?:[._-]?re)?|max[._-]?safe[._-]?token[._-]?length|max[._-]?token[._-]?array[._-]?items|sensitive[._-]?token[._-]?re|raw[._-]?id[._-]?token[._-]?re|tokens|risk[._-]?patterns?|infrastructure[._-]?risk[._-]?patterns?|safe[._-]?infrastructure[._-]?lines)[\"']?\s*[:=])"
+        r"(?!(?:safe[._-]?token(?:[._-]?re)?|common[._-]?bare[._-]?token[._-]?re|max[._-]?safe[._-]?token[._-]?length|max[._-]?token[._-]?array[._-]?items|sensitive[._-]?token[._-]?re|raw[._-]?id[._-]?token[._-]?re|tokens|risk[._-]?patterns?|infrastructure[._-]?risk[._-]?patterns?|safe[._-]?infrastructure[._-]?lines)[\"']?\s*[:=])"
         r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]*key|authorization|private[\s._-]*key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
         r"(?!(?:re\.compile|frozenset)\b)",
         re.I,
     ),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
+    COMMON_BARE_TOKEN_RE,
     re.compile(r"(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)"),
     re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),

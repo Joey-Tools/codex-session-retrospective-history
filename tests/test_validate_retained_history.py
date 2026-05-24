@@ -214,6 +214,18 @@ def risky_secret_token() -> str:
     return "s" + "k-" + "proj-" + "abcdefghijklmnop123456"
 
 
+def risky_github_classic_token() -> str:
+    return "gh" + "p_" + ("a" * 36)
+
+
+def risky_github_oauth_token() -> str:
+    return "gh" + "o_" + ("b" * 36)
+
+
+def risky_fine_grained_github_token() -> str:
+    return "github" + "_pat_" + ("c" * 24)
+
+
 def risky_raw_hash() -> str:
     return "a" * 64
 
@@ -344,6 +356,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "private " + "key: abc",
             "api" + "Key: [REDACTED]",
             "private" + "Key = <redacted>",
+            "GitHub token " + risky_github_classic_token(),
+            "GitHub OAuth token " + risky_github_oauth_token(),
+            "GitHub fine-grained token " + risky_fine_grained_github_token(),
             "customer data",
             "PII",
             "production",
@@ -409,6 +424,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             risky_compound_episode_token(),
             risky_compound_camel_session_token(),
             risky_compound_camel_turn_token(),
+            risky_github_classic_token(),
+            risky_github_oauth_token(),
+            risky_fine_grained_github_token(),
         ):
             with self.subTest(sample=sample):
                 self.assertTrue(any(pattern.search(sample) for pattern in schema_patterns))
@@ -972,6 +990,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "Link local IPv6 " + risky_link_local_ipv6(),
             "Loopback IPv6 " + risky_loopback_ipv6(),
             "Rollout file " + risky_rollout_filename(),
+            "Classic GitHub token " + risky_github_classic_token(),
+            "OAuth GitHub token " + risky_github_oauth_token(),
+            "Fine grained GitHub token " + risky_fine_grained_github_token(),
         )
         for text in risky_examples:
             with self.subTest(text=text):
@@ -1449,6 +1470,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             risky_bare_private_lan_ip(),
             risky_link_local_ip(),
             risky_cgnat_ip(),
+            risky_github_classic_token(),
+            risky_github_oauth_token(),
+            risky_fine_grained_github_token(),
         ):
             with self.subTest(sample=sample):
                 self.assertFalse(MODULE.valid_safe_token(sample))
