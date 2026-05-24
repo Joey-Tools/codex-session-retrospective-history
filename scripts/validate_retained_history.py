@@ -1068,16 +1068,22 @@ def validate_retained_export_consistency(
         if valid_non_negative_int(turn_count) and flagged_count > turn_count:
             issues.append(f"{turn_flags_path}: flagged turns must not exceed referenced episode turn_count")
 
+    row_window_identity = None
+    row_window_label = None
+    if isinstance(trend, dict):
+        row_window_identity = retained_window_identity(trend.get("window"))
+        row_window_label = "trend window"
+    if row_window_identity is None and isinstance(manifest, dict):
+        row_window_identity = retained_window_identity(manifest.get("window"))
+        row_window_label = "manifest window"
+
     if data_month is not None:
         month_start, month_end = data_month_window(data_month)
-        row_scope_identity = retained_window_identity(trend.get("window")) if isinstance(trend, dict) else None
-        if row_scope_identity is None and isinstance(manifest, dict):
-            row_scope_identity = retained_window_identity(manifest.get("window"))
         row_scope_crosses_into_data_month = (
-            row_scope_identity is not None
-            and row_scope_identity[0] in {"weekly", "baseline-90d"}
-            and row_scope_identity[1] < month_start
-            and row_scope_identity[2] <= month_end
+            row_window_identity is not None
+            and row_window_identity[0] in {"weekly", "baseline-90d"}
+            and row_window_identity[1] < month_start
+            and row_window_identity[2] <= month_end
         )
         for artifact, path in ((trend, trend_path), (manifest, manifest_path)):
             if isinstance(artifact, dict):
@@ -1101,26 +1107,26 @@ def validate_retained_export_consistency(
                 if timestamp_key is not None and (timestamp_key < month_start or timestamp_key >= month_end):
                     issues.append(f"{turn_flags_path}:{index}: timestamp must be within data month")
 
-    if not episodes and not turn_flags and "episode" not in rows and "turn_flag" not in rows and not isinstance(trend, dict):
-        return issues
-
-    if not isinstance(trend, dict):
-        return issues
-
-    trend_window = retained_window_identity(trend.get("window"))
-    if trend_window is not None:
-        _, window_start, window_end = trend_window
+    if row_window_identity is not None:
+        _, window_start, window_end = row_window_identity
+        label = row_window_label or "retained window"
         for index, row in enumerate(episodes, 1):
             start_key = valid_timestamp_key(row.get("start"))
             end_key = valid_timestamp_key(row.get("end"))
             if (start_key is not None and (start_key < window_start or start_key >= window_end)) or (
                 end_key is not None and (end_key < window_start or end_key > window_end)
             ):
-                issues.append(f"{episodes_path}:{index}: episode start/end must be within trend window")
+                issues.append(f"{episodes_path}:{index}: episode start/end must be within {label}")
         for index, row in enumerate(turn_flags, 1):
             timestamp_key = valid_timestamp_key(row.get("timestamp"))
             if timestamp_key is not None and (timestamp_key < window_start or timestamp_key >= window_end):
-                issues.append(f"{turn_flags_path}:{index}: timestamp must be within trend window")
+                issues.append(f"{turn_flags_path}:{index}: timestamp must be within {label}")
+
+    if not episodes and not turn_flags and "episode" not in rows and "turn_flag" not in rows and not isinstance(trend, dict):
+        return issues
+
+    if not isinstance(trend, dict):
+        return issues
 
     if valid_non_negative_int(trend.get("episode_count")) and trend["episode_count"] != len(episodes):
         issues.append(f"{trend_path}: episode_count must match episodes.jsonl")

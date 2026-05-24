@@ -1607,6 +1607,38 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             self.assertEqual(MODULE.validate_root(root), [])
 
+    def test_monthly_manifest_only_export_bounds_rows_to_manifest_window(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            episode = valid_episode()
+            episode["start"] = "2026-05-20T00:00:00Z"
+            episode["end"] = "2026-05-20T01:00:00Z"
+            episode_path = root / "data" / "episodes" / "2026" / "05" / "episodes.jsonl"
+            episode_path.parent.mkdir(parents=True)
+            episode_path.write_text(json.dumps(episode) + "\n", encoding="utf-8")
+
+            turn = valid_turn_flag()
+            turn["timestamp"] = "2026-05-20T00:00:00Z"
+            turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+            turn_path.parent.mkdir(parents=True)
+            turn_path.write_text(json.dumps(turn) + "\n", encoding="utf-8")
+
+            manifest = valid_manifest()
+            manifest["mode"] = "weekly"
+            manifest["window"] = {
+                "mode": "weekly",
+                "start": "2026-04-28T00:00:00Z",
+                "end": "2026-05-05T00:00:00Z",
+            }
+            manifest_path = root / "data" / "manifests" / "2026" / "05" / "retained_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn("data/episodes/2026/05/episodes.jsonl:1: episode start/end must be within manifest window", issues)
+        self.assertIn("data/turn_flags/2026/05/turn_flags.jsonl:1: timestamp must be within manifest window", issues)
+
     def test_retained_mode_rejects_non_90_day_baselines(self) -> None:
         self.assertFalse(MODULE.valid_retained_mode("baseline-30d"))
 
