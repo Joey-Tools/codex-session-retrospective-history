@@ -1830,6 +1830,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             (".github/workflows/ci.yml", "name: CI\n# " + risky_project_path() + "\n"),
             ("scripts/probe.py", "# " + risky_secret_token() + "\n"),
             ("schemas/session-retrospective-v1.schema.json", json.dumps({"source": risky_project_path()}) + "\n"),
+            (
+                "schemas/session-retrospective-v1.schema.json",
+                '{"source": "\\u002fUs' + 'ers\\u002fhoteng\\u002f.codex\\u002fsess' + 'ions\\u002fraw.jsonl"}\n',
+            ),
             ("tests/probe.py", "# " + risky_internal_host() + "\n"),
             (".gitignore", ".codex" + "-tmp/\n# " + risky_project_path() + "\n"),
             ("README.md", "Raw pointer " + risky_session_pointer() + "\n"),

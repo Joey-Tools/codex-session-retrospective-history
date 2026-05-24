@@ -442,6 +442,20 @@ def contains_infrastructure_risk_text(value: str) -> bool:
     return False
 
 
+def contains_decoded_infrastructure_risk(value: Any) -> bool:
+    if isinstance(value, str):
+        return contains_infrastructure_risk_text(value)
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if isinstance(key, str) and contains_infrastructure_risk_text(key):
+                return True
+            if contains_decoded_infrastructure_risk(child):
+                return True
+    if isinstance(value, list):
+        return any(contains_decoded_infrastructure_risk(child) for child in value)
+    return False
+
+
 def contains_risky_token(value: Any) -> bool:
     return isinstance(value, str) and SENSITIVE_TOKEN_RE.search(value) is not None
 
@@ -1235,6 +1249,8 @@ def validate_root(root: Path) -> list[str]:
                     issues.append(f"{display_relative}: infrastructure text contains raw/sensitive evidence")
             if suffix == ".json":
                 data = parse_json(path)
+                if allowed_infrastructure_artifact(relative) and contains_decoded_infrastructure_risk(data):
+                    issues.append(f"{display_relative}: infrastructure text contains raw/sensitive evidence")
                 json_kind = allowed_retained_json_artifact(relative)
                 if json_kind == "manifest":
                     expected_mode = expected_mode_from_retained_export_path(relative)
