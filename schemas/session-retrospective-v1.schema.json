@@ -272,11 +272,11 @@
       ]
     },
     "retained_model_id": {
-      "enum": ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"],
+      "enum": ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex"],
       "type": "string"
     },
     "retained_model_era": {
-      "enum": ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "other-model", "pre-gpt-5.3-codex", "unknown"],
+      "enum": ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "other-model", "pre-gpt-5.3-codex", "unknown"],
       "type": "string"
     },
     "safe_token": {

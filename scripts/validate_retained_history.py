@@ -88,7 +88,7 @@ RETAINED_EXPORT_FILES = frozenset({"episodes.jsonl", "turn_flags.jsonl", "trend_
 RETAINED_EVIDENCE_HOSTS = frozenset({"local", "miku-bot-dev", "hoteng-srv-01", "custom_source"})
 RETAINED_HOSTS = frozenset((*RETAINED_EVIDENCE_HOSTS, "scope"))
 RETAINED_FIXED_MODES = frozenset({"daily", "weekly"})
-RETAINED_MODEL_IDS = frozenset({"gpt-5.5", "gpt-5.4", "gpt-5.3-codex"})
+RETAINED_MODEL_IDS = frozenset({"gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex"})
 RETAINED_MODEL_ERAS = frozenset((*RETAINED_MODEL_IDS, "other-model", "pre-gpt-5.3-codex", "unknown"))
 EPISODE_KEYS = frozenset(
     {

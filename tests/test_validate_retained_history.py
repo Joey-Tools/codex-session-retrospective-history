@@ -1805,6 +1805,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertIn("window.mode must be an allowed retained mode", issues)
 
     def test_retained_models_are_restricted_to_allowed_labels(self) -> None:
+        self.assertTrue(MODULE.valid_retained_model_id("gpt-5.6-sol"))
+        self.assertTrue(MODULE.valid_retained_model_era("gpt-5.6-sol"))
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             episode = valid_episode()
