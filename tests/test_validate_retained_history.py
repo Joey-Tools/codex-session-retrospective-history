@@ -1807,6 +1807,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_retained_models_are_restricted_to_allowed_labels(self) -> None:
         self.assertTrue(MODULE.valid_retained_model_id("gpt-5.6-sol"))
         self.assertTrue(MODULE.valid_retained_model_era("gpt-5.6-sol"))
+        self.assertTrue(MODULE.valid_retained_model_id("gpt-5.6-terra"))
+        self.assertTrue(MODULE.valid_retained_model_era("gpt-5.6-terra"))
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             episode = valid_episode()
