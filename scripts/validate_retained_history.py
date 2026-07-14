@@ -127,6 +127,7 @@ ROOT_DOC_FILES = frozenset(
         "data/README.md",
         "reports/README.md",
         "requirements-v2.txt",
+        "retrospective-history-v2-publisher.asc",
     }
 )
 WORKFLOW_SUFFIXES = frozenset({".yaml", ".yml"})

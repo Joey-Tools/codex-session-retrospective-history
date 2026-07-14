@@ -53,10 +53,12 @@ def encoded(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def template_payload(rendered_text: str) -> dict[str, object]:
+def template_payload(
+    rendered_text: str, *, slots: list[dict[str, object]] | None = None
+) -> dict[str, object]:
     return {
         "template_id": "retrospective.v2.what_happened",
-        "slots": [],
+        "slots": [] if slots is None else slots,
         "rendered_text": rendered_text,
         "rendering_policy": "retained-template-renderer-v2",
         "detail_disposition": "rendered",
@@ -125,12 +127,19 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
         )
 
     def test_accepts_template_output_and_fixed_report_structure(self) -> None:
-        rendered = "The assistant used a bounded search and verified the task."
+        rendered = "What Happened: action use a bounded search."
+        slots = [
+            {
+                "name": "action",
+                "slot_type": "reviewed_clause",
+                "value": "use_a_bounded_search",
+            }
+        ]
 
         self.assertEqual(
             MODULE.validate_v2_privacy(
                 artifact_path("turn_findings.jsonl"),
-                encoded(template_payload(rendered)) + b"\n",
+                encoded(template_payload(rendered, slots=slots)) + b"\n",
             ),
             [],
         )
@@ -162,15 +171,28 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
                 self.assertIn(expected, issues)
                 self.assertNotIn(rendered, "\n".join(issues))
 
-    def test_accepts_bounded_numeric_metrics_in_template_prose(self) -> None:
-        rendered = (
-            "The assistant used 12 bounded search results and verified 3 results."
-        )
+    def test_accepts_bounded_numeric_metrics_in_typed_slots(self) -> None:
+        rendered = "What Happened: metric available ledger count v2 count."
+        slots = [
+            {
+                "name": "metric",
+                "slot_type": "aggregate_metric",
+                "metric": {
+                    "status": "available",
+                    "formula_id": "ledger_count_v2",
+                    "value": 12,
+                    "unit": "count",
+                    "rounding": "integer",
+                    "cohort_policy": "all_terminal_members",
+                    "input_refs": ["aggregate_input_ref_v2:" + "a" * 32],
+                },
+            }
+        ]
 
         self.assertEqual(
             MODULE.validate_v2_privacy(
                 artifact_path("turn_findings.jsonl"),
-                encoded(template_payload(rendered)) + b"\n",
+                encoded(template_payload(rendered, slots=slots)) + b"\n",
             ),
             [],
         )
@@ -328,6 +350,19 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
             issues = MODULE.validate_v2_privacy(artifact_path("summary.json"), b"{}")
 
         self.assertIn(MODULE.ISSUE_FORMAT, issues)
+
+    def test_jsonl_row_budget_is_enforced_while_streaming(self) -> None:
+        payload = b"{}\n" * (MODULE.MAX_JSONL_ROWS + 1)
+
+        with mock.patch.object(
+            MODULE, "_parse_json", wraps=MODULE._parse_json
+        ) as parse_json:
+            issues = MODULE.validate_v2_privacy(
+                artifact_path("episodes.jsonl"), payload
+            )
+
+        self.assertIn(MODULE.ISSUE_FORMAT, issues)
+        self.assertEqual(parse_json.call_count, MODULE.MAX_JSONL_ROWS)
 
     def test_report_scanner_rejects_structure_code_and_source_specific_prose(
         self,

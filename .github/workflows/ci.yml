@@ -12,6 +12,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Import v2 publisher public key
+        env:
+          EXPECTED_FINGERPRINT: EFBBC913F49A5F6E0AF0D248F70246143DC28F32
+          PUBLISHER_PUBLIC_KEY: retrospective-history-v2-publisher.asc
+        run: |
+          GNUPGHOME="$RUNNER_TEMP/retrospective-history-v2-gnupg"
+          export GNUPGHOME
+          install -d -m 700 "$GNUPGHOME"
+          gpg --no-options --no-autostart --batch --import "$PUBLISHER_PUBLIC_KEY"
+          ACTUAL_FINGERPRINT="$(
+            gpg --no-options --no-autostart --batch --with-colons \
+              --fingerprint "$EXPECTED_FINGERPRINT" |
+              awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -35,13 +51,14 @@ jobs:
       - name: Validate append-only pull request range
         if: github.event_name == 'pull_request'
         env:
-          BASE_REV: ${{ github.event.pull_request.base.sha }}
+          BASE_TIP: ${{ github.event.pull_request.base.sha }}
           EVENT_FORCED: "false"
           HEAD_REV: ${{ github.event.pull_request.head.sha }}
-        run: >-
-          python scripts/validate_retained_history.py --root .
-          --base-rev "$BASE_REV" --head-rev "$HEAD_REV"
-          --event-forced "$EVENT_FORCED"
+        run: |
+          BASE_REV="$(git merge-base "$BASE_TIP" "$HEAD_REV")"
+          python scripts/validate_retained_history.py --root . \
+            --base-rev "$BASE_REV" --head-rev "$HEAD_REV" \
+            --event-forced "$EVENT_FORCED"
       - name: Validate append-only master push range
         if: github.event_name == 'push'
         env:

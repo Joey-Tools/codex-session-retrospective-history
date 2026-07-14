@@ -109,6 +109,25 @@ def typed_ref(prefix: str, value: str = "a", width: int = 32) -> str:
     return prefix + value * width
 
 
+def production_configuration_root(provenance: dict[str, object]) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(b"session-retrospective-production-configuration-v2")
+    for field_name in (
+        "active_calibration_receipt_ref",
+        "active_calibration_model_era_ref",
+        "active_shadow_receipt_ref",
+        "active_shadow_model_era_ref",
+    ):
+        for frame_type, value in (
+            (b"N", field_name.encode("ascii")),
+            (b"V", str(provenance[field_name]).encode("ascii")),
+        ):
+            hasher.update(frame_type)
+            hasher.update(len(value).to_bytes(8, "big"))
+            hasher.update(value)
+    return f"production_configuration_root_v2:sha256:{hasher.hexdigest()}"
+
+
 def normalize_session_refs(value: object) -> object:
     if isinstance(value, list):
         return [normalize_session_refs(item) for item in value]
@@ -390,6 +409,11 @@ def full_manifest(
             "renderer_byte_equality_required": True,
         },
     }
+    provenance = manifest["provenance"]
+    assert isinstance(provenance, dict)
+    manifest["production_configuration_root_v2"] = production_configuration_root(
+        provenance
+    )
     if publication_role in {"campaign_segment", "campaign_root"}:
         manifest["publication_campaign_reason"] = (
             "baseline_window" if mode == "baseline" else "size_partition"

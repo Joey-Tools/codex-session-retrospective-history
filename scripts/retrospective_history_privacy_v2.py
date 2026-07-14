@@ -3,12 +3,20 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import io
 import ipaddress
 import json
 from pathlib import Path
 import re
 import unicodedata
 from typing import Any
+
+try:
+    from retrospective_history_templates_v2 import validate_and_render_template
+except ModuleNotFoundError:  # Imported as scripts.retrospective_history_privacy_v2.
+    from scripts.retrospective_history_templates_v2 import (
+        validate_and_render_template,
+    )
 
 
 SCHEMA_PATH = (
@@ -64,6 +72,8 @@ ARTIFACT_BASENAMES = frozenset(
 RUN_MODES = frozenset({"daily", "weekly", "baseline", "session"})
 MAX_JSON_DEPTH = 64
 MAX_JSON_NODES = 100_000
+MAX_JSONL_ROWS = 100_000
+MAX_JSONL_NODES = 1_000_000
 RUN_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 RUN_REF_RE = re.compile(r"^run_ref_v2:[0-9a-f]{64}$")
 PRODUCTION_CONFIGURATION_ROOT_RE = re.compile(
@@ -639,28 +649,7 @@ def _typed_ref_kind(value: str) -> str | None:
 
 
 def _valid_template_parent(parent: Any, rendered_text: str) -> bool:
-    if not isinstance(parent, dict):
-        return False
-    template_id = parent.get("template_id")
-    if not isinstance(template_id, str) or not template_id.startswith(
-        "retrospective.v2."
-    ):
-        return False
-    if template_id not in _FIELD_LITERALS.get("template_id", frozenset()):
-        return False
-    if parent.get("rendering_policy") != "retained-template-renderer-v2":
-        return False
-    if not isinstance(parent.get("slots"), list):
-        return False
-    disposition = parent.get("detail_disposition")
-    if template_id == "retrospective.v2.detail_not_retained":
-        return (
-            disposition == "detail_not_retained"
-            and rendered_text
-            == "Detail was not retained under the v2 retained-language policy."
-            and parent.get("slots") == []
-        )
-    return disposition == "rendered"
+    return validate_and_render_template(parent) == rendered_text
 
 
 def _allowed_json_string(
@@ -671,7 +660,7 @@ def _allowed_json_string(
         return (False, False, False)
     if field == "rendered_text":
         allowed = _valid_template_parent(parent, value)
-        return (allowed, False, allowed)
+        return (allowed, False, True)
     if field == "retained_bundle_digest_v2":
         allowed = BUNDLE_DIGEST_RE.fullmatch(value) is not None
         return (allowed, allowed, False)
@@ -816,15 +805,16 @@ def _scan_json_value(
     *,
     field: str | None = None,
     parent: Any = None,
-) -> None:
+    node_limit: int = MAX_JSON_NODES,
+) -> int:
     stack: list[tuple[Any, str | None, Any, int]] = [(value, field, parent, 0)]
     visited = 0
     while stack:
         current, current_field, current_parent, depth = stack.pop()
         visited += 1
-        if visited > MAX_JSON_NODES or depth > MAX_JSON_DEPTH:
+        if visited > node_limit or depth > MAX_JSON_DEPTH:
             issues.add(ISSUE_FORMAT)
-            return
+            return visited
         if isinstance(current, dict):
             for key in sorted(current, reverse=True):
                 if key not in _ALLOWED_JSON_KEYS:
@@ -844,6 +834,7 @@ def _scan_json_value(
         if not allowed:
             issues.add(ISSUE_SCALAR)
         _scan_text_risks(current, issues, allow_opaque=opaque, prose=prose)
+    return visited
 
 
 def _parse_json(text: str) -> Any:
@@ -854,13 +845,15 @@ def _parse_json(text: str) -> Any:
     )
 
 
-def _parse_jsonl(text: str) -> list[Any]:
-    rows: list[Any] = []
-    for line in text.splitlines():
+def _parse_jsonl(text: str) -> Any:
+    row_count = 0
+    for line in io.StringIO(text):
         if not line.strip():
             continue
-        rows.append(_parse_json(line))
-    return rows
+        row_count += 1
+        if row_count > MAX_JSONL_ROWS:
+            raise ValueError("retained JSONL row budget exceeded")
+        yield _parse_json(line)
 
 
 def _scan_report(text: str, issues: set[str]) -> None:
@@ -898,9 +891,15 @@ def validate_v2_privacy(relative: Path, payload: bytes) -> list[str]:
 
     try:
         if basename.endswith(".jsonl"):
-            values = _parse_jsonl(text)
+            remaining_nodes = MAX_JSONL_NODES
+            for value in _parse_jsonl(text):
+                if remaining_nodes <= 0:
+                    issues.add(ISSUE_FORMAT)
+                    break
+                visited = _scan_json_value(value, issues, node_limit=remaining_nodes)
+                remaining_nodes -= visited
         elif basename.endswith(".json"):
-            values = [_parse_json(text)]
+            _scan_json_value(_parse_json(text), issues)
         else:
             issues.add(ISSUE_FORMAT)
             _scan_text_risks(text, issues, prose=True)
@@ -908,13 +907,6 @@ def validate_v2_privacy(relative: Path, payload: bytes) -> list[str]:
     except (json.JSONDecodeError, RecursionError, ValueError):
         issues.add(ISSUE_FORMAT)
         _scan_text_risks(text, issues)
-        return sorted(issues)
-
-    try:
-        for value in values:
-            _scan_json_value(value, issues)
-    except RecursionError:
-        issues.add(ISSUE_FORMAT)
     return sorted(issues)
 
 

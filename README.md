@@ -102,6 +102,20 @@ Campaign membership and lineage stay in schema-defined opaque references,
 provenance, head bindings, and supersession fields where applicable. They must
 not expose source-derived labels or raw identifiers in Git paths.
 
+The history validator recomputes two domain-separated commitments. The
+production-configuration root frames, in schema order, the four active
+calibration/shadow receipt and model-era references. A campaign root frames the
+campaign reference and count, then each segment's 1-based ordinal, run
+reference, and already-validated retained bundle digest in ordinal order.
+Segment-only prefixes are valid while a campaign is being assembled; once a
+root exists, exactly one root and the complete contiguous segment set are
+required. A root without segments, duplicate roots, or any commitment mismatch
+is invalid.
+
+Every retained template is re-rendered from its closed `template_id` and typed
+slots. Both the stored `rendered_text` and `report.md` must match that canonical
+rendering byte for byte; caller-provided prose is never used as renderer input.
+
 ## Data Policy
 
 Commit only redacted retrospective artifacts:

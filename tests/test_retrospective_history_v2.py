@@ -32,6 +32,10 @@ ARTIFACTS = (
     "turn_findings.jsonl",
 )
 DOMAIN_TAG = b"session-retrospective-retained-bundle-v2"
+PRODUCTION_CONFIGURATION_DOMAIN_TAG = (
+    b"session-retrospective-production-configuration-v2"
+)
+CAMPAIGN_SEGMENT_DOMAIN_TAG = b"session-retrospective-campaign-segments-v2"
 WINDOW_ROUTE_DOMAIN = b"session-retrospective-retained-window-route-v2"
 WINDOW = {
     "mode": "daily",
@@ -341,6 +345,36 @@ def bundle_digest(payloads: dict[str, bytes], manifest: dict) -> str:
         update_frame(hasher, b"N", basename.encode("ascii"))
         update_frame(hasher, b"B", content)
     return f"retained_bundle_digest_v2:sha256:{hasher.hexdigest()}"
+
+
+def production_configuration_root(provenance: dict[str, object]) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(PRODUCTION_CONFIGURATION_DOMAIN_TAG)
+    for field_name in (
+        "active_calibration_receipt_ref",
+        "active_calibration_model_era_ref",
+        "active_shadow_receipt_ref",
+        "active_shadow_model_era_ref",
+    ):
+        update_frame(hasher, b"N", field_name.encode("ascii"))
+        update_frame(hasher, b"V", str(provenance[field_name]).encode("ascii"))
+    return f"production_configuration_root_v2:sha256:{hasher.hexdigest()}"
+
+
+def campaign_segment_root(
+    campaign_ref: str,
+    segment_count: int,
+    segments: list[tuple[int, str, str]],
+) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(CAMPAIGN_SEGMENT_DOMAIN_TAG)
+    update_frame(hasher, b"C", campaign_ref.encode("ascii"))
+    update_frame(hasher, b"N", segment_count.to_bytes(8, "big"))
+    for ordinal, run_ref, digest in sorted(segments):
+        update_frame(hasher, b"O", ordinal.to_bytes(8, "big"))
+        update_frame(hasher, b"R", run_ref.encode("ascii"))
+        update_frame(hasher, b"D", digest.encode("ascii"))
+    return f"campaign_segment_root_v2:sha256:{hasher.hexdigest()}"
 
 
 @dataclass(frozen=True)
@@ -765,9 +799,7 @@ def write_bundle(
             "publisher_signature_policy_version": 1,
             "operational_counts": {field: 0 for field in OPERATIONAL_COUNT_FIELDS},
         },
-        "production_configuration_root_v2": (
-            "production_configuration_root_v2:sha256:" + f"{number:064x}"
-        ),
+        "production_configuration_root_v2": "",
         "retention_contract": {
             "retention_safe": True,
             "opaque_references_only": True,
@@ -777,6 +809,9 @@ def write_bundle(
             "renderer_byte_equality_required": True,
         },
     }
+    manifest["production_configuration_root_v2"] = production_configuration_root(
+        manifest["provenance"]
+    )
     manifest["retained_bundle_digest_v2"] = bundle_digest(payloads, manifest)
     (directory / "manifest.json").write_bytes(canonical_json(manifest))
     return BundleRefs(
@@ -867,8 +902,28 @@ def write_campaign_bundle(
             "run_validity": None,
         }
     elif publication_role == "campaign_root":
-        manifest["campaign_segment_root_v2"] = (
-            "campaign_segment_root_v2:sha256:" + f"{campaign_number:064x}"
+        segment_commitments: list[tuple[int, str, str]] = []
+        for candidate_path in root.rglob("manifest.json"):
+            candidate = json.loads(candidate_path.read_bytes())
+            if (
+                candidate.get("publication_role") != "campaign_segment"
+                or candidate.get("campaign_ref") != manifest["campaign_ref"]
+            ):
+                continue
+            metadata = candidate.get("campaign_segment_metadata")
+            if not isinstance(metadata, dict):
+                continue
+            segment_commitments.append(
+                (
+                    int(metadata["segment_ordinal"]),
+                    str(candidate["run_ref"]),
+                    str(candidate["retained_bundle_digest_v2"]),
+                )
+            )
+        manifest["campaign_segment_root_v2"] = campaign_segment_root(
+            str(manifest["campaign_ref"]),
+            segment_count,
+            segment_commitments,
         )
     else:
         raise ValueError("unsupported campaign role")
@@ -1376,6 +1431,83 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
             )
 
             self.assertEqual(MODULE.validate_v2_runs(root), [])
+
+    def test_campaign_root_requires_segments_and_is_unique(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write_campaign_bundle(
+                root,
+                1,
+                publication_role="campaign_root",
+                mode="daily",
+            )
+
+            issues = MODULE.validate_v2_runs(root)
+            self.assertTrue(
+                any(
+                    "root must not exist without campaign segments" in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for ordinal in (1, 2):
+                write_campaign_bundle(
+                    root,
+                    ordinal,
+                    publication_role="campaign_segment",
+                    mode="daily",
+                    segment_ordinal=ordinal,
+                )
+            write_campaign_bundle(
+                root, 3, publication_role="campaign_root", mode="daily"
+            )
+            write_campaign_bundle(
+                root, 4, publication_role="campaign_root", mode="daily"
+            )
+
+            issues = MODULE.validate_v2_runs(root)
+            self.assertTrue(
+                any("at most one campaign root" in issue for issue in issues), issues
+            )
+
+    def test_campaign_root_binds_ordered_segment_bundle_digests(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first = write_campaign_bundle(
+                root,
+                1,
+                publication_role="campaign_segment",
+                mode="daily",
+                segment_ordinal=1,
+            )
+            write_campaign_bundle(
+                root,
+                2,
+                publication_role="campaign_segment",
+                mode="daily",
+                segment_ordinal=2,
+            )
+            write_campaign_bundle(
+                root, 3, publication_role="campaign_root", mode="daily"
+            )
+            manifest_path = first.directory / "manifest.json"
+            manifest = json.loads(manifest_path.read_bytes())
+            manifest["prepared_at"] = "2026-07-14T00:01:00Z"
+            manifest_path.write_bytes(canonical_json(manifest))
+            rewrite_digest(first.directory)
+
+            issues = MODULE.validate_v2_runs(root)
+            self.assertTrue(
+                any(
+                    "does not bind the ordered segment run refs and bundle digests"
+                    in issue
+                    for issue in issues
+                ),
+                issues,
+            )
 
     def test_campaign_reason_matches_mode_and_campaign_coordinates(self) -> None:
         for mode in ("daily", "baseline"):
@@ -2135,6 +2267,44 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
             self.assertNotIn("schema target summary", rendered)
             self.assertNotIn(private_text, rendered)
             self.assertNotIn(str(root), rendered)
+
+    def test_report_templates_are_recomputed_from_id_and_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            refs = write_bundle(root, 1)
+            summary_path = refs.directory / "summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["what_happened"] = [rendered_template("The task was retained.")]
+            summary_path.write_bytes(canonical_json(summary))
+            (refs.directory / "report.md").write_bytes(report_payload(summary))
+            rewrite_digest(refs.directory)
+
+            issues = MODULE.validate_v2_runs(root)
+            self.assertTrue(
+                any("report renderer input is invalid" in issue for issue in issues),
+                issues,
+            )
+
+    def test_production_configuration_root_binds_active_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            refs = write_bundle(root, 1)
+            manifest_path = refs.directory / "manifest.json"
+            manifest = json.loads(manifest_path.read_bytes())
+            manifest["provenance"]["active_shadow_receipt_ref"] = hex_ref(
+                "receipt_ref_v2:", 999
+            )
+            manifest_path.write_bytes(canonical_json(manifest))
+            rewrite_digest(refs.directory)
+
+            issues = MODULE.validate_v2_runs(root)
+            self.assertTrue(
+                any(
+                    "does not bind the active provenance references" in issue
+                    for issue in issues
+                ),
+                issues,
+            )
 
 
 if __name__ == "__main__":

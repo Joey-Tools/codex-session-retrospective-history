@@ -400,7 +400,7 @@
       "type": "object"
     },
     "campaign_segment_root_v2": {
-      "description": "Lowercase SHA-256 over the ordered typed framing of campaign segment run references, ordinals, and validated bundle digests.",
+      "description": "Lowercase SHA-256 using domain session-retrospective-campaign-segments-v2, followed by typed C/N frames for campaign_ref and segment_count and ordered O/R/D frames for every 1-based ordinal, segment run_ref, and validated retained_bundle_digest_v2.",
       "maxLength": 96,
       "pattern": "^campaign_segment_root_v2:sha256:[0-9a-f]{64}$",
       "type": "string"
@@ -3092,7 +3092,7 @@
       "type": "string"
     },
     "production_configuration_root_v2": {
-      "description": "Privacy-safe SHA-256 commitment to the exact active production configuration and its opaque calibration and shadow provenance bindings.",
+      "description": "Privacy-safe SHA-256 using domain session-retrospective-production-configuration-v2 and ordered typed N/V frames for the four exact active calibration/shadow receipt and model-era provenance bindings.",
       "maxLength": 104,
       "minLength": 104,
       "pattern": "^production_configuration_root_v2:sha256:[0-9a-f]{64}$",

@@ -16,6 +16,13 @@ import re
 import stat
 from typing import Any, Callable, Iterable, Sequence
 
+try:
+    from retrospective_history_templates_v2 import validate_and_render_template
+except ModuleNotFoundError:  # Imported as scripts.retrospective_history_v2 in tests.
+    from scripts.retrospective_history_templates_v2 import (
+        validate_and_render_template,
+    )
+
 
 try:
     from jsonschema import Draft202012Validator as _Draft202012Validator
@@ -101,6 +108,7 @@ DIGEST_RE = re.compile(r"^retained_bundle_digest_v2:sha256:[0-9a-f]{64}$")
 PRODUCTION_CONFIGURATION_ROOT_RE = re.compile(
     r"^production_configuration_root_v2:sha256:[0-9a-f]{64}$"
 )
+CAMPAIGN_SEGMENT_ROOT_RE = re.compile(r"^campaign_segment_root_v2:sha256:[0-9a-f]{64}$")
 
 SCHEMA_DIRECTORY = Path(__file__).resolve().parents[1] / "schemas"
 SESSION_SCHEMA_PATH = SCHEMA_DIRECTORY / "session-retrospective-v2.schema.json"
@@ -212,6 +220,16 @@ BUNDLE_DIGEST_CONTRACT = {
     "framing": "typed-name-length-v2",
     "manifest_projection": "omit-retained_bundle_digest_v2-only",
 }
+PRODUCTION_CONFIGURATION_DOMAIN_TAG = (
+    b"session-retrospective-production-configuration-v2"
+)
+PRODUCTION_CONFIGURATION_FIELDS = (
+    "active_calibration_receipt_ref",
+    "active_calibration_model_era_ref",
+    "active_shadow_receipt_ref",
+    "active_shadow_model_era_ref",
+)
+CAMPAIGN_SEGMENT_DOMAIN_TAG = b"session-retrospective-campaign-segments-v2"
 
 MANIFEST_KEYS = frozenset(
     {
@@ -850,11 +868,10 @@ def _render_report_markdown(summary: dict[str, Any]) -> bytes | None:
             return None
         rendered: list[str] = []
         for template in templates:
-            if not isinstance(template, dict) or not isinstance(
-                template.get("rendered_text"), str
-            ):
+            rendered_text = validate_and_render_template(template)
+            if rendered_text is None:
                 return None
-            rendered.append(f"- {template['rendered_text']}")
+            rendered.append(f"- {rendered_text}")
         lines.extend(("", f"## {heading}"))
         lines.extend(rendered or ["- No observation was retained."])
 
@@ -893,6 +910,49 @@ def _update_typed_frame(hasher: Any, frame_type: bytes, value: bytes) -> None:
     hasher.update(frame_type)
     hasher.update(len(value).to_bytes(8, byteorder="big", signed=False))
     hasher.update(value)
+
+
+def _compute_production_configuration_root(provenance: Any) -> str:
+    if not isinstance(provenance, dict):
+        raise TypeError("provenance must be an object")
+    hasher = hashlib.sha256()
+    hasher.update(PRODUCTION_CONFIGURATION_DOMAIN_TAG)
+    for field_name in PRODUCTION_CONFIGURATION_FIELDS:
+        value = provenance.get(field_name)
+        if not isinstance(value, str):
+            raise TypeError(f"{field_name} must be a string")
+        _update_typed_frame(hasher, b"N", field_name.encode("ascii"))
+        _update_typed_frame(hasher, b"V", value.encode("ascii"))
+    return f"production_configuration_root_v2:sha256:{hasher.hexdigest()}"
+
+
+def _compute_campaign_segment_root(
+    campaign_ref: str,
+    segment_count: int,
+    segments: Iterable[tuple[int, str, str]],
+) -> str:
+    if not isinstance(campaign_ref, str) or not _is_int(segment_count):
+        raise TypeError("campaign root inputs are invalid")
+    ordered = sorted(segments, key=lambda item: item[0])
+    if len(ordered) != segment_count:
+        raise ValueError("campaign segment cardinality is invalid")
+    hasher = hashlib.sha256()
+    hasher.update(CAMPAIGN_SEGMENT_DOMAIN_TAG)
+    _update_typed_frame(hasher, b"C", campaign_ref.encode("ascii"))
+    _update_typed_frame(hasher, b"N", segment_count.to_bytes(8, "big"))
+    for expected_ordinal, (ordinal, run_ref, bundle_digest) in enumerate(
+        ordered, start=1
+    ):
+        if (
+            ordinal != expected_ordinal
+            or not isinstance(run_ref, str)
+            or not isinstance(bundle_digest, str)
+        ):
+            raise ValueError("campaign segment coordinates are invalid")
+        _update_typed_frame(hasher, b"O", ordinal.to_bytes(8, "big"))
+        _update_typed_frame(hasher, b"R", run_ref.encode("ascii"))
+        _update_typed_frame(hasher, b"D", bundle_digest.encode("ascii"))
+    return f"campaign_segment_root_v2:sha256:{hasher.hexdigest()}"
 
 
 def _window_route_components(mode: bytes, window: bytes) -> tuple[str, ...]:
@@ -2121,6 +2181,20 @@ def _validate_manifest(bundle: Bundle, issues: list[str]) -> None:
         or PRODUCTION_CONFIGURATION_ROOT_RE.fullmatch(production_root) is None
     ):
         issues.append(f"{label}: production_configuration_root_v2 is invalid")
+    else:
+        try:
+            expected_production_root = _compute_production_configuration_root(
+                value.get("provenance")
+            )
+        except (TypeError, UnicodeEncodeError):
+            issues.append(
+                f"{label}: active production provenance references are invalid"
+            )
+        else:
+            if production_root != expected_production_root:
+                issues.append(
+                    f"{label}: production_configuration_root_v2 does not bind the active provenance references"
+                )
 
     _validate_manifest_eras(value, label, issues)
 
@@ -3335,7 +3409,7 @@ def _validate_campaign_consistency(bundles: list[Bundle], issues: list[str]) -> 
         if isinstance(campaign_ref, str):
             campaigns[campaign_ref].append(bundle)
 
-    for campaign_bundles in campaigns.values():
+    for campaign_ref, campaign_bundles in campaigns.items():
         if _issues_full(issues):
             return
         roots = [
@@ -3365,7 +3439,14 @@ def _validate_campaign_consistency(bundles: list[Bundle], issues: list[str]) -> 
             issues.append(
                 "runs: campaign bundles must share mode, window, and campaign reason"
             )
-        if not roots or not segments:
+        if len(roots) > 1:
+            issues.append("runs: campaign must contain at most one campaign root")
+        if roots and not segments:
+            issues.append(
+                "runs: campaign root must not exist without campaign segments"
+            )
+            continue
+        if not segments:
             continue
 
         segment_counts = {
@@ -3380,7 +3461,7 @@ def _validate_campaign_consistency(bundles: list[Bundle], issues: list[str]) -> 
             if bundle.manifest is not None
             and _is_int(bundle.manifest.get("campaign_segment_count"))
         }
-        if len(segment_counts) != 1 or root_counts != segment_counts:
+        if len(segment_counts) != 1 or (roots and root_counts != segment_counts):
             issues.append(
                 "runs: campaign segment counts must agree with the campaign root"
             )
@@ -3392,6 +3473,7 @@ def _validate_campaign_consistency(bundles: list[Bundle], issues: list[str]) -> 
         leaf_refs: list[str] = []
         page_refs: list[str] = []
         generations: set[str] = set()
+        segment_commitments: list[tuple[int, str, str]] = []
         for bundle in segments:
             if _issues_full(issues):
                 return
@@ -3401,6 +3483,10 @@ def _validate_campaign_consistency(bundles: list[Bundle], issues: list[str]) -> 
                 ordinal = metadata.get("segment_ordinal")
                 if _is_int(ordinal):
                     ordinals.append(ordinal)
+                    run_ref = bundle.manifest.get("run_ref")
+                    bundle_digest = bundle.manifest.get("retained_bundle_digest_v2")
+                    if isinstance(run_ref, str) and isinstance(bundle_digest, str):
+                        segment_commitments.append((ordinal, run_ref, bundle_digest))
                 leaves = metadata.get("leaf_root_refs")
                 pages = metadata.get("page_root_refs")
                 if isinstance(leaves, list):
@@ -3420,11 +3506,17 @@ def _validate_campaign_consistency(bundles: list[Bundle], issues: list[str]) -> 
                 if isinstance(generation, str):
                     generations.add(generation)
 
-        if (
-            len(segments) != segment_count
-            or len(ordinals) != segment_count
+        invalid_ordinals = (
+            len(ordinals) != len(segments)
             or len(ordinals) != len(set(ordinals))
             or any(ordinal < 1 or ordinal > segment_count for ordinal in ordinals)
+        )
+        if invalid_ordinals or (
+            roots
+            and (
+                len(segments) != segment_count
+                or set(ordinals) != set(range(1, segment_count + 1))
+            )
         ):
             issues.append(
                 "runs: campaign segments must cover every unique bounded ordinal"
@@ -3435,6 +3527,31 @@ def _validate_campaign_consistency(bundles: list[Bundle], issues: list[str]) -> 
             issues.append("runs: campaign tree roots must be unique across segments")
         if len(generations) != 1:
             issues.append("runs: campaign bundles must bind one quarantine generation")
+        if len(roots) == 1 and not invalid_ordinals and len(segments) == segment_count:
+            root_manifest = roots[0].manifest
+            assert root_manifest is not None
+            declared_root = root_manifest.get("campaign_segment_root_v2")
+            if (
+                not isinstance(declared_root, str)
+                or CAMPAIGN_SEGMENT_ROOT_RE.fullmatch(declared_root) is None
+            ):
+                issues.append(
+                    "runs: campaign_segment_root_v2 is invalid on the campaign root"
+                )
+                continue
+            try:
+                expected_root = _compute_campaign_segment_root(
+                    campaign_ref, segment_count, segment_commitments
+                )
+            except (TypeError, ValueError, UnicodeEncodeError, OverflowError):
+                issues.append(
+                    "runs: campaign segment commitments cannot be canonicalized"
+                )
+            else:
+                if declared_root != expected_root:
+                    issues.append(
+                        "runs: campaign_segment_root_v2 does not bind the ordered segment run refs and bundle digests"
+                    )
 
 
 def _validate_revision_graph(bundles: list[Bundle], issues: list[str]) -> None:
