@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib.util
 import io
 import json
@@ -2336,6 +2337,155 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertIn("source rollout_count must be a bounded non-negative integer", issues)
             self.assertIn("source summary_count must be a bounded non-negative integer", issues)
             self.assertIn("ready source must have rollout_count or summary_count", issues)
+
+    def test_git_visible_invalid_runs_entries_fail_closed_without_disclosure(
+        self,
+    ) -> None:
+        for case in (
+            "legacy-sensitive-file",
+            "short-symlink",
+            "tracked-missing-file",
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                subprocess.run(
+                    ["git", "init", "--quiet"],
+                    cwd=root,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if case == "legacy-sensitive-file":
+                    artifact = root / "runs" / "v1" / "raw-session.jsonl"
+                    artifact.parent.mkdir(parents=True)
+                    artifact.write_text(
+                        json.dumps({"to" + "ken": risky_secret_token()}) + "\n",
+                        encoding="utf-8",
+                    )
+                    undisclosed = ("raw-session", risky_secret_token())
+                else:
+                    if case == "short-symlink":
+                        artifact = root / "runs" / "latest"
+                        artifact.parent.mkdir(parents=True)
+                        os.symlink(risky_local_path(), artifact)
+                        undisclosed = ("latest", risky_local_path())
+                    else:
+                        artifact = root / "runs" / "v1" / "deleted.jsonl"
+                        artifact.parent.mkdir(parents=True)
+                        artifact.write_text("{}\n", encoding="utf-8")
+                        subprocess.run(
+                            ["git", "add", "--", str(artifact.relative_to(root))],
+                            cwd=root,
+                            check=True,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                        artifact.unlink()
+                        undisclosed = ("deleted.jsonl",)
+
+                issues = MODULE.validate_root(root)
+
+                self.assertIn(
+                    "runs/[invalid]: invalid v2 retained-run path",
+                    issues,
+                )
+                rendered = "\n".join(issues)
+                for value in undisclosed:
+                    self.assertNotIn(value, rendered)
+
+    def test_git_visible_inventory_byte_and_entry_caps_fail_closed(self) -> None:
+        for limit in ("bytes", "entries"):
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                subprocess.run(
+                    ["git", "init", "--quiet"],
+                    cwd=root,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                (root / "first.txt").write_text("first\n", encoding="utf-8")
+                (root / "second.txt").write_text("second\n", encoding="utf-8")
+                patcher = (
+                    mock.patch.object(MODULE, "MAX_GIT_VISIBLE_OUTPUT_BYTES", 1)
+                    if limit == "bytes"
+                    else mock.patch.object(MODULE, "MAX_GIT_VISIBLE_FILE_ENTRIES", 1)
+                )
+
+                with patcher:
+                    issues = MODULE.validate_root(root)
+
+                self.assertEqual(issues, [MODULE.GIT_VISIBLE_INVENTORY_ISSUE])
+                self.assertNotIn("first.txt", issues[0])
+                self.assertNotIn("second.txt", issues[0])
+
+    def test_git_visible_inventory_rejects_malformed_nul_stream(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+
+            def fake_stream(
+                command: list[str],
+                *,
+                byte_limit: int,
+                consume_chunk: Callable[[bytes], None],
+            ) -> int:
+                del byte_limit
+                if "rev-parse" in command:
+                    consume_chunk(f"{root}\n".encode("utf-8"))
+                else:
+                    consume_chunk(b"runs/v1/raw-session.jsonl")
+                return 0
+
+            with mock.patch.object(
+                MODULE,
+                "_stream_process_stdout",
+                side_effect=fake_stream,
+            ):
+                issues = MODULE.validate_root(root)
+
+        self.assertEqual(issues, [MODULE.GIT_VISIBLE_INVENTORY_ISSUE])
+        self.assertNotIn("raw-session", issues[0])
+
+    def test_git_visible_inventory_timeout_and_process_failure_fail_closed(
+        self,
+    ) -> None:
+        with self.subTest(failure="timeout"):
+            with mock.patch.object(MODULE, "GIT_INVENTORY_TIMEOUT_SECONDS", 0.01):
+                with self.assertRaises(MODULE.GitVisibleInventoryError):
+                    MODULE._stream_process_stdout(
+                        [
+                            sys.executable,
+                            "-c",
+                            "import time; time.sleep(1)",
+                        ],
+                        byte_limit=1,
+                        consume_chunk=lambda _chunk: None,
+                    )
+
+        with self.subTest(failure="process"):
+            with tempfile.TemporaryDirectory() as raw:
+                root = Path(raw).resolve()
+
+                def fake_stream(
+                    command: list[str],
+                    *,
+                    byte_limit: int,
+                    consume_chunk: Callable[[bytes], None],
+                ) -> int:
+                    del byte_limit
+                    if "rev-parse" in command:
+                        consume_chunk(f"{root}\n".encode("utf-8"))
+                        return 0
+                    return 7
+
+                with mock.patch.object(
+                    MODULE,
+                    "_stream_process_stdout",
+                    side_effect=fake_stream,
+                ):
+                    issues = MODULE.validate_root(root)
+
+            self.assertEqual(issues, [MODULE.GIT_VISIBLE_INVENTORY_ISSUE])
 
     def test_git_ignored_local_temp_dirs_are_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

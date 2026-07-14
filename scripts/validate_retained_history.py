@@ -6,10 +6,13 @@ import ast
 from collections import Counter
 import datetime as dt
 import json
+import os
 from pathlib import Path
 import re
+import selectors
 import subprocess
-from typing import Any
+import time
+from typing import Any, Callable
 
 try:
     from scripts.retrospective_history_git_v2 import (
@@ -368,40 +371,211 @@ SAFE_INFRASTRUCTURE_EMAILS = frozenset(
     {"12524680+JoeyTeng" + "@users.noreply.github.com"}
 )
 ZERO_EVENT_SHAS = frozenset({"0" * 40, "0" * 64})
+GIT_INVENTORY_TIMEOUT_SECONDS = 10.0
+GIT_PROCESS_STOP_TIMEOUT_SECONDS = 0.25
+GIT_OUTPUT_CHUNK_BYTES = 64 * 1024
+MAX_GIT_REV_PARSE_OUTPUT_BYTES = 16 * 1024
+MAX_GIT_VISIBLE_OUTPUT_BYTES = 64 * 1024 * 1024
+MAX_GIT_VISIBLE_FILE_ENTRIES = 262_144
+MAX_GIT_VISIBLE_PATH_BYTES = 4096
+GIT_VISIBLE_INVENTORY_ISSUE = (
+    "git-visible file inventory could not be validated safely"
+)
+
+
+class GitVisibleInventoryError(RuntimeError):
+    pass
+
+
+def _stop_git_process(process: subprocess.Popen[bytes]) -> None:
+    try:
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=GIT_PROCESS_STOP_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+            process.wait(timeout=GIT_PROCESS_STOP_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    except OSError:
+        pass
+
+
+def _stream_process_stdout(
+    command: list[str],
+    *,
+    byte_limit: int,
+    consume_chunk: Callable[[bytes], None],
+) -> int:
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise GitVisibleInventoryError from exc
+    if process.stdout is None:
+        _stop_git_process(process)
+        raise GitVisibleInventoryError
+
+    selector = selectors.DefaultSelector()
+    try:
+        selector.register(process.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + GIT_INVENTORY_TIMEOUT_SECONDS
+        total_bytes = 0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise GitVisibleInventoryError
+            events = selector.select(remaining)
+            if not events:
+                raise GitVisibleInventoryError
+            reached_eof = False
+            for key, _mask in events:
+                read_limit = min(
+                    GIT_OUTPUT_CHUNK_BYTES,
+                    byte_limit - total_bytes + 1,
+                )
+                chunk = os.read(key.fd, read_limit)
+                if not chunk:
+                    selector.unregister(process.stdout)
+                    reached_eof = True
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > byte_limit:
+                    raise GitVisibleInventoryError
+                consume_chunk(chunk)
+            if reached_eof:
+                break
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 and process.poll() is None:
+            raise GitVisibleInventoryError
+        try:
+            return process.wait(timeout=max(0.0, remaining))
+        except subprocess.TimeoutExpired as exc:
+            raise GitVisibleInventoryError from exc
+    except GitVisibleInventoryError:
+        _stop_git_process(process)
+        raise
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        _stop_git_process(process)
+        raise GitVisibleInventoryError from exc
+    finally:
+        selector.close()
+        process.stdout.close()
+
+
+def _bounded_process_stdout(
+    command: list[str], *, byte_limit: int
+) -> tuple[int, bytes]:
+    output = bytearray()
+    returncode = _stream_process_stdout(
+        command,
+        byte_limit=byte_limit,
+        consume_chunk=output.extend,
+    )
+    return returncode, bytes(output)
 
 
 def git_visible_files(root: Path) -> list[Path] | None:
-    top_result = subprocess.run(
+    root = root.resolve()
+    top_returncode, top_output = _bounded_process_stdout(
         ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
+        byte_limit=MAX_GIT_REV_PARSE_OUTPUT_BYTES,
     )
-    if top_result.returncode != 0:
+    if top_returncode != 0:
         return None
-    top = Path(top_result.stdout.strip()).resolve()
     try:
-        relative_root = root.resolve().relative_to(top)
-    except ValueError:
-        return None
+        top_text = top_output.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise GitVisibleInventoryError from exc
+    if (
+        not top_text.endswith("\n")
+        or "\n" in top_text[:-1]
+        or "\r" in top_text
+    ):
+        raise GitVisibleInventoryError
+    top = Path(top_text[:-1])
+    if not top.is_absolute():
+        raise GitVisibleInventoryError
+    top = top.resolve()
+    try:
+        relative_root = root.relative_to(top)
+    except ValueError as exc:
+        raise GitVisibleInventoryError from exc
     pathspec = "." if str(relative_root) == "." else relative_root.as_posix()
-    files_result = subprocess.run(
-        ["git", "-C", str(top), "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", pathspec],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
+    files: dict[str, Path] = {}
+    pending_path = bytearray()
+    entry_count = 0
+
+    def extend_pending(fragment: bytes) -> None:
+        if len(pending_path) + len(fragment) > MAX_GIT_VISIBLE_PATH_BYTES:
+            raise GitVisibleInventoryError
+        pending_path.extend(fragment)
+
+    def consume_visible_chunk(chunk: bytes) -> None:
+        nonlocal entry_count
+        fragments = chunk.split(b"\0")
+        extend_pending(fragments[0])
+        for fragment in fragments[1:]:
+            if not pending_path:
+                raise GitVisibleInventoryError
+            entry_count += 1
+            if entry_count > MAX_GIT_VISIBLE_FILE_ENTRIES:
+                raise GitVisibleInventoryError
+            raw_path = bytes(pending_path)
+            pending_path.clear()
+            extend_pending(fragment)
+            try:
+                decoded_path = raw_path.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise GitVisibleInventoryError from exc
+            relative = Path(decoded_path)
+            if (
+                relative.is_absolute()
+                or not relative.parts
+                or decoded_path != relative.as_posix()
+                or any(part in {"", ".", ".."} for part in relative.parts)
+                or any(
+                    ord(character) < 32 or ord(character) == 127
+                    for character in decoded_path
+                )
+            ):
+                raise GitVisibleInventoryError
+            candidate = Path(os.path.abspath(top / relative))
+            try:
+                root_relative = candidate.relative_to(root)
+            except ValueError as exc:
+                raise GitVisibleInventoryError from exc
+            if (
+                (root_relative.parts and root_relative.parts[0] == "runs")
+                or candidate.is_file()
+                or candidate.is_symlink()
+            ):
+                files[os.fspath(candidate)] = candidate
+
+    files_returncode = _stream_process_stdout(
+        [
+            "git",
+            "-C",
+            str(top),
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            pathspec,
+        ],
+        byte_limit=MAX_GIT_VISIBLE_OUTPUT_BYTES,
+        consume_chunk=consume_visible_chunk,
     )
-    if files_result.returncode != 0:
-        return None
-    files = []
-    for raw_path in files_result.stdout.split(b"\0"):
-        if not raw_path:
-            continue
-        path = top / raw_path.decode("utf-8")
-        if path.is_file() or path.is_symlink():
-            files.append(path)
-    return sorted(files)
+    if files_returncode != 0 or pending_path:
+        raise GitVisibleInventoryError
+    return sorted(files.values(), key=lambda path: os.fsencode(os.fspath(path)))
 
 
 def iter_files(root: Path) -> list[Path]:
@@ -1492,7 +1666,10 @@ def validate_root(root: Path) -> list[str]:
     issues: list[str] = []
     if not root.is_dir():
         return ["root must be an existing directory"]
-    visible_files = iter_files(root)
+    try:
+        visible_files = iter_files(root)
+    except GitVisibleInventoryError:
+        return [GIT_VISIBLE_INVENTORY_ISSUE]
     issues.extend(validate_v2_runs(root, visible_files))
     retained_export_files: dict[tuple[str, str], set[str]] = {}
     retained_export_modes: dict[tuple[str, str], dict[str, str]] = {}

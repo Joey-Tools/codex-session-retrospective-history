@@ -1564,6 +1564,285 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
                 issues,
             )
 
+    def test_campaign_segment_semantic_revision_family_inventory_is_complete(
+        self,
+    ) -> None:
+        self.assertEqual(
+            MODULE.CAMPAIGN_SEGMENT_REVISION_FAMILIES - {"run"},
+            {
+                "coverage",
+                "summary",
+                "trend",
+                "gap",
+                "episode",
+                "topic",
+                "turn_finding",
+            },
+        )
+
+    def test_campaign_segment_gap_revision_must_be_initial(self) -> None:
+        segment = MODULE.Bundle(
+            label="runs/campaign-segment",
+            mode="daily",
+            window_component="2026-07-13",
+            run_id=f"{1:064x}",
+            files={},
+            manifest={"publication_role": "campaign_segment"},
+        )
+        segment.revisions = [
+            MODULE.RevisionNode(
+                family="gap",
+                current="gap-current",
+                predecessors=("gap-prior",),
+                kind="correction",
+                entity_ref="gap-entity",
+                transaction_ref="segment-run",
+                label="runs/campaign-segment/gap",
+            )
+        ]
+        issues: list[str] = []
+
+        MODULE._validate_campaign_revision_ownership([segment], issues)
+
+        self.assertIn(
+            "runs/campaign-segment: campaign segment gap revision must be initial and predecessor-free",
+            issues,
+        )
+
+    def test_canonical_bundles_cannot_inherit_segment_owned_gap(self) -> None:
+        segment = MODULE.Bundle(
+            label="runs/campaign-segment",
+            mode="daily",
+            window_component="2026-07-13",
+            run_id=f"{1:064x}",
+            files={},
+            manifest={"publication_role": "campaign_segment"},
+        )
+        segment.revisions = [
+            MODULE.RevisionNode(
+                family="gap",
+                current="gap-segment",
+                predecessors=(),
+                kind="initial",
+                entity_ref="gap-entity",
+                transaction_ref="segment-run",
+                label="runs/campaign-segment/gap",
+            )
+        ]
+
+        for role in ("campaign_root", "standalone"):
+            with self.subTest(role=role):
+                successor = MODULE.Bundle(
+                    label=f"runs/{role}",
+                    mode="daily",
+                    window_component="2026-07-13",
+                    run_id=f"{2:064x}",
+                    files={},
+                    manifest={"publication_role": role},
+                )
+                successor.revisions = [
+                    MODULE.RevisionNode(
+                        family="gap",
+                        current=f"gap-{role}",
+                        predecessors=("gap-segment",),
+                        kind="correction",
+                        entity_ref="gap-entity",
+                        transaction_ref=f"{role}-run",
+                        label=f"runs/{role}/gap",
+                    )
+                ]
+                issues: list[str] = []
+
+                MODULE._validate_campaign_revision_ownership(
+                    [segment, successor], issues
+                )
+
+                self.assertIn(
+                    f"runs/{role}: {role} gap revision must not target a campaign-segment-owned predecessor",
+                    issues,
+                )
+
+    def test_campaign_segment_semantic_revisions_must_all_be_initial(self) -> None:
+        segment = MODULE.Bundle(
+            label="runs/campaign-segment",
+            mode="daily",
+            window_component="2026-07-13",
+            run_id=f"{1:064x}",
+            files={},
+            manifest={"publication_role": "campaign_segment"},
+        )
+        segment.revisions = [
+            MODULE.RevisionNode(
+                family=family,
+                current=f"{family}-current",
+                predecessors=(f"{family}-prior",),
+                kind="correction",
+                entity_ref=None,
+                transaction_ref="segment-run",
+                label=f"runs/campaign-segment/{family}",
+            )
+            for family in sorted(MODULE.CAMPAIGN_SEGMENT_REVISION_FAMILIES)
+        ]
+        issues: list[str] = []
+
+        MODULE._validate_campaign_revision_ownership([segment], issues)
+
+        for family in MODULE.CAMPAIGN_SEGMENT_REVISION_FAMILIES:
+            self.assertTrue(
+                any(
+                    f"campaign segment {family} revision must be initial" in issue
+                    for issue in issues
+                ),
+                (family, issues),
+            )
+
+    def test_root_and_standalone_cannot_succeed_segment_semantic_heads(self) -> None:
+        owned_families = tuple(
+            sorted(MODULE.CAMPAIGN_SEGMENT_REVISION_FAMILIES)
+        )
+        segment = MODULE.Bundle(
+            label="runs/campaign-segment",
+            mode="daily",
+            window_component="2026-07-13",
+            run_id=f"{1:064x}",
+            files={},
+            manifest={"publication_role": "campaign_segment"},
+        )
+        segment.revisions = [
+            MODULE.RevisionNode(
+                family=family,
+                current=f"{family}-segment",
+                predecessors=(),
+                kind="initial",
+                entity_ref=None,
+                transaction_ref="segment-run",
+                label=f"runs/campaign-segment/{family}",
+            )
+            for family in owned_families
+        ]
+
+        for role in ("campaign_root", "standalone"):
+            with self.subTest(role=role):
+                successor = MODULE.Bundle(
+                    label=f"runs/{role}",
+                    mode="daily",
+                    window_component="2026-07-13",
+                    run_id=f"{2:064x}",
+                    files={},
+                    manifest={"publication_role": role},
+                )
+                successor.revisions = [
+                    MODULE.RevisionNode(
+                        family=family,
+                        current=f"{family}-{role}",
+                        predecessors=(f"{family}-segment",),
+                        kind="correction",
+                        entity_ref=None,
+                        transaction_ref=f"{role}-run",
+                        label=f"runs/{role}/{family}",
+                    )
+                    for family in owned_families
+                ]
+                issues: list[str] = []
+
+                MODULE._validate_campaign_revision_ownership(
+                    [segment, successor], issues
+                )
+
+                for family in MODULE.CAMPAIGN_SEGMENT_REVISION_FAMILIES:
+                    self.assertTrue(
+                        any(
+                            f"{family} revision must not target a campaign-segment-owned predecessor"
+                            in issue
+                            for issue in issues
+                        ),
+                        (family, issues),
+                    )
+
+    def test_campaign_ownership_checks_manifest_and_head_targets(self) -> None:
+        families = tuple(sorted(MODULE.CAMPAIGN_SEGMENT_REVISION_FAMILIES))
+        segment = MODULE.Bundle(
+            label="runs/campaign-segment",
+            mode="daily",
+            window_component="2026-07-13",
+            run_id=f"{1:064x}",
+            files={},
+            manifest={
+                "publication_role": "campaign_segment",
+                "supersession": {
+                    "supersedes_topic_revision_refs": ["topic-prior"]
+                },
+                "head_bindings": {
+                    "bound_quarantine_generation_ref": "quarantine",
+                    "episode": {"proposed_head_ref": "head"},
+                },
+            },
+        )
+        segment.revisions = [
+            MODULE.RevisionNode(
+                family=family,
+                current=f"{family}-segment",
+                predecessors=(),
+                kind="initial",
+                entity_ref=None,
+                transaction_ref="segment-run",
+                label=f"runs/campaign-segment/{family}",
+            )
+            for family in families
+        ]
+        successor = MODULE.Bundle(
+            label="runs/standalone",
+            mode="daily",
+            window_component="2026-07-13",
+            run_id=f"{2:064x}",
+            files={},
+            manifest={
+                "publication_role": "standalone",
+                "supersession": {
+                    field: [f"{family}-segment"]
+                    for family, field in MODULE.CAMPAIGN_SEGMENT_MANIFEST_SUPERSESSION_FIELDS.items()
+                },
+                "head_bindings": {
+                    "retained_targets": [
+                        f"{family}-segment"
+                        for family in MODULE.CAMPAIGN_SEGMENT_AGGREGATE_FAMILIES
+                    ]
+                    + ["gap-segment"]
+                },
+            },
+        )
+        issues: list[str] = []
+
+        MODULE._validate_campaign_revision_ownership(
+            [segment, successor], issues
+        )
+
+        self.assertTrue(
+            any(
+                "campaign segment topic revision must be initial and predecessor-free"
+                in issue
+                for issue in issues
+            ),
+            issues,
+        )
+        self.assertTrue(
+            any(
+                "campaign segment must not propose retained state or head successors"
+                in issue
+                for issue in issues
+            ),
+            issues,
+        )
+        for family in families:
+            self.assertTrue(
+                any(
+                    f"standalone {family} revision must not target a campaign-segment-owned predecessor"
+                    in issue
+                    for issue in issues
+                ),
+                (family, issues),
+            )
+
     def test_summary_change_resolves_trend_comparison_and_exact_direction(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1952,6 +2231,74 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
                     for issue in issues
                 ),
                 issues,
+            )
+
+    def test_campaign_root_cannot_supersede_segment_owned_revisions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            segment = write_campaign_bundle(
+                root,
+                1,
+                publication_role="campaign_segment",
+                mode="daily",
+                segment_count=1,
+                segment_ordinal=1,
+            )
+            campaign_root = write_campaign_bundle(
+                root,
+                2,
+                publication_role="campaign_root",
+                mode="daily",
+                segment_count=1,
+            )
+            manifest_path = campaign_root.directory / "manifest.json"
+            manifest = json.loads(manifest_path.read_bytes())
+            manifest["supersession"]["reason"] = "correction"
+            manifest["supersession"]["supersedes_run_revision_refs"] = [
+                segment.run_revision_ref
+            ]
+            manifest_path.write_bytes(canonical_json(manifest))
+
+            aggregate_predecessors = {
+                "coverage.json": (
+                    "predecessor_coverage_revision_ref",
+                    segment.coverage_revision_ref,
+                ),
+                "summary.json": (
+                    "predecessor_summary_revision_ref",
+                    segment.summary_revision_ref,
+                ),
+                "trend_report.json": (
+                    "predecessor_trend_revision_ref",
+                    segment.trend_revision_ref,
+                ),
+            }
+            for basename, (field, predecessor) in aggregate_predecessors.items():
+                path = campaign_root.directory / basename
+                document = json.loads(path.read_bytes())
+                document[field] = predecessor
+                document["revision_kind"] = "correction"
+                path.write_bytes(canonical_json(document))
+            rewrite_digest(campaign_root.directory)
+
+            issues = MODULE.validate_v2_runs(root)
+
+        self.assertTrue(
+            any(
+                "campaign_root run revision must not target a campaign-segment-owned predecessor"
+                in issue
+                for issue in issues
+            ),
+            issues,
+        )
+        for family in MODULE.CAMPAIGN_SEGMENT_AGGREGATE_FAMILIES:
+            self.assertTrue(
+                any(
+                    f"campaign_root {family} revision must not target a campaign-segment-owned predecessor"
+                    in issue
+                    for issue in issues
+                ),
+                (family, issues),
             )
 
     def test_campaign_reason_matches_mode_and_campaign_coordinates(self) -> None:
@@ -2590,6 +2937,79 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
                 MODULE, "MAX_BUNDLE_ARTIFACT_BYTES", per_bundle_limit
             ):
                 self.assertEqual(MODULE.validate_v2_runs(root), [])
+
+    def test_unrelated_visible_files_do_not_consume_v2_discovery_cap(self) -> None:
+        unrelated_count = MODULE.MAX_DISCOVERY_ENTRIES + 1
+        visible_files = (
+            Path("reports", f"infrastructure-{index:06x}.json")
+            for index in range(unrelated_count)
+        )
+
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch.object(MODULE, "_load_schema_validators", return_value={}),
+            mock.patch.object(
+                MODULE, "_load_privacy_validator", return_value=lambda *_: []
+            ),
+        ):
+            issues = MODULE.validate_v2_runs(Path(temp), visible_files)
+
+        self.assertEqual(issues, [])
+
+    def test_visible_invalid_runs_paths_are_rejected_without_disclosure(self) -> None:
+        visible_files = (
+            Path("runs", "v1", "raw-session.jsonl"),
+            Path("runs", "daily", "short.json"),
+            Path("runs", "latest"),
+        )
+
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch.object(MODULE, "_load_schema_validators", return_value={}),
+            mock.patch.object(
+                MODULE, "_load_privacy_validator", return_value=lambda *_: []
+            ),
+        ):
+            issues = MODULE.validate_v2_runs(Path(temp), visible_files)
+
+        self.assertIn("runs/[invalid]: invalid v2 retained-run path", issues)
+        rendered = "\n".join(issues)
+        self.assertNotIn("raw-session", rendered)
+        self.assertNotIn("short.json", rendered)
+        self.assertNotIn("latest", rendered)
+
+    def test_v2_candidate_iterator_exceeding_discovery_cap_is_rejected(self) -> None:
+        candidate = physical_bundle_directory(
+            Path(), "daily", str(WINDOW["path_component"]), f"{1:064x}"
+        ) / "manifest.json"
+        visible_files = (
+            candidate for _ in range(MODULE.MAX_DISCOVERY_ENTRIES + 1)
+        )
+
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch.object(MODULE, "_load_schema_validators", return_value={}),
+            mock.patch.object(
+                MODULE, "_load_privacy_validator", return_value=lambda *_: []
+            ),
+        ):
+            issues = MODULE.validate_v2_runs(Path(temp), visible_files)
+
+        self.assertIn(MODULE.DISCOVERY_LIMIT_ISSUE, issues)
+
+    def test_visible_file_iterator_has_an_independent_overall_cap(self) -> None:
+        visible_files = (Path("reports", str(index)) for index in range(4))
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch.object(MODULE, "MAX_VISIBLE_FILE_ENTRIES", 3),
+            mock.patch.object(MODULE, "_load_schema_validators", return_value={}),
+            mock.patch.object(
+                MODULE, "_load_privacy_validator", return_value=lambda *_: []
+            ),
+        ):
+            issues = MODULE.validate_v2_runs(Path(temp), visible_files)
+
+        self.assertIn(MODULE.DISCOVERY_LIMIT_ISSUE, issues)
 
     def test_discovery_file_and_bundle_work_is_bounded(self) -> None:
         with self.subTest(limit="entries"):

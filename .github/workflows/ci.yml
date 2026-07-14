@@ -23,10 +23,252 @@ jobs:
         run: |
           TRUSTED_VALIDATOR_ROOT="$RUNNER_TEMP/retrospective-history-v2-trusted-base"
           git worktree add --quiet --detach "$TRUSTED_VALIDATOR_ROOT" "$BASE_REV"
+          TRUSTED_KEY="$TRUSTED_VALIDATOR_ROOT/retrospective-history-v2-publisher.asc"
+          TRUSTED_VALIDATOR="$TRUSTED_VALIDATOR_ROOT/scripts/retrospective_history_git_v2.py"
+          KEY_EXISTS=false
+          VALIDATOR_EXISTS=false
+          if [ -e "$TRUSTED_KEY" ] || [ -L "$TRUSTED_KEY" ]; then
+            KEY_EXISTS=true
+          fi
+          if [ -e "$TRUSTED_VALIDATOR" ] || [ -L "$TRUSTED_VALIDATOR" ]; then
+            VALIDATOR_EXISTS=true
+          fi
+          if [ "$KEY_EXISTS" = true ] && [ "$VALIDATOR_EXISTS" = true ]; then
+            if [ ! -f "$TRUSTED_KEY" ] || [ -L "$TRUSTED_KEY" ] || \
+              [ ! -f "$TRUSTED_VALIDATOR" ] || [ -L "$TRUSTED_VALIDATOR" ]; then
+              echo "Trusted push base artifacts are unsafe." >&2
+              exit 1
+            fi
+            PUSH_VALIDATION_MODE=trusted
+          elif [ "$KEY_EXISTS" = false ] && [ "$VALIDATOR_EXISTS" = false ]; then
+            PUSH_VALIDATION_MODE=bootstrap
+          else
+            echo "Trusted push base is partially initialized." >&2
+            exit 1
+          fi
           echo "TRUSTED_VALIDATOR_ROOT=$TRUSTED_VALIDATOR_ROOT" >> "$GITHUB_ENV"
+          echo "PUSH_VALIDATION_MODE=$PUSH_VALIDATION_MODE" >> "$GITHUB_ENV"
+      - name: Validate first push bootstrap range
+        if: github.event_name == 'push'
+        env:
+          BASE_REV: ${{ github.event.before }}
+          EVENT_FORCED: ${{ github.event.forced }}
+          HEAD_REV: ${{ github.event.after }}
+        run: |
+          if [ "$PUSH_VALIDATION_MODE" != bootstrap ]; then
+            exit 0
+          fi
+          if [ "$EVENT_FORCED" = true ] || \
+            ! git merge-base --is-ancestor "$BASE_REV" "$HEAD_REV"; then
+            echo "Bootstrap push must be a non-force descendant of its event base." >&2
+            exit 1
+          fi
+          MAX_BOOTSTRAP_COMMITS=512
+          COMMIT_OUTPUT="$(
+            git rev-list --first-parent --reverse \
+              --max-count="$((MAX_BOOTSTRAP_COMMITS + 1))" \
+              "$BASE_REV..$HEAD_REV"
+          )"
+          COMMITS=()
+          if [ -n "$COMMIT_OUTPUT" ]; then
+            while IFS= read -r COMMIT_REV; do
+              COMMITS+=("$COMMIT_REV")
+            done <<< "$COMMIT_OUTPUT"
+          fi
+          if [ "${#COMMITS[@]}" -eq 0 ] || \
+            [ "${#COMMITS[@]}" -gt "$MAX_BOOTSTRAP_COMMITS" ]; then
+            echo "Bootstrap push exceeds its bounded linear range." >&2
+            exit 1
+          fi
+          EXPECTED_PARENT="$BASE_REV"
+          SAW_INFRASTRUCTURE_CHANGE=false
+          for COMMIT_REV in "${COMMITS[@]}"; do
+            PARENT_LINE="$(git rev-list --parents --max-count=1 "$COMMIT_REV")"
+            read -r -a PARENT_FIELDS <<< "$PARENT_LINE"
+            if [ "${#PARENT_FIELDS[@]}" -ne 2 ] || \
+              [ "${PARENT_FIELDS[0]}" != "$COMMIT_REV" ] || \
+              [ "${PARENT_FIELDS[1]}" != "$EXPECTED_PARENT" ]; then
+              echo "Bootstrap push must use bounded linear infrastructure commits." >&2
+              exit 1
+            fi
+            if git diff-tree --quiet --no-commit-id -r --no-renames \
+              "$EXPECTED_PARENT" "$COMMIT_REV" -- runs; then
+              :
+            else
+              DIFF_STATUS=$?
+              if [ "$DIFF_STATUS" -eq 1 ]; then
+                echo "Bootstrap push must not change retained publications." >&2
+              else
+                echo "Bootstrap push range inspection failed." >&2
+              fi
+              exit 1
+            fi
+            if git diff-tree --quiet --no-commit-id -r --no-renames \
+              "$EXPECTED_PARENT" "$COMMIT_REV" --; then
+              :
+            else
+              DIFF_STATUS=$?
+              if [ "$DIFF_STATUS" -eq 1 ]; then
+                SAW_INFRASTRUCTURE_CHANGE=true
+              else
+                echo "Bootstrap push range inspection failed." >&2
+                exit 1
+              fi
+            fi
+            EXPECTED_PARENT="$COMMIT_REV"
+          done
+          if [ "$EXPECTED_PARENT" != "$HEAD_REV" ] || \
+            [ "$SAW_INFRASTRUCTURE_CHANGE" != true ]; then
+            echo "Bootstrap push must contain only infrastructure changes." >&2
+            exit 1
+          fi
+
+          MAX_BOOTSTRAP_TREE_BYTES=8388608
+          MAX_BOOTSTRAP_TREE_ENTRIES=65536
+          MAX_BOOTSTRAP_TREE_ENTRY_BYTES=4096
+          MAX_BOOTSTRAP_KEY_BYTES=65536
+          MAX_BOOTSTRAP_VALIDATOR_BYTES=1048576
+          export LC_ALL=C
+
+          bootstrap_pair_failure() {
+            echo "Bootstrap push must install the complete trusted validation pair." >&2
+            exit 1
+          }
+
+          validate_bootstrap_tree_object() {
+            local object_id="$1"
+            local object_type object_size
+            if ! object_type="$(git cat-file -t "$object_id" 2>/dev/null)" || \
+              [ "$object_type" != tree ]; then
+              return 1
+            fi
+            if ! object_size="$(git cat-file -s "$object_id" 2>/dev/null)"; then
+              return 1
+            fi
+            case "$object_size" in
+              ''|*[!0-9]*) return 1 ;;
+            esac
+            if [ "$object_size" -le 0 ] || \
+              [ "$object_size" -gt "$MAX_BOOTSTRAP_TREE_BYTES" ]; then
+              return 1
+            fi
+          }
+
+          find_unique_bootstrap_entry() {
+            local listing="$1"
+            local expected_name="$2"
+            local entry metadata entry_name extra
+            local entry_count=0
+            local match_count=0
+            BOOTSTRAP_ENTRY_MODE=
+            BOOTSTRAP_ENTRY_TYPE=
+            BOOTSTRAP_ENTRY_OBJECT=
+            BOOTSTRAP_ENTRY_NAME=
+            while IFS= read -r -d '' entry; do
+              entry_count=$((entry_count + 1))
+              if [ "$entry_count" -gt "$MAX_BOOTSTRAP_TREE_ENTRIES" ] || \
+                [ "${#entry}" -gt "$MAX_BOOTSTRAP_TREE_ENTRY_BYTES" ]; then
+                return 1
+              fi
+              case "$entry" in
+                *$'\t'*) ;;
+                *) return 1 ;;
+              esac
+              metadata="${entry%%$'\t'*}"
+              entry_name="${entry#*$'\t'}"
+              if [[ "$entry_name" == "$expected_name" ]]; then
+                match_count=$((match_count + 1))
+                BOOTSTRAP_ENTRY_NAME="$entry_name"
+                extra=
+                IFS=' ' read -r BOOTSTRAP_ENTRY_MODE BOOTSTRAP_ENTRY_TYPE \
+                  BOOTSTRAP_ENTRY_OBJECT extra <<< "$metadata"
+                if [ -n "$extra" ] || [ -z "$BOOTSTRAP_ENTRY_OBJECT" ]; then
+                  return 1
+                fi
+              fi
+            done < "$listing"
+            if [ "$match_count" -ne 1 ] || \
+              [ "$BOOTSTRAP_ENTRY_NAME" != "$expected_name" ]; then
+              return 1
+            fi
+          }
+
+          validate_bootstrap_regular_blob() {
+            local mode="$1"
+            local declared_type="$2"
+            local object_id="$3"
+            local maximum_size="$4"
+            local object_type object_size
+            if [ "$declared_type" != blob ] || \
+              { [ "$mode" != 100644 ] && [ "$mode" != 100755 ]; }; then
+              return 1
+            fi
+            if ! object_type="$(git cat-file -t "$object_id" 2>/dev/null)" || \
+              [ "$object_type" != blob ]; then
+              return 1
+            fi
+            if ! object_size="$(git cat-file -s "$object_id" 2>/dev/null)"; then
+              return 1
+            fi
+            case "$object_size" in
+              ''|*[!0-9]*) return 1 ;;
+            esac
+            if [ "$object_size" -le 0 ] || \
+              [ "$object_size" -gt "$maximum_size" ]; then
+              return 1
+            fi
+          }
+
+          shopt -s nocasematch
+          if ! HEAD_TREE="$(git rev-parse --verify "$HEAD_REV^{tree}" 2>/dev/null)" || \
+            ! validate_bootstrap_tree_object "$HEAD_TREE"; then
+            bootstrap_pair_failure
+          fi
+          BOOTSTRAP_TREE_LIST="$(
+            mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/retrospective-bootstrap-tree.XXXXXX" \
+              2>/dev/null
+          )" || bootstrap_pair_failure
+          trap 'rm -f "$BOOTSTRAP_TREE_LIST"' EXIT
+          if ! git ls-tree -z "$HEAD_TREE" > "$BOOTSTRAP_TREE_LIST" 2>/dev/null; then
+            bootstrap_pair_failure
+          fi
+
+          if ! find_unique_bootstrap_entry \
+            "$BOOTSTRAP_TREE_LIST" retrospective-history-v2-publisher.asc; then
+            bootstrap_pair_failure
+          fi
+          if ! validate_bootstrap_regular_blob \
+            "$BOOTSTRAP_ENTRY_MODE" "$BOOTSTRAP_ENTRY_TYPE" \
+            "$BOOTSTRAP_ENTRY_OBJECT" "$MAX_BOOTSTRAP_KEY_BYTES"; then
+            bootstrap_pair_failure
+          fi
+
+          if ! find_unique_bootstrap_entry "$BOOTSTRAP_TREE_LIST" scripts || \
+            [ "$BOOTSTRAP_ENTRY_MODE" != 040000 ] || \
+            [ "$BOOTSTRAP_ENTRY_TYPE" != tree ]; then
+            bootstrap_pair_failure
+          fi
+          SCRIPTS_TREE="$BOOTSTRAP_ENTRY_OBJECT"
+          if ! validate_bootstrap_tree_object "$SCRIPTS_TREE" || \
+            ! git ls-tree -z "$SCRIPTS_TREE" \
+              > "$BOOTSTRAP_TREE_LIST" 2>/dev/null; then
+            bootstrap_pair_failure
+          fi
+          if ! find_unique_bootstrap_entry \
+            "$BOOTSTRAP_TREE_LIST" retrospective_history_git_v2.py; then
+            bootstrap_pair_failure
+          fi
+          if ! validate_bootstrap_regular_blob \
+            "$BOOTSTRAP_ENTRY_MODE" "$BOOTSTRAP_ENTRY_TYPE" \
+            "$BOOTSTRAP_ENTRY_OBJECT" "$MAX_BOOTSTRAP_VALIDATOR_BYTES"; then
+            bootstrap_pair_failure
+          fi
       - name: Import trusted push publisher key
         if: github.event_name == 'push'
         run: |
+          if [ "$PUSH_VALIDATION_MODE" != trusted ]; then
+            exit 0
+          fi
           TRUSTED_GNUPGHOME="$RUNNER_TEMP/retrospective-history-v2-trusted-gnupg"
           export TRUSTED_GNUPGHOME
           install -d -m 700 "$TRUSTED_GNUPGHOME"
@@ -42,6 +284,9 @@ jobs:
           EVENT_FORCED: ${{ github.event.forced }}
           HEAD_REV: ${{ github.event.after }}
         run: |
+          if [ "$PUSH_VALIDATION_MODE" != trusted ]; then
+            exit 0
+          fi
           export GNUPGHOME="$TRUSTED_GNUPGHOME"
           cd "$TRUSTED_VALIDATOR_ROOT"
           PYTHONPATH="$TRUSTED_VALIDATOR_ROOT" PYTHONNOUSERSITE=1 python -P - <<'PY'

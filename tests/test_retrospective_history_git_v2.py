@@ -230,6 +230,46 @@ def write_run(
     return run_path(mode=mode, window=window, run_id=run_id)
 
 
+def write_near_semantic_limit_run(root: Path, shape: str) -> tuple[Path, int]:
+    if shape == "deep":
+        core = (
+            b"[" * (MODULE.MAX_SEMANTIC_JSON_DEPTH + 1)
+            + b"0"
+            + b"]" * (MODULE.MAX_SEMANTIC_JSON_DEPTH + 1)
+        )
+    elif shape == "wide":
+        core = (
+            b"["
+            + b"0," * MODULE.MAX_SEMANTIC_JSON_CONTAINER_ITEMS
+            + b"0]"
+        )
+    else:
+        raise ValueError("unsupported semantic fixture shape")
+
+    padded_artifacts = (
+        "coverage.json",
+        "episodes.jsonl",
+        "manifest.json",
+        "summary.json",
+        "topics.jsonl",
+        "trend_report.json",
+    )
+    semantic_bytes = 0
+    for artifact in sorted(MODULE.RUN_ARTIFACTS):
+        if artifact in padded_artifacts:
+            target_size = MODULE.MAX_ARTIFACT_BYTES[artifact] - 256
+            if len(core) > target_size:
+                raise AssertionError("semantic fixture core exceeds its artifact budget")
+            content = core + b" " * (target_size - len(core))
+            semantic_bytes += len(content)
+        elif artifact == "report.md":
+            content = b"# Retained report\n"
+        else:
+            content = b""
+        write_artifact(root, run_path(artifact=artifact), content)
+    return run_path(), semantic_bytes
+
+
 def validate_with_trusted_signature(root: Path, base: str, head: str) -> list[str]:
     with mock.patch.object(MODULE, "_verify_commit_signature", return_value=True):
         return MODULE.validate_append_only_range(root, base, head)
@@ -435,6 +475,10 @@ class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
             b"auth.json.bak",
             b"history.jsonl.bak",
             b"config.toml~",
+            b"history.jsonl.1",
+            b"history.jsonl.1.bak",
+            b"history.jsonl.~1~",
+            b"auth.json.2.gz",
             b"history.jsonl.gz.bak.old~",
             b"auth.json.zst.backup.save",
             b"history.jsonl.swp",
@@ -447,6 +491,8 @@ class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
             b"docs/old-design.md",
             b"docs/save-points.txt",
             b"docs/temporary-files.md",
+            b"docs/history-notes.md.1.bak",
+            b"docs/release.2026.1.md",
         )
 
         for path in forbidden:
@@ -486,7 +532,15 @@ class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
         self.assertNotIn(artifact_stem, "\n".join(issues))
 
     def test_add_then_delete_transient_aliases_are_rejected_per_commit(self) -> None:
-        relative_names = ("auth.json.bak", "history.jsonl.bak", "config.toml~")
+        relative_names = (
+            "auth.json.bak",
+            "history.jsonl.bak",
+            "config.toml~",
+            "history.jsonl.1",
+            "history.jsonl.1.bak",
+            "history.jsonl.~1~",
+            "auth.json.2.gz",
+        )
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             base, _ = initialize_repository(root)
@@ -853,9 +907,10 @@ class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             base, _ = initialize_repository(root)
+            bounded_row = b'"' + b"x" * (900 * 1024) + b'"\n'
             artifact = write_run(
                 root,
-                contents={"episodes.jsonl": b"x" * (8 * 1024 * 1024 + 1)},
+                contents={"episodes.jsonl": bounded_row * 10},
             )
             git(root, "add", "--", artifact.parent.as_posix())
             head = signed_commit(root, publication_message(artifact))
@@ -996,6 +1051,136 @@ class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
         self.assertEqual(
             issues, ["range: commit graph is not a bounded linear ancestry path"]
         )
+
+    def test_unsigned_near_limit_deep_and_wide_blobs_are_not_parsed(self) -> None:
+        for shape in ("deep", "wide"):
+            with self.subTest(shape=shape), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                base, _ = initialize_repository(root)
+                artifact, semantic_bytes = write_near_semantic_limit_run(root, shape)
+                git(root, "add", "--", artifact.parent.as_posix())
+                head = commit(root, publication_message(artifact))
+
+                with (
+                    mock.patch.object(
+                        MODULE,
+                        "_batch_blob_contents",
+                        side_effect=AssertionError("semantic blobs were read"),
+                    ) as blob_reader,
+                    mock.patch.object(
+                        MODULE.json,
+                        "loads",
+                        side_effect=AssertionError("semantic JSON was decoded"),
+                    ) as decoder,
+                ):
+                    issues = MODULE.validate_append_only_range(root, base, head)
+
+            self.assertLess(semantic_bytes, MODULE.MAX_SEMANTIC_BUNDLE_BYTES)
+            self.assertLessEqual(
+                MODULE.MAX_SEMANTIC_BUNDLE_BYTES - semantic_bytes,
+                2048,
+            )
+            self.assertIn(
+                "commit 1: v2 publication commit metadata is unsafe", issues
+            )
+            blob_reader.assert_not_called()
+            decoder.assert_not_called()
+
+    def test_signed_over_budget_manifest_is_rejected_before_json_decode(self) -> None:
+        prefix = b'{"run_id":"' + RUN_ID.encode("ascii") + b'","value":'
+        suffix = b"}"
+        row = b"[" + b"0," * 199 + b"0]"
+        node_rows = MODULE.MAX_SEMANTIC_JSON_NODES // 200 + 1
+        cases = {
+            "depth": (
+                prefix
+                + b"[" * MODULE.MAX_SEMANTIC_JSON_DEPTH
+                + b"0"
+                + b"]" * MODULE.MAX_SEMANTIC_JSON_DEPTH
+                + suffix
+            ),
+            "nodes": prefix + b"[" + b",".join([row] * node_rows) + b"]" + suffix,
+            "width": (
+                prefix
+                + b"["
+                + b"0," * MODULE.MAX_SEMANTIC_JSON_CONTAINER_ITEMS
+                + b"0]"
+                + suffix
+            ),
+            "string": (
+                prefix
+                + b'"'
+                + b"x" * (MODULE.MAX_SEMANTIC_JSON_STRING_BYTES + 1)
+                + b'"'
+                + suffix
+            ),
+            "scalar": (
+                prefix
+                + b"1" * (MODULE.MAX_SEMANTIC_JSON_SCALAR_BYTES + 1)
+                + suffix
+            ),
+        }
+
+        for budget, manifest in cases.items():
+            with self.subTest(budget=budget), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                base, _ = initialize_repository(root)
+                artifact = write_run(
+                    root, contents={"manifest.json": manifest + b"\n"}
+                )
+                git(root, "add", "--", artifact.parent.as_posix())
+                head = signed_commit(root, publication_message(artifact))
+
+                with (
+                    mock.patch.object(
+                        MODULE, "_verify_commit_signature", return_value=True
+                    ),
+                    mock.patch.object(
+                        MODULE.json,
+                        "loads",
+                        side_effect=AssertionError("over-budget JSON was decoded"),
+                    ) as decoder,
+                ):
+                    issues = MODULE.validate_append_only_range(root, base, head)
+
+            self.assertIn(
+                "commit 1: bounded publication semantic inspection failed", issues
+            )
+            decoder.assert_not_called()
+
+    def test_semantic_jsonl_budgets_precede_row_decode(self) -> None:
+        oversized_row = b" " * (MODULE.MAX_SEMANTIC_JSONL_ROW_BYTES + 1)
+        cases = (
+            (
+                "row bytes",
+                oversized_row,
+                MODULE._SemanticJSONLBudget(rows_remaining=1, nodes_remaining=10),
+            ),
+            (
+                "row count",
+                b"{}\n{}",
+                MODULE._SemanticJSONLBudget(rows_remaining=1, nodes_remaining=10),
+            ),
+            (
+                "node count",
+                b"[0]",
+                MODULE._SemanticJSONLBudget(rows_remaining=1, nodes_remaining=1),
+            ),
+        )
+
+        for budget_name, payload, budget in cases:
+            with self.subTest(budget=budget_name), mock.patch.object(
+                MODULE,
+                "_decode_semantic_json",
+                wraps=MODULE._decode_semantic_json,
+            ) as decoder:
+                with self.assertRaises(MODULE._SemanticFailure):
+                    list(MODULE._semantic_jsonl_values(payload, budget))
+
+            if budget_name in {"row bytes", "node count"}:
+                decoder.assert_not_called()
+            else:
+                self.assertEqual(decoder.call_count, 1)
 
     def test_unsigned_publication_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

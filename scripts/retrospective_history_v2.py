@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 import re
 import stat
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable
 
 try:
     from retrospective_history_templates_v2 import (
@@ -67,6 +67,27 @@ SCHEMA_TARGETS = {
 MODES = frozenset({"daily", "weekly", "baseline", "session"})
 EXECUTION_KINDS = frozenset({"retrospective", "bootstrap_v2", "compliance_retraction"})
 PUBLICATION_ROLES = frozenset({"standalone", "campaign_segment", "campaign_root"})
+CAMPAIGN_SEGMENT_REVISION_FAMILIES = frozenset(
+    {
+        "run",
+        "coverage",
+        "summary",
+        "trend",
+        "gap",
+        "episode",
+        "topic",
+        "turn_finding",
+    }
+)
+CAMPAIGN_SEGMENT_AGGREGATE_FAMILIES = frozenset(
+    {"coverage", "summary", "trend"}
+)
+CAMPAIGN_SEGMENT_MANIFEST_SUPERSESSION_FIELDS = {
+    "run": "supersedes_run_revision_refs",
+    "episode": "supersedes_episode_revision_refs",
+    "topic": "supersedes_topic_revision_refs",
+    "turn_finding": "supersedes_turn_finding_revision_refs",
+}
 PUBLICATION_CAMPAIGN_REASONS = frozenset({"size_partition", "baseline_window"})
 PUBLICATION_STATUSES = frozenset({"partial", "complete", "complete_with_terminal_gaps"})
 FULL_PUBLICATION_STATUSES = frozenset({"complete", "complete_with_terminal_gaps"})
@@ -149,9 +170,11 @@ MAX_ARTIFACT_BYTES = {
 }
 MAX_BUNDLE_ARTIFACT_BYTES = 64 * 1024 * 1024
 MAX_DISCOVERY_ENTRIES = 65536
+MAX_VISIBLE_FILE_ENTRIES = 262144
 MAX_DISCOVERY_FILES = 4096
 MAX_BUNDLES = 512
 MAX_DISCOVERY_PATH_BYTES = 256
+MAX_VISIBLE_PATH_BYTES = 4096
 MAX_JSONL_ROWS = 100_000
 MAX_BUNDLE_JSONL_ROWS = 200_000
 MAX_HISTORY_REVISIONS = 1_000_000
@@ -1513,7 +1536,7 @@ def _scan_run_files_no_follow(root_descriptor: int, issues: list[str]) -> list[P
 def _visible_run_files(
     root: Path,
     root_descriptor: int,
-    visible_files: Sequence[Path] | None,
+    visible_files: Iterable[Path] | None,
     issues: list[str],
 ) -> list[Path]:
     if visible_files is None:
@@ -1521,14 +1544,24 @@ def _visible_run_files(
 
     by_relative: dict[str, Path] = {}
     outside_root = False
-    for entry_count, supplied in enumerate(visible_files, start=1):
+    invalid_path = False
+    invalid_run_path = False
+    candidate_entry_count = 0
+    for visible_entry_count, supplied in enumerate(visible_files, start=1):
         if _issues_full(issues):
             break
-        if entry_count > MAX_DISCOVERY_ENTRIES:
+        if visible_entry_count > MAX_VISIBLE_FILE_ENTRIES:
             issues.append(DISCOVERY_LIMIT_ISSUE)
             return []
         try:
-            candidate = supplied if supplied.is_absolute() else root / supplied
+            supplied_value = os.fspath(supplied)
+            if len(os.fsencode(supplied_value)) > MAX_VISIBLE_PATH_BYTES:
+                invalid_path = True
+                continue
+            supplied_path = Path(supplied_value)
+            candidate = (
+                supplied_path if supplied_path.is_absolute() else root / supplied_path
+            )
             absolute = Path(os.path.abspath(candidate))
             relative = absolute.relative_to(root)
         except (OSError, TypeError, ValueError):
@@ -1536,6 +1569,24 @@ def _visible_run_files(
             continue
         if not relative.parts or relative.parts[0] != "runs":
             continue
+        if (
+            len(relative.parts) != RUN_ARTIFACT_PATH_COMPONENT_COUNT
+            or relative.parts[1] not in MODES
+        ):
+            invalid_run_path = True
+            continue
+        try:
+            encoded_relative = relative.as_posix().encode("ascii")
+        except UnicodeEncodeError:
+            invalid_run_path = True
+            continue
+        if len(encoded_relative) > MAX_DISCOVERY_PATH_BYTES:
+            invalid_run_path = True
+            continue
+        candidate_entry_count += 1
+        if candidate_entry_count > MAX_DISCOVERY_ENTRIES:
+            issues.append(DISCOVERY_LIMIT_ISSUE)
+            return []
         key = relative.as_posix()
         if key in by_relative:
             continue
@@ -1545,13 +1596,17 @@ def _visible_run_files(
         by_relative[key] = relative
     if outside_root:
         issues.append("visible file list contains a path outside the validation root")
+    if invalid_path:
+        issues.append("visible file list contains an invalid or oversized path")
+    if invalid_run_path:
+        issues.append("runs/[invalid]: invalid v2 retained-run path")
     return [by_relative[key] for key in sorted(by_relative)]
 
 
 def _discover_bundles(
     root: Path,
     root_descriptor: int,
-    visible_files: Sequence[Path] | None,
+    visible_files: Iterable[Path] | None,
     issues: list[str],
 ) -> list[Bundle]:
     grouped: dict[tuple[str, str, str], dict[str, Path]] = defaultdict(dict)
@@ -3822,6 +3877,109 @@ def _validate_campaign_consistency(bundles: list[Bundle], issues: list[str]) -> 
                     )
 
 
+def _validate_campaign_revision_ownership(
+    bundles: list[Bundle], issues: list[str]
+) -> None:
+    def segment_head_successor_is_present(manifest: dict[str, Any]) -> bool:
+        bindings = manifest.get("head_bindings")
+        if not isinstance(bindings, dict):
+            return False
+        for field, value in bindings.items():
+            if field == "bound_quarantine_generation_ref":
+                continue
+            if field == "cursor_heads":
+                if value not in (None, []):
+                    return True
+            elif value is not None:
+                return True
+        return False
+
+    segment_owned: dict[str, set[str]] = defaultdict(set)
+    for bundle in bundles:
+        if _issues_full(issues):
+            return
+        role = (
+            bundle.manifest.get("publication_role")
+            if bundle.manifest is not None
+            else None
+        )
+        if role != "campaign_segment":
+            continue
+        invalid_families: set[str] = set()
+        for node in bundle.revisions:
+            if node.family not in CAMPAIGN_SEGMENT_REVISION_FAMILIES:
+                continue
+            segment_owned[node.family].add(node.current)
+            if node.kind != "initial" or node.predecessors:
+                invalid_families.add(node.family)
+        supersession = bundle.manifest.get("supersession")
+        if isinstance(supersession, dict):
+            for family, field in CAMPAIGN_SEGMENT_MANIFEST_SUPERSESSION_FIELDS.items():
+                targets = supersession.get(field)
+                if isinstance(targets, list) and targets:
+                    invalid_families.add(family)
+        for family in sorted(invalid_families):
+            issues.append(
+                f"{bundle.label}: campaign segment {family} revision must be initial and predecessor-free"
+            )
+        if segment_head_successor_is_present(bundle.manifest):
+            issues.append(
+                f"{bundle.label}/manifest.json: campaign segment must not propose retained state or head successors"
+            )
+
+    segment_family_by_revision = {
+        revision: family
+        for family, revisions in segment_owned.items()
+        for revision in revisions
+    }
+
+    for bundle in bundles:
+        if _issues_full(issues):
+            return
+        role = (
+            bundle.manifest.get("publication_role")
+            if bundle.manifest is not None
+            else None
+        )
+        if role not in {"standalone", "campaign_root"}:
+            continue
+        invalid_target_families: set[str] = set()
+        for node in bundle.revisions:
+            if node.family in CAMPAIGN_SEGMENT_REVISION_FAMILIES and any(
+                predecessor in segment_owned[node.family]
+                for predecessor in node.predecessors
+            ):
+                invalid_target_families.add(node.family)
+        assert bundle.manifest is not None
+        supersession = bundle.manifest.get("supersession")
+        if isinstance(supersession, dict):
+            for family, field in CAMPAIGN_SEGMENT_MANIFEST_SUPERSESSION_FIELDS.items():
+                targets = supersession.get(field)
+                if isinstance(targets, list) and any(
+                    isinstance(target, str) and target in segment_owned[family]
+                    for target in targets
+                ):
+                    invalid_target_families.add(family)
+        head_bindings = bundle.manifest.get("head_bindings")
+        stack = [head_bindings] if isinstance(head_bindings, (dict, list)) else []
+        visited = 0
+        while stack and visited <= MAX_JSON_NODES:
+            current = stack.pop()
+            visited += 1
+            if isinstance(current, dict):
+                stack.extend(current.values())
+            elif isinstance(current, list):
+                stack.extend(current)
+            elif isinstance(current, str):
+                family = segment_family_by_revision.get(current)
+                if family is not None:
+                    invalid_target_families.add(family)
+        for family in sorted(invalid_target_families):
+            issues.append(
+                f"{bundle.label}: {role} {family} revision must not target a campaign-segment-owned predecessor"
+            )
+
+
 def _validate_revision_graph(bundles: list[Bundle], issues: list[str]) -> None:
     by_family: dict[str, dict[str, RevisionNode]] = defaultdict(dict)
     duplicates: dict[str, set[str]] = defaultdict(set)
@@ -4203,7 +4361,7 @@ def _validate_trend_comparisons(
 
 
 def validate_v2_runs(
-    root: Path, visible_files: Sequence[Path] | None = None
+    root: Path, visible_files: Iterable[Path] | None = None
 ) -> list[str]:
     """Validate immutable Session Retrospective v2 retained-run bundles.
 
@@ -4259,6 +4417,8 @@ def validate_v2_runs(
             _validate_run_supersession(bundles, issues)
         if not _issues_full(issues) and not work_limit_reached:
             _validate_campaign_consistency(bundles, issues)
+        if not _issues_full(issues) and not work_limit_reached:
+            _validate_campaign_revision_ownership(bundles, issues)
         if not _issues_full(issues) and not work_limit_reached:
             _validate_trend_comparisons(trend_snapshots, issues)
         if not _issues_full(issues) and not work_limit_reached:

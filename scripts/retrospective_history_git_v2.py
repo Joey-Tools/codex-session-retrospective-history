@@ -50,8 +50,17 @@ GIT_TIMEOUT_SECONDS = 30
 COMMIT_PAGE_SIZE = 128
 MAX_RANGE_COMMITS = 512
 MAX_SEMANTIC_BUNDLE_BYTES = 64 * 1024 * 1024
+MAX_SEMANTIC_JSON_DEPTH = 64
+MAX_SEMANTIC_JSON_NODES = 200_000
+MAX_SEMANTIC_JSON_CONTAINER_ITEMS = 100_000
+MAX_SEMANTIC_JSON_STRING_BYTES = 1024 * 1024
+MAX_SEMANTIC_JSON_SCALAR_BYTES = 4096
 MAX_SEMANTIC_JSONL_ROWS = 200_000
+MAX_SEMANTIC_JSONL_NODES = 1_000_000
+MAX_SEMANTIC_JSONL_ROW_BYTES = 1024 * 1024
 MAX_RANGE_REVISION_FACTS = 1_000_000
+MAX_TRANSIENT_NAME_BYTES = 4096
+MAX_TRANSIENT_SUFFIX_STRIPS = 32
 PROCESS_IO_CHUNK_BYTES = 64 * 1024
 PROCESS_TERMINATION_SECONDS = 1
 DIAGNOSTIC_OMISSION = "validation: additional issues omitted"
@@ -115,6 +124,8 @@ EDITOR_TRANSIENT_SUFFIX_RE = re.compile(
     rb"\.(?:bak|backup|old|orig|save|swap|sw[a-z]|temp|temporary|tmp)(?:\.[0-9]+)?$",
     re.I,
 )
+NUMERIC_ROTATION_SUFFIX_RE = re.compile(rb"\.[0-9]+$")
+EMACS_VERSION_BACKUP_SUFFIX_RE = re.compile(rb"\.~[0-9]+~$")
 
 OID_RE = re.compile(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 RAW_DIFF_RE = re.compile(
@@ -302,6 +313,12 @@ class _PublisherIdentity:
 class _CommitHeader:
     name: bytes
     value: bytes
+
+
+@dataclass
+class _SemanticJSONLBudget:
+    rows_remaining: int
+    nodes_remaining: int
 
 
 def _git_environment() -> dict[str, str]:
@@ -590,21 +607,40 @@ def _is_run_candidate(path: bytes) -> bool:
 
 
 def _forbidden_transient_name(name: bytes) -> bool:
+    if len(name) > MAX_TRANSIENT_NAME_BYTES:
+        return True
     candidates: list[bytes] = []
     stem = name
+    strip_count = 0
     while True:
         candidates.append(stem)
-        if stem.endswith(b"~"):
-            stem = stem[:-1]
-            continue
-        editor_match = EDITOR_TRANSIENT_SUFFIX_RE.search(stem)
-        if editor_match is not None:
-            stem = stem[: editor_match.start()]
-            continue
-        separator = stem.rfind(b".")
-        if separator <= 0 or stem[separator:].lower() not in STRIPPABLE_TRANSIENT_SUFFIXES:
+        next_stem: bytes | None = None
+        emacs_match = EMACS_VERSION_BACKUP_SUFFIX_RE.search(stem)
+        if emacs_match is not None:
+            next_stem = stem[: emacs_match.start()]
+        elif stem.endswith(b"~"):
+            next_stem = stem[:-1]
+        else:
+            editor_match = EDITOR_TRANSIENT_SUFFIX_RE.search(stem)
+            if editor_match is not None:
+                next_stem = stem[: editor_match.start()]
+            else:
+                rotation_match = NUMERIC_ROTATION_SUFFIX_RE.search(stem)
+                if rotation_match is not None:
+                    next_stem = stem[: rotation_match.start()]
+                else:
+                    separator = stem.rfind(b".")
+                    if (
+                        separator > 0
+                        and stem[separator:].lower() in STRIPPABLE_TRANSIENT_SUFFIXES
+                    ):
+                        next_stem = stem[:separator]
+        if next_stem is None or next_stem == stem:
             break
-        stem = stem[:separator]
+        strip_count += 1
+        if strip_count > MAX_TRANSIENT_SUFFIX_STRIPS:
+            return True
+        stem = next_stem
     normalized_candidates = {
         candidate.lower() for candidate in candidates if candidate
     } | {
@@ -936,18 +972,8 @@ def _validate_manifest_run_id(
     if len(raw) != info.size:
         issues.add(issue)
         return
-    try:
-        value = json.loads(
-            raw.decode("utf-8", errors="strict"),
-            object_pairs_hook=_reject_duplicate_keys,
-            parse_constant=_reject_non_json_constant,
-        )
-    except (
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        RecursionError,
-        ValueError,
-    ):
+    value = _parse_semantic_json(raw)
+    if value is None:
         issues.add(issue)
         return
     if not isinstance(value, dict) or value.get("run_id") != publication_run.run_id:
@@ -1033,7 +1059,146 @@ def _load_publication_blobs(
     }
 
 
-def _parse_semantic_json(raw: bytes | None) -> Any | None:
+def _semantic_json_preparse_node_count(
+    raw: bytes, *, node_limit: int = MAX_SEMANTIC_JSON_NODES
+) -> int | None:
+    whitespace = b" \t\r\n"
+    scalar_delimiters = b" \t\r\n,]}:"
+    stack: list[list[Any]] = []
+    root_state = "value"
+    nodes = 0
+    index = 0
+
+    def register_value() -> bool:
+        nonlocal nodes, root_state
+        nodes += 1
+        if nodes > node_limit or nodes > MAX_SEMANTIC_JSON_NODES:
+            raise _SemanticFailure
+        if not stack:
+            if root_state != "value":
+                return False
+            root_state = "done"
+            return True
+        frame = stack[-1]
+        if frame[0] == "array" and frame[1] == "value_or_end":
+            frame[1] = "comma_or_end"
+        elif frame[0] == "object" and frame[1] == "value":
+            frame[1] = "comma_or_end"
+        else:
+            return False
+        frame[2] += 1
+        if frame[2] > MAX_SEMANTIC_JSON_CONTAINER_ITEMS:
+            raise _SemanticFailure
+        return True
+
+    def skip_string(start: int) -> int | None:
+        cursor = start + 1
+        while cursor < len(raw):
+            if cursor - start - 1 > MAX_SEMANTIC_JSON_STRING_BYTES:
+                raise _SemanticFailure
+            byte = raw[cursor]
+            if byte == 0x22:
+                return cursor + 1
+            if byte == 0x5C:
+                cursor += 2
+            else:
+                cursor += 1
+        return None
+
+    while index < len(raw):
+        while index < len(raw) and raw[index] in whitespace:
+            index += 1
+        if index >= len(raw):
+            break
+
+        if stack:
+            frame = stack[-1]
+            byte = raw[index]
+            if frame[0] == "object":
+                if frame[1] == "key_or_end":
+                    if byte == 0x7D:
+                        stack.pop()
+                        index += 1
+                        continue
+                    if byte != 0x22:
+                        return None
+                    string_end = skip_string(index)
+                    if string_end is None:
+                        return None
+                    index = string_end
+                    frame[1] = "colon"
+                    continue
+                if frame[1] == "colon":
+                    if byte != 0x3A:
+                        return None
+                    frame[1] = "value"
+                    index += 1
+                    continue
+                if frame[1] == "comma_or_end":
+                    if byte == 0x2C:
+                        frame[1] = "key_or_end"
+                        index += 1
+                        continue
+                    if byte == 0x7D:
+                        stack.pop()
+                        index += 1
+                        continue
+                    return None
+            elif frame[1] == "value_or_end" and byte == 0x5D:
+                stack.pop()
+                index += 1
+                continue
+            elif frame[1] == "comma_or_end":
+                if byte == 0x2C:
+                    frame[1] = "value_or_end"
+                    index += 1
+                    continue
+                if byte == 0x5D:
+                    stack.pop()
+                    index += 1
+                    continue
+                return None
+        elif root_state == "done":
+            return None
+
+        byte = raw[index]
+        if byte in (0x7B, 0x5B):
+            if not register_value():
+                return None
+            if len(stack) + 1 > MAX_SEMANTIC_JSON_DEPTH:
+                raise _SemanticFailure
+            stack.append(
+                ["object", "key_or_end", 0]
+                if byte == 0x7B
+                else ["array", "value_or_end", 0]
+            )
+            index += 1
+            continue
+        if byte == 0x22:
+            if not register_value():
+                return None
+            string_end = skip_string(index)
+            if string_end is None:
+                return None
+            index = string_end
+            continue
+        if byte in (0x2C, 0x3A, 0x5D, 0x7D):
+            return None
+        if not register_value():
+            return None
+        scalar_start = index
+        index += 1
+        while index < len(raw) and raw[index] not in scalar_delimiters:
+            index += 1
+        if index - scalar_start > MAX_SEMANTIC_JSON_SCALAR_BYTES:
+            raise _SemanticFailure
+
+    if stack or root_state != "done":
+        return None
+    return nodes
+
+
+def _decode_semantic_json(raw: bytes) -> Any | None:
     if raw is None:
         return None
     try:
@@ -1052,7 +1217,24 @@ def _parse_semantic_json(raw: bytes | None) -> Any | None:
         return None
 
 
-def _semantic_jsonl_values(raw: bytes) -> Iterable[Any]:
+def _parse_semantic_json_with_nodes(
+    raw: bytes | None, *, node_limit: int = MAX_SEMANTIC_JSON_NODES
+) -> tuple[Any | None, int]:
+    if raw is None:
+        return None, 0
+    nodes = _semantic_json_preparse_node_count(raw, node_limit=node_limit)
+    if nodes is None:
+        return None, 0
+    return _decode_semantic_json(raw), nodes
+
+
+def _parse_semantic_json(raw: bytes | None) -> Any | None:
+    return _parse_semantic_json_with_nodes(raw)[0]
+
+
+def _semantic_jsonl_values(
+    raw: bytes, budget: _SemanticJSONLBudget
+) -> Iterable[Any]:
     offset = 0
     while offset < len(raw):
         line_end = raw.find(b"\n", offset)
@@ -1062,7 +1244,15 @@ def _semantic_jsonl_values(raw: bytes) -> Iterable[Any]:
         else:
             line = raw[offset:line_end]
             offset = line_end + 1
-        yield _parse_semantic_json(line)
+        if len(line) > MAX_SEMANTIC_JSONL_ROW_BYTES or budget.rows_remaining <= 0:
+            raise _SemanticFailure
+        budget.rows_remaining -= 1
+        value, nodes = _parse_semantic_json_with_nodes(
+            line,
+            node_limit=min(MAX_SEMANTIC_JSON_NODES, budget.nodes_remaining),
+        )
+        budget.nodes_remaining -= nodes
+        yield value
 
 
 def _revision_fact_from_values(
@@ -1162,13 +1352,15 @@ def _extract_publication_facts(
             if fact is not None:
                 revisions.append(fact)
 
-    jsonl_row_count = 0
+    jsonl_budget = _SemanticJSONLBudget(
+        rows_remaining=MAX_SEMANTIC_JSONL_ROWS,
+        nodes_remaining=MAX_SEMANTIC_JSONL_NODES,
+    )
     for artifact in sorted(SEMANTIC_JSONL_ARTIFACTS):
         fields = REVISION_ARTIFACT_FIELDS[artifact]
-        for value in _semantic_jsonl_values(blobs.get(artifact, b"")):
-            jsonl_row_count += 1
-            if jsonl_row_count > MAX_SEMANTIC_JSONL_ROWS:
-                raise _SemanticFailure
+        for value in _semantic_jsonl_values(
+            blobs.get(artifact, b""), jsonl_budget
+        ):
             fact = _revision_fact_from_record(value, fields)
             if fact is not None:
                 revisions.append(fact)
@@ -1558,6 +1750,21 @@ def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list
             objects = _validate_run_entries(
                 resolved_root, current_index, entries, issues
             )
+            identity = _validate_commit_metadata(
+                resolved_root, commit_oid, parent_oid, publication_run
+            )
+            if identity is None:
+                issues.add(
+                    f"commit {current_index}: v2 publication commit metadata is unsafe"
+                )
+                continue
+            if publisher_identity is None:
+                publisher_identity = identity
+            elif identity != publisher_identity:
+                issues.add(
+                    f"commit {current_index}: v2 publisher identity changed within the range"
+                )
+                continue
             _validate_manifest_run_id(
                 resolved_root,
                 current_index,
@@ -1575,19 +1782,6 @@ def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list
                 if revision_fact_count > MAX_RANGE_REVISION_FACTS:
                     raise _SemanticFailure
                 publications.append(facts)
-            identity = _validate_commit_metadata(
-                resolved_root, commit_oid, parent_oid, publication_run
-            )
-            if identity is None:
-                issues.add(
-                    f"commit {current_index}: v2 publication commit metadata is unsafe"
-                )
-            elif publisher_identity is None:
-                publisher_identity = identity
-            elif identity != publisher_identity:
-                issues.add(
-                    f"commit {current_index}: v2 publisher identity changed within the range"
-                )
         except _GitFailure:
             issues.add(f"commit {current_index}: bounded Git object inspection failed")
         except _ParseFailure:
