@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 from collections import Counter
 import datetime as dt
 import json
@@ -9,6 +10,15 @@ from pathlib import Path
 import re
 import subprocess
 from typing import Any
+
+try:
+    from scripts.retrospective_history_git_v2 import validate_append_only_range
+    from scripts.retrospective_history_v2 import validate_v2_runs
+except ModuleNotFoundError as exc:
+    if exc.name != "scripts":
+        raise
+    from retrospective_history_git_v2 import validate_append_only_range
+    from retrospective_history_v2 import validate_v2_runs
 
 
 FORBIDDEN_COMPONENTS = frozenset(
@@ -55,12 +65,41 @@ SESSION_REF_RE = re.compile(r"^session_ref_v1:[0-9a-f]{20}$")
 EPISODE_REF_RE = re.compile(r"^episode_ref_v1:[0-9a-f]{20}$")
 TURN_REF_RE = re.compile(r"^turn_ref_v1:[0-9a-f]{20}$")
 SOURCE_HASH_RE = re.compile(r"^source_hash_v1:[0-9a-f]{20}$")
+OPAQUE_USAGE_REF_FIELD = "authorization_" + "usage_ref"
+TERMINAL_OPAQUE_USAGE_REFS_FIELD = "terminal_" + OPAQUE_USAGE_REF_FIELD + "s"
+OPAQUE_USAGE_REF_COLLECTION_NAME = "authorization_" + "refs"
+OPAQUE_USAGE_REF_PREFIX = OPAQUE_USAGE_REF_FIELD + "_v2:"
+OPAQUE_USAGE_REF_SCHEMA_PATTERN = "^" + OPAQUE_USAGE_REF_PREFIX + "[0-9a-f]{32}$"
+OPAQUE_USAGE_REF_RE = re.compile(
+    "^" + re.escape(OPAQUE_USAGE_REF_PREFIX) + r"[0-9a-f]{32}$"
+)
+OPAQUE_USAGE_ASSIGNMENT_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?P<quote>[\"']?)"
+    r"(?P<field>"
+    + re.escape(OPAQUE_USAGE_REF_FIELD)
+    + "|"
+    + re.escape(TERMINAL_OPAQUE_USAGE_REFS_FIELD)
+    + ")"
+    r"(?P=quote)\s*[:=]\s*"
+)
+OPAQUE_USAGE_PREFIX_LITERAL_RE = re.compile(
+    r"(?P<quote>[\"'])" + re.escape(OPAQUE_USAGE_REF_PREFIX) + r"(?P=quote)"
+)
+OPAQUE_USAGE_REF_LITERAL_RE = re.compile(
+    r"(?P<quote>[\"'])" + re.escape(OPAQUE_USAGE_REF_PREFIX) + r"[0-9a-f]{32}(?P=quote)"
+)
+SAFE_OPAQUE_USAGE_SOURCE_LINES = frozenset(
+    {OPAQUE_USAGE_REF_COLLECTION_NAME + ": list[str] = []"}
+)
+EVENT_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 SENSITIVE_TOKEN_RE = re.compile(
     r"(^|[._-])(?:password|passwd|pwd|credentials?|secret|token|api[._-]?key|authorization|private[._-]?key)($|[._-])",
     re.I,
 )
-RAW_ID_TOKEN_RE = re.compile(r"\b(?:session|turn|episode)(?:[._-]?id)[._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\b", re.I)
+RAW_ID_TOKEN_RE = re.compile(
+    r"\b(?:session|turn|episode)(?:[._-]?id)[._-][A-Za-z0-9][A-Za-z0-9_.-]{5,}\b", re.I
+)
 RAW_ID_VALUE_RE = re.compile(
     r"(?<![A-Za-z0-9_])[\"']?(?:session|turn|episode)(?:[._ -]?id)[\"']?(?:\s*[:=]\s*|\s+)[\"']?"
     r"(?!session_ref_v1:|turn_ref_v1:|episode_ref_v1:|row\.get\b|data\.get\b|value\.get\b)[A-Za-z0-9_.:-]{6,}\b",
@@ -71,7 +110,7 @@ PRIVATE_IPV4_RE = re.compile(
     r"(?<![\d.])(?:10(?:\.\d{1,3}){3}|100\.(?:6[4-9]|[78]\d|9\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}|127(?:\.\d{1,3}){3}|169\.254(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})(?![\d.])"
 )
 PRIVATE_IPV6_RE = re.compile(
-    r"(?<![0-9A-Fa-f:])(?:::1|f[cd][0-9A-Fa-f]{0,2}(?::[0-9A-Fa-f]{0,4}){1,7}|fe[89abAB][0-9A-Fa-f]?(?::[0-9A-Fa-f]{0,4}){1,7})(?![0-9A-Fa-f:])",
+    r"(?<![0-9A-Za-z_:])(?:::1|f[cd][0-9A-Fa-f]{0,2}(?::[0-9A-Fa-f]{0,4}){1,7}|fe[89abAB][0-9A-Fa-f]?(?::[0-9A-Fa-f]{0,4}){1,7})(?![0-9A-Za-z_:])",
     re.I,
 )
 TIMESTAMP_RE = re.compile(
@@ -80,9 +119,25 @@ TIMESTAMP_RE = re.compile(
 TEXT_ARTIFACT_SUFFIXES = frozenset({".json", ".jsonl", ".md", ".txt"})
 VALID_RETAINED_SUFFIXES = TEXT_ARTIFACT_SUFFIXES
 STRIPPABLE_ARTIFACT_SUFFIXES = TEXT_ARTIFACT_SUFFIXES | COMPRESSED_ARTIFACT_SUFFIXES
-ROOT_DOC_FILES = frozenset({".gitignore", "AGENTS.md", "README.md", "data/README.md", "reports/README.md"})
+ROOT_DOC_FILES = frozenset(
+    {
+        ".gitignore",
+        "AGENTS.md",
+        "README.md",
+        "data/README.md",
+        "reports/README.md",
+        "requirements-v2.txt",
+    }
+)
 WORKFLOW_SUFFIXES = frozenset({".yaml", ".yml"})
-SCHEMA_FILES = frozenset({"retained-manifest-v1.schema.json", "session-retrospective-v1.schema.json"})
+SCHEMA_FILES = frozenset(
+    {
+        "retained-manifest-v1.schema.json",
+        "retained-manifest-v2.schema.json",
+        "session-retrospective-v1.schema.json",
+        "session-retrospective-v2.schema.json",
+    }
+)
 RETAINED_EXPORT_DIRS = frozenset({("retained", "daily"), ("retained", "weekly"), ("retained", "baseline")})
 RETAINED_EXPORT_FILES = frozenset({"episodes.jsonl", "turn_flags.jsonl", "trend_report.json", "retained_manifest.json"})
 RETAINED_EVIDENCE_HOSTS = frozenset({"local", "miku-bot-dev", "hoteng-srv-01", "custom_source"})
@@ -195,17 +250,21 @@ MAX_SAFE_TOKEN_LENGTH = 64
 MAX_TOKEN_ARRAY_ITEMS = 16
 MAX_COUNT_MAP_PROPERTIES = 64
 MAX_COUNT = 1_000_000
+MAX_OPAQUE_USAGE_ASSIGNMENT_LINES = 64
 RETAINED_SAFETY_TEXT_RE = re.compile(
     r"(?:\b(?:secret|token|credential|password|private key|production|destructive|rm -rf|reset --hard|customer data|pii)\b|"
     r"客户|客户数据|凭据|凭证|密钥|生产|破坏性)",
     re.I,
 )
-COMMON_BARE_TOKEN_RE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b")
+COMMON_BARE_TOKEN_RE = re.compile(
+    r"\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b"
+)
+INFRASTRUCTURE_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 RISK_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", re.I),
     re.compile(r"\b(?:https?|ssh)://", re.I),
     re.compile(r"\bgit@[A-Za-z0-9_.-]+:"),
-    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+    INFRASTRUCTURE_EMAIL_RE,
     re.compile(r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/", re.I),
     re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)", re.I),
     re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
@@ -243,11 +302,17 @@ INFRASTRUCTURE_RISK_PATTERNS = (
         r"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9._-]+@)(?:localhost|miku-bot-dev|hoteng-srv-01|(?:10|127)(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2}|[A-Za-z0-9-]+):[A-Za-z0-9._~/-]+(?:\.git)?\b",
         re.I,
     ),
-    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
-    re.compile(r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/", re.I),
+    INFRASTRUCTURE_EMAIL_RE,
+    re.compile(
+        r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/",
+        re.I,
+    ),
     re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)", re.I),
     re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
-    re.compile(r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\", re.I),
+    re.compile(
+        r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\",
+        re.I,
+    ),
     re.compile(
         r"(?<![A-Za-z0-9_])[\"']?"
         r"(?!(?:safe[._-]?token(?:[._-]?re)?|common[._-]?bare[._-]?token[._-]?re|max[._-]?safe[._-]?token[._-]?length|max[._-]?token[._-]?array[._-]?items|sensitive[._-]?token[._-]?re|raw[._-]?id[._-]?token[._-]?re|tokens|risk[._-]?patterns?|infrastructure[._-]?risk[._-]?patterns?|safe[._-]?infrastructure[._-]?lines)[\"']?\s*[:=])"
@@ -259,13 +324,18 @@ INFRASTRUCTURE_RISK_PATTERNS = (
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
     COMMON_BARE_TOKEN_RE,
     re.compile(r"(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)"),
-    re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),
+    re.compile(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+    ),
     re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
     PRIVATE_IPV4_RE,
     PRIVATE_IPV6_RE,
     RAW_ID_VALUE_RE,
     RAW_ID_TOKEN_RE,
-    re.compile(r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b", re.I),
+    re.compile(
+        r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b",
+        re.I,
+    ),
 )
 SAFE_INFRASTRUCTURE_LINES = frozenset(
     {
@@ -280,12 +350,17 @@ SAFE_INFRASTRUCTURE_LINES = frozenset(
         "session_index.jsonl",
         "rollout-*.jsonl",
         "rollout-summary*.jsonl",
+        "Retrospective V2 Test <retrospective-v2-test" + "@example." + "invalid>",
         "source_metadata.json",
         "shard_manifest.json",
         "shards.jsonl",
         "turn_summaries.jsonl",
     }
 )
+SAFE_INFRASTRUCTURE_EMAILS = frozenset(
+    {"codex-session-retrospective" + "@users.noreply.github.com"}
+)
+ZERO_EVENT_SHAS = frozenset({"0" * 40, "0" * 64})
 
 
 def git_visible_files(root: Path) -> list[Path] | None:
@@ -439,18 +514,195 @@ def contains_risky_text(value: Any, *, include_safety_markers: bool = True) -> b
     if isinstance(value, str):
         return any(pattern.search(value) for pattern in RISK_PATTERNS if include_safety_markers or pattern is not RETAINED_SAFETY_TEXT_RE)
     if isinstance(value, dict):
-        return any(contains_risky_text(child, include_safety_markers=include_safety_markers) for child in value.values())
+        return any(
+            contains_risky_text(child, include_safety_markers=include_safety_markers)
+            for child in value.values()
+        )
     if isinstance(value, list):
-        return any(contains_risky_text(child, include_safety_markers=include_safety_markers) for child in value)
+        return any(
+            contains_risky_text(child, include_safety_markers=include_safety_markers)
+            for child in value
+        )
     return False
 
 
-def contains_infrastructure_risk_text(value: str) -> bool:
-    for line in value.splitlines():
-        normalized_line = line.strip().rstrip(",").strip("\"'")
-        if normalized_line in SAFE_INFRASTRUCTURE_LINES:
+def _is_typed_authorization_ref_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "typed_ref"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == OPAQUE_USAGE_REF_PREFIX
+    )
+
+
+def _leading_assignment_expression(raw_value: str) -> str | None:
+    value = raw_value.lstrip()
+    if not value:
+        return None
+    if value == "{":
+        return "{"
+    if value.startswith("{"):
+        return None
+
+    stack: list[str] = []
+    quote: str | None = None
+    escaped = False
+    scalar_string = value[0] in {'"', "'"}
+    closing_brackets = {"(": ")", "[": "]"}
+    for index, character in enumerate(value):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+                if scalar_string and not stack:
+                    return value[: index + 1]
             continue
-        if any(pattern.search(line) for pattern in INFRASTRUCTURE_RISK_PATTERNS):
+        if character in {'"', "'"}:
+            quote = character
+        elif character in closing_brackets:
+            stack.append(closing_brackets[character])
+        elif stack and character == stack[-1]:
+            stack.pop()
+            if not stack:
+                return value[: index + 1]
+        elif not stack and character in {",", "}", "#"}:
+            expression = value[:index].rstrip()
+            return expression or None
+    if quote is not None or stack:
+        return None
+    return value.rstrip() or None
+
+
+def _authorization_assignment_value_is_safe(field: str, raw_value: str) -> bool:
+    if field == OPAQUE_USAGE_REF_FIELD and re.match(
+        r"str\s*\|\s*None(?=[,)])", raw_value.lstrip()
+    ):
+        return True
+    value = _leading_assignment_expression(raw_value)
+    if value == "{":
+        return True
+    if value is None:
+        return False
+    try:
+        expression = ast.parse(value, mode="eval").body
+    except (SyntaxError, ValueError):
+        return False
+
+    if field == OPAQUE_USAGE_REF_FIELD:
+        if isinstance(expression, ast.Constant):
+            return expression.value is None or (
+                isinstance(expression.value, str)
+                and OPAQUE_USAGE_REF_RE.fullmatch(expression.value) is not None
+            )
+        if isinstance(expression, ast.Name):
+            return expression.id in {OPAQUE_USAGE_REF_FIELD, "null"}
+        return _is_typed_authorization_ref_call(expression)
+
+    if isinstance(expression, (ast.List, ast.Tuple)):
+        return all(
+            (
+                isinstance(item, ast.Constant)
+                and isinstance(item.value, str)
+                and OPAQUE_USAGE_REF_RE.fullmatch(item.value) is not None
+            )
+            or _is_typed_authorization_ref_call(item)
+            for item in expression.elts
+        )
+    if isinstance(expression, ast.Name):
+        return expression.id in {
+            OPAQUE_USAGE_REF_COLLECTION_NAME,
+            TERMINAL_OPAQUE_USAGE_REFS_FIELD,
+        }
+    return (
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Name)
+        and expression.func.id == "sorted"
+        and len(expression.args) == 1
+        and not expression.keywords
+        and isinstance(expression.args[0], ast.Name)
+        and expression.args[0].id == OPAQUE_USAGE_REF_COLLECTION_NAME
+    )
+
+
+def _mask_safe_authorization_assignment(line: str) -> str | None:
+    matches = list(OPAQUE_USAGE_ASSIGNMENT_RE.finditer(line))
+    if not matches:
+        return line
+    for match in matches:
+        if not _authorization_assignment_value_is_safe(
+            match.group("field"), line[match.end() :]
+        ):
+            return None
+    masked_line = line
+    for match in reversed(matches):
+        start, end = match.span("field")
+        masked_line = masked_line[:start] + "opaque_reference" + masked_line[end:]
+    return masked_line.replace(OPAQUE_USAGE_REF_PREFIX, "opaque_ref_v2:")
+
+
+def _authorization_assignment_context(lines: list[str], index: int) -> str:
+    context = lines[index]
+    matches = list(OPAQUE_USAGE_ASSIGNMENT_RE.finditer(context))
+    incomplete_lists = [
+        match
+        for match in matches
+        if context[match.end() :].lstrip().startswith("[")
+        and _leading_assignment_expression(context[match.end() :]) is None
+    ]
+    if not incomplete_lists:
+        return context
+    for continuation in lines[index + 1 : index + MAX_OPAQUE_USAGE_ASSIGNMENT_LINES]:
+        context += "\n" + continuation
+        if all(
+            _leading_assignment_expression(context[match.end() :]) is not None
+            for match in incomplete_lists
+        ):
+            break
+    return context
+
+
+def contains_infrastructure_risk_text(value: str) -> bool:
+    lines = value.splitlines()
+    for index, line in enumerate(lines):
+        normalized_line = line.strip().rstrip(",").strip("\"'")
+        if (
+            normalized_line in SAFE_INFRASTRUCTURE_LINES
+            or line.strip() in SAFE_OPAQUE_USAGE_SOURCE_LINES
+        ):
+            continue
+        scanned_line = _mask_safe_authorization_assignment(
+            _authorization_assignment_context(lines, index)
+        )
+        if scanned_line is None:
+            return True
+        scanned_line = scanned_line.replace(
+            OPAQUE_USAGE_REF_SCHEMA_PATTERN, "opaque_ref_schema_pattern"
+        )
+        scanned_line = OPAQUE_USAGE_PREFIX_LITERAL_RE.sub(
+            '"opaque_ref_v2:"', scanned_line
+        )
+        scanned_line = OPAQUE_USAGE_REF_LITERAL_RE.sub(
+            '"opaque_ref_v2:value"', scanned_line
+        )
+        email_matches = list(INFRASTRUCTURE_EMAIL_RE.finditer(scanned_line))
+        if any(
+            match.group(0) not in SAFE_INFRASTRUCTURE_EMAILS for match in email_matches
+        ):
+            return True
+        for match in reversed(email_matches):
+            start, end = match.span()
+            scanned_line = scanned_line[:start] + "safe_email" + scanned_line[end:]
+        if any(
+            pattern.search(scanned_line)
+            for pattern in INFRASTRUCTURE_RISK_PATTERNS
+            if pattern is not INFRASTRUCTURE_EMAIL_RE
+        ):
             return True
     return False
 
@@ -1233,6 +1485,8 @@ def validate_root(root: Path) -> list[str]:
     issues: list[str] = []
     if not root.is_dir():
         return ["root must be an existing directory"]
+    visible_files = iter_files(root)
+    issues.extend(validate_v2_runs(root, visible_files))
     retained_export_files: dict[tuple[str, str], set[str]] = {}
     retained_export_modes: dict[tuple[str, str], dict[str, str]] = {}
     retained_export_windows: dict[tuple[str, str], dict[str, tuple[str, tuple[int, int, int, int, int, int, int], tuple[int, int, int, int, int, int, int]]]] = {}
@@ -1242,9 +1496,11 @@ def validate_root(root: Path) -> list[str]:
     data_month_trends: dict[tuple[str, str, str], Any] = {}
     data_month_manifests: dict[tuple[str, str, str], Any] = {}
     data_month_paths: dict[tuple[str, str, str], dict[str, Path]] = {}
-    for path in iter_files(root):
+    for path in visible_files:
         relative = path.relative_to(root)
         display_relative = display_relative_path(relative)
+        if relative.parts and relative.parts[0] == "runs":
+            continue
         export_key = retained_export_key(relative)
         data_month_key = retained_data_month_key(relative)
         if export_key is not None:
@@ -1372,11 +1628,51 @@ def validate_root(root: Path) -> list[str]:
     return issues
 
 
+def validate_append_only_event_range(
+    root: Path, base_rev: str, head_rev: str, *, forced: bool
+) -> list[str]:
+    issues: list[str] = []
+    if forced:
+        issues.append("range: force-push event is not append-only")
+    for label, revision in (("base", base_rev), ("head", head_rev)):
+        if revision in ZERO_EVENT_SHAS:
+            issues.append(f"range: {label} event SHA is zero")
+        elif EVENT_SHA_RE.fullmatch(revision) is None:
+            issues.append(f"range: {label} event SHA is invalid")
+    if issues:
+        return issues
+    return validate_append_only_range(root, base_rev, head_rev)
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Validate retained session retrospective history artifacts.")
+    parser = argparse.ArgumentParser(
+        description="Validate retained session retrospective history artifacts."
+    )
     parser.add_argument("--root", default=".")
+    parser.add_argument("--base-rev")
+    parser.add_argument("--head-rev")
+    parser.add_argument("--event-forced", choices=("true", "false"))
     args = parser.parse_args(argv)
-    issues = validate_root(Path(args.root).resolve())
+    if bool(args.base_rev) != bool(args.head_rev):
+        parser.error("--base-rev and --head-rev must be provided together")
+    if args.event_forced is not None and not args.base_rev:
+        parser.error("--event-forced requires --base-rev and --head-rev")
+    root = Path(args.root).resolve()
+    issues = validate_root(root)
+    if args.base_rev and args.head_rev:
+        if args.event_forced is None:
+            issues.extend(
+                validate_append_only_range(root, args.base_rev, args.head_rev)
+            )
+        else:
+            issues.extend(
+                validate_append_only_event_range(
+                    root,
+                    args.base_rev,
+                    args.head_rev,
+                    forced=args.event_forced == "true",
+                )
+            )
     if issues:
         for issue in issues:
             print(issue)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -1885,7 +1886,192 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(text, encoding="utf-8")
 
-                    self.assertIn("infrastructure text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
+                    self.assertIn(
+                        "infrastructure text contains raw/sensitive evidence",
+                        "\n".join(MODULE.validate_root(root)),
+                    )
+
+    def test_authorization_usage_refs_require_exact_fields_and_opaque_values(
+        self,
+    ) -> None:
+        singular_field = "authorization_" + "usage_ref"
+        terminal_field = "terminal_" + singular_field + "s"
+        opaque_prefix = singular_field + "_v2:"
+        opaque_ref = singular_field + "_v2:" + "a" * 32
+
+        for value in (
+            json.dumps({singular_field: opaque_ref}),
+            json.dumps({terminal_field: [opaque_ref]}),
+            json.dumps({terminal_field: [opaque_ref]}, indent=2),
+            "\n".join(
+                (
+                    f'"{terminal_field}": [',
+                    f'    typed_ref("{opaque_prefix}")',
+                    "]",
+                )
+            ),
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(MODULE.contains_infrastructure_risk_text(value))
+
+        for value in (
+            json.dumps({singular_field: opaque_ref + "0"}),
+            json.dumps({terminal_field: [singular_field + "_v2:not-opaque"]}),
+            json.dumps({terminal_field: [singular_field + "_v2:not-opaque"]}, indent=2),
+            "\n".join(
+                (
+                    f'"{terminal_field}": [',
+                    f'    typed_ref("{opaque_prefix}wrong")',
+                    "]",
+                )
+            ),
+            json.dumps({singular_field: {"ref": opaque_ref}}),
+            json.dumps({singular_field: "secret" + "-value"}),
+        ):
+            with self.subTest(value=value):
+                self.assertTrue(MODULE.contains_infrastructure_risk_text(value))
+
+    def test_authorization_near_name_fields_with_secret_values_are_rejected(
+        self,
+    ) -> None:
+        singular_field = "authorization_" + "usage_ref"
+        terminal_field = "terminal_" + singular_field + "s"
+        risky_value = "secret" + "-value"
+
+        for field in (
+            singular_field + "s",
+            terminal_field + "_v2",
+            "terminal_" + singular_field,
+            "authori" + "zation",
+        ):
+            with self.subTest(field=field):
+                value = json.dumps({field: risky_value})
+                self.assertTrue(MODULE.contains_infrastructure_risk_text(value))
+
+    def test_safe_infrastructure_email_requires_exact_token_equality(self) -> None:
+        safe_email = "codex-session-retrospective" + "@users.noreply.github.com"
+        self.assertFalse(MODULE.contains_infrastructure_risk_text(safe_email))
+
+        for value in (
+            "prefix" + safe_email,
+            safe_email + ".invalid",
+            "prefix." + safe_email + ".invalid",
+        ):
+            with self.subTest(value=value):
+                self.assertTrue(MODULE.contains_infrastructure_risk_text(value))
+
+    def test_validate_root_dispatches_v2_once(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with (
+                mock.patch.object(MODULE, "iter_files", return_value=[]) as iter_files,
+                mock.patch.object(
+                    MODULE, "validate_v2_runs", return_value=["v2 issue"]
+                ) as validate_v2,
+            ):
+                self.assertEqual(MODULE.validate_root(root), ["v2 issue"])
+
+            iter_files.assert_called_once_with(root.resolve())
+            validate_v2.assert_called_once_with(root.resolve(), [])
+
+    def test_main_requires_a_complete_revision_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaises(SystemExit) as raised:
+                MODULE.main(["--root", raw, "--base-rev", "base"])
+
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_main_runs_tree_and_append_only_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            with (
+                mock.patch.object(
+                    MODULE, "validate_root", return_value=[]
+                ) as validate_root,
+                mock.patch.object(
+                    MODULE, "validate_append_only_range", return_value=[]
+                ) as validate_range,
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            ):
+                result = MODULE.main(
+                    ["--root", str(root), "--base-rev", "base", "--head-rev", "head"]
+                )
+
+            self.assertEqual(result, 0)
+            self.assertEqual(stdout.getvalue(), "retained history is valid\n")
+            validate_root.assert_called_once_with(root)
+            validate_range.assert_called_once_with(root, "base", "head")
+
+    def test_main_uses_event_range_validation(self) -> None:
+        base_rev = "a" * 40
+        head_rev = "b" * 40
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            with (
+                mock.patch.object(MODULE, "validate_root", return_value=[]),
+                mock.patch.object(
+                    MODULE, "validate_append_only_event_range", return_value=[]
+                ) as validate_event_range,
+                mock.patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                result = MODULE.main(
+                    [
+                        "--root",
+                        str(root),
+                        "--base-rev",
+                        base_rev,
+                        "--head-rev",
+                        head_rev,
+                        "--event-forced",
+                        "false",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        validate_event_range.assert_called_once_with(
+            root, base_rev, head_rev, forced=False
+        )
+
+    def test_event_range_rejects_force_push_zero_and_invalid_shas(self) -> None:
+        valid_base = "a" * 40
+        valid_head = "b" * 40
+        with mock.patch.object(MODULE, "validate_append_only_range") as validate_range:
+            self.assertEqual(
+                MODULE.validate_append_only_event_range(
+                    Path.cwd(), valid_base, valid_head, forced=True
+                ),
+                ["range: force-push event is not append-only"],
+            )
+            self.assertEqual(
+                MODULE.validate_append_only_event_range(
+                    Path.cwd(), "0" * 40, valid_head, forced=False
+                ),
+                ["range: base event SHA is zero"],
+            )
+            self.assertEqual(
+                MODULE.validate_append_only_event_range(
+                    Path.cwd(), valid_base, "HEAD", forced=False
+                ),
+                ["range: head event SHA is invalid"],
+            )
+
+        validate_range.assert_not_called()
+
+    def test_event_range_preserves_non_descendant_failure(self) -> None:
+        base_rev = "a" * 40
+        head_rev = "b" * 40
+        expected = ["range: head is not a fast-forward descendant of base"]
+        with mock.patch.object(
+            MODULE, "validate_append_only_range", return_value=expected
+        ) as validate_range:
+            self.assertEqual(
+                MODULE.validate_append_only_event_range(
+                    Path.cwd(), base_rev, head_rev, forced=False
+                ),
+                expected,
+            )
+
+        validate_range.assert_called_once_with(Path.cwd(), base_rev, head_rev)
 
     def test_retained_text_rejects_bare_private_ip_addresses(self) -> None:
         for report_sample, row_sample in (
@@ -1899,11 +2085,22 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     root = Path(raw)
                     report = root / "reports" / "daily" / "2026" / "05" / "22.md"
                     report.parent.mkdir(parents=True)
-                    report.write_text("Investigated host " + report_sample + "\n", encoding="utf-8")
+                    report.write_text(
+                        "Investigated host " + report_sample + "\n", encoding="utf-8"
+                    )
 
                     turn = valid_turn_flag()
-                    turn["redacted_user_prompt_summary"] = "Investigated host " + row_sample
-                    turn_path = root / "data" / "turn_flags" / "2026" / "05" / "turn_flags.jsonl"
+                    turn["redacted_user_prompt_summary"] = (
+                        "Investigated host " + row_sample
+                    )
+                    turn_path = (
+                        root
+                        / "data"
+                        / "turn_flags"
+                        / "2026"
+                        / "05"
+                        / "turn_flags.jsonl"
+                    )
                     turn_path.parent.mkdir(parents=True)
                     turn_path.write_text(json.dumps(turn) + "\n", encoding="utf-8")
 
