@@ -1986,6 +1986,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             root = Path(raw).resolve()
             with (
                 mock.patch.object(
+                    MODULE, "validate_checkout_matches_revision", return_value=[]
+                ) as validate_checkout,
+                mock.patch.object(
                     MODULE, "validate_root", return_value=[]
                 ) as validate_root,
                 mock.patch.object(
@@ -1999,6 +2002,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             self.assertEqual(stdout.getvalue(), "retained history is valid\n")
+            validate_checkout.assert_called_once_with(root, "head")
             validate_root.assert_called_once_with(root)
             validate_range.assert_called_once_with(root, "base", "head")
 
@@ -2008,6 +2012,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw).resolve()
             with (
+                mock.patch.object(
+                    MODULE, "validate_checkout_matches_revision", return_value=[]
+                ) as validate_checkout,
                 mock.patch.object(MODULE, "validate_root", return_value=[]),
                 mock.patch.object(
                     MODULE, "validate_append_only_event_range", return_value=[]
@@ -2028,9 +2035,34 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 )
 
         self.assertEqual(result, 0)
+        validate_checkout.assert_called_once_with(root, head_rev)
         validate_event_range.assert_called_once_with(
             root, base_rev, head_rev, forced=False
         )
+
+    def test_main_rejects_mismatched_checkout_before_tree_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            with (
+                mock.patch.object(
+                    MODULE,
+                    "validate_checkout_matches_revision",
+                    return_value=["range: checkout mismatch"],
+                ),
+                mock.patch.object(MODULE, "validate_root") as validate_root,
+                mock.patch.object(
+                    MODULE, "validate_append_only_range"
+                ) as validate_range,
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            ):
+                result = MODULE.main(
+                    ["--root", str(root), "--base-rev", "base", "--head-rev", "head"]
+                )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(stdout.getvalue(), "range: checkout mismatch\n")
+        validate_root.assert_not_called()
+        validate_range.assert_not_called()
 
     def test_event_range_rejects_force_push_zero_and_invalid_shas(self) -> None:
         valid_base = "a" * 40

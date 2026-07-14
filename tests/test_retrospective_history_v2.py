@@ -1362,6 +1362,72 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
                     )
                 )
 
+    def test_normalized_change_binds_prior_compatible_metric_rate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prior = write_bundle(root, 1)
+            current = write_bundle(root, 2, predecessor=prior)
+            for refs, rate, normalized in (
+                (
+                    prior,
+                    20,
+                    {"status": "unavailable", "reason": "no_prior_period"},
+                ),
+                (
+                    current,
+                    80,
+                    {
+                        "status": "available",
+                        "prior_run_revision_ref": prior.run_revision_ref,
+                        "direction": "regressed",
+                        "delta_per_100": 10,
+                    },
+                ),
+            ):
+                trend_path = refs.directory / "trend_report.json"
+                trend = json.loads(trend_path.read_bytes())
+                trend["strata"][0]["metrics"] = [
+                    {
+                        "metric": "failed_command",
+                        "status": "available",
+                        "numerator": 0,
+                        "denominator": 1,
+                        "rate_per_100": rate,
+                        "normalized_change": normalized,
+                    }
+                ]
+                trend_path.write_bytes(canonical_json(trend))
+                rewrite_digest(refs.directory)
+
+            issues = MODULE.validate_v2_runs(root)
+
+            self.assertTrue(
+                any(
+                    "normalized change delta must match the compatible prior metric"
+                    in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+
+            trend_path = current.directory / "trend_report.json"
+            trend = json.loads(trend_path.read_bytes())
+            trend["strata"][0]["metrics"][0]["normalized_change"][
+                "prior_run_revision_ref"
+            ] = hex_ref("run_revision_ref_v2:", 999)
+            trend_path.write_bytes(canonical_json(trend))
+            rewrite_digest(current.directory)
+
+            issues = MODULE.validate_v2_runs(root)
+
+            self.assertTrue(
+                any(
+                    "normalized change prior run revision is not present" in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+
     def test_compliance_retraction_and_extended_head_bindings_are_valid(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1431,6 +1497,29 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
             )
 
             self.assertEqual(MODULE.validate_v2_runs(root), [])
+
+    def test_campaign_segments_without_root_must_form_a_contiguous_prefix(self) -> None:
+        for ordinals in ((2,), (1, 3)):
+            with self.subTest(ordinals=ordinals), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                for number, ordinal in enumerate(ordinals, start=1):
+                    write_campaign_bundle(
+                        root,
+                        number,
+                        publication_role="campaign_segment",
+                        mode="daily",
+                        segment_ordinal=ordinal,
+                    )
+
+                issues = MODULE.validate_v2_runs(root)
+
+                self.assertTrue(
+                    any(
+                        "segments must cover every unique bounded ordinal" in issue
+                        for issue in issues
+                    ),
+                    issues,
+                )
 
     def test_campaign_root_requires_segments_and_is_unique(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1794,6 +1883,33 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
                 self.assertTrue(
                     any(MODULE.JSON_RESOURCE_ISSUE in issue for issue in issues), issues
                 )
+
+    def test_wide_json_is_rejected_before_object_graph_materialization(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            refs = write_bundle(root, 1)
+            wide = (
+                b"["
+                + b",".join(b"0" for _ in range(MODULE.MAX_JSON_CONTAINER_ITEMS + 1))
+                + b"]"
+            )
+            (refs.directory / "episodes.jsonl").write_bytes(wide + b"\n")
+            rewrite_digest(refs.directory)
+            original_parse = MODULE._parse_json_bytes
+
+            def guarded_parse(raw: bytes) -> object:
+                if raw == wide:
+                    self.fail("wide JSON reached json.loads")
+                return original_parse(raw)
+
+            with mock.patch.object(
+                MODULE, "_parse_json_bytes", side_effect=guarded_parse
+            ):
+                issues = MODULE.validate_v2_runs(root)
+
+            self.assertTrue(
+                any(MODULE.JSON_RESOURCE_ISSUE in issue for issue in issues), issues
+            )
 
     def test_namespace_and_exact_inventory_errors_are_privacy_safe(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -2280,6 +2396,31 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
             rewrite_digest(refs.directory)
 
             issues = MODULE.validate_v2_runs(root)
+            self.assertTrue(
+                any("report renderer input is invalid" in issue for issue in issues),
+                issues,
+            )
+
+    def test_report_templates_are_bound_to_their_summary_section(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            refs = write_bundle(root, 1)
+            summary_path = refs.directory / "summary.json"
+            summary = json.loads(summary_path.read_bytes())
+            summary["friction_and_confusion"] = [
+                {
+                    "template_id": "retrospective.v2.strength",
+                    "slots": [],
+                    "rendered_text": "No observation was retained.",
+                    "rendering_policy": "retained-template-renderer-v2",
+                    "detail_disposition": "rendered",
+                }
+            ]
+            summary_path.write_bytes(canonical_json(summary))
+            rewrite_digest(refs.directory)
+
+            issues = MODULE.validate_v2_runs(root)
+
             self.assertTrue(
                 any("report renderer input is invalid" in issue for issue in issues),
                 issues,

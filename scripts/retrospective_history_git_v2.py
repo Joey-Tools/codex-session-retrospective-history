@@ -48,6 +48,10 @@ MAX_DIAGNOSTICS = 64
 MAX_GIT_STDERR_BYTES = 4096
 GIT_TIMEOUT_SECONDS = 30
 COMMIT_PAGE_SIZE = 128
+MAX_RANGE_COMMITS = 512
+MAX_SEMANTIC_BUNDLE_BYTES = 64 * 1024 * 1024
+MAX_SEMANTIC_JSONL_ROWS = 200_000
+MAX_RANGE_REVISION_FACTS = 1_000_000
 PROCESS_IO_CHUNK_BYTES = 64 * 1024
 PROCESS_TERMINATION_SECONDS = 1
 DIAGNOSTIC_OMISSION = "validation: additional issues omitted"
@@ -72,6 +76,62 @@ WINDOW_RE = re.compile(
 )
 RUN_ID_RE = re.compile(rb"[0-9a-f]{64}")
 ROUTE_COMPONENT_RE = re.compile(rb"[0-9a-f]{2}")
+CAMPAIGN_REF_RE = re.compile(r"campaign_ref_v2:[0-9a-f]{32}")
+REVISION_REF_PATTERNS = {
+    "run": re.compile(r"run_revision_ref_v2:[0-9a-f]{32}"),
+    "coverage": re.compile(r"coverage_revision_ref_v2:[0-9a-f]{32}"),
+    "episode": re.compile(r"episode_revision_ref_v2:[0-9a-f]{32}"),
+    "gap": re.compile(r"gap_revision_ref_v2:[0-9a-f]{32}"),
+    "summary": re.compile(r"summary_revision_ref_v2:[0-9a-f]{32}"),
+    "topic": re.compile(r"topic_revision_ref_v2:[0-9a-f]{32}"),
+    "trend": re.compile(r"trend_revision_ref_v2:[0-9a-f]{32}"),
+    "turn_finding": re.compile(r"turn_finding_revision_ref_v2:[0-9a-f]{32}"),
+}
+REVISION_ARTIFACT_FIELDS = {
+    "coverage.json": (
+        "coverage",
+        "coverage_revision_ref",
+        "predecessor_coverage_revision_ref",
+        "supersedes_coverage_revision_refs",
+    ),
+    "episodes.jsonl": (
+        "episode",
+        "episode_revision_ref",
+        "predecessor_episode_revision_ref",
+        "supersedes_episode_revision_refs",
+    ),
+    "summary.json": (
+        "summary",
+        "summary_revision_ref",
+        "predecessor_summary_revision_ref",
+        "supersedes_summary_revision_refs",
+    ),
+    "topics.jsonl": (
+        "topic",
+        "topic_revision_ref",
+        "predecessor_topic_revision_ref",
+        "supersedes_topic_revision_refs",
+    ),
+    "trend_report.json": (
+        "trend",
+        "trend_revision_ref",
+        "predecessor_trend_revision_ref",
+        "supersedes_trend_revision_refs",
+    ),
+    "turn_findings.jsonl": (
+        "turn_finding",
+        "turn_finding_revision_ref",
+        "predecessor_turn_finding_revision_ref",
+        "supersedes_turn_finding_revision_refs",
+    ),
+}
+SEMANTIC_JSON_ARTIFACTS = frozenset(
+    {"coverage.json", "manifest.json", "summary.json", "trend_report.json"}
+)
+SEMANTIC_JSONL_ARTIFACTS = frozenset(
+    {"episodes.jsonl", "topics.jsonl", "turn_findings.jsonl"}
+)
+SEMANTIC_ARTIFACTS = SEMANTIC_JSON_ARTIFACTS | SEMANTIC_JSONL_ARTIFACTS
 IDENTITY_RE = re.compile(
     re.escape(V2_PUBLISHER_NAME) + rb" <" + re.escape(V2_PUBLISHER_EMAIL) + rb"> "
     rb"(?P<timestamp>0|[1-9][0-9]{0,11}) \+0000"
@@ -98,6 +158,14 @@ class _GitFailure(Exception):
 
 
 class _ParseFailure(Exception):
+    pass
+
+
+class _CommitLimitExceeded(Exception):
+    pass
+
+
+class _SemanticFailure(Exception):
     pass
 
 
@@ -143,9 +211,30 @@ class _DiffEntry:
 
 
 @dataclass(frozen=True)
+class _ParsedDiff:
+    run_entries: tuple[_DiffEntry, ...]
+    changed_path_count: int
+
+
+@dataclass(frozen=True)
 class _ObjectInfo:
     kind: bytes
     size: int
+
+
+@dataclass(frozen=True)
+class _RevisionFact:
+    family: str
+    current: str
+    predecessors: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _PublicationFacts:
+    commit_index: int
+    campaign_ref: str | None
+    publication_role: str | None
+    revisions: tuple[_RevisionFact, ...]
 
 
 @dataclass(frozen=True)
@@ -445,9 +534,9 @@ def _is_run_candidate(path: bytes) -> bool:
     return first_component.lower() == b"runs"
 
 
-def _parse_diff(raw: bytes) -> list[_DiffEntry]:
+def _parse_diff(raw: bytes) -> _ParsedDiff:
     if not raw:
-        return []
+        return _ParsedDiff((), 0)
     fields = raw.split(b"\0")
     if fields[-1] != b"":
         raise _ParseFailure
@@ -455,11 +544,13 @@ def _parse_diff(raw: bytes) -> list[_DiffEntry]:
     if len(fields) % 2:
         raise _ParseFailure
     entries: list[_DiffEntry] = []
+    changed_path_count = 0
     for offset in range(0, len(fields), 2):
         metadata, path = fields[offset : offset + 2]
         match = RAW_DIFF_RE.fullmatch(metadata)
         if match is None:
             raise _ParseFailure
+        changed_path_count += 1
         if not _is_run_candidate(path):
             continue
         if len(entries) >= MAX_CHANGED_RUN_PATHS:
@@ -475,7 +566,7 @@ def _parse_diff(raw: bytes) -> list[_DiffEntry]:
                 run_path=_parse_run_path(path),
             )
         )
-    return entries
+    return _ParsedDiff(tuple(entries), changed_path_count)
 
 
 def _batch_object_info(
@@ -552,6 +643,7 @@ def _validate_publication_run(
     parent_oid: bytes,
     commit_index: int,
     entries: list[_DiffEntry],
+    changed_path_count: int,
     issues: _IssueCollector,
 ) -> _RunPath | None:
     groups: dict[str, list[_DiffEntry]] = {}
@@ -592,7 +684,11 @@ def _validate_publication_run(
                 f"{label}: new v2 run must atomically add exactly the eight required artifacts"
             )
             continue
-        if len(groups) == 1 and len(entries) == len(group):
+        if (
+            len(groups) == 1
+            and len(entries) == len(group)
+            and changed_path_count == len(entries)
+        ):
             run_path = group[0].run_path
             if run_path is not None:
                 complete_runs.append(run_path)
@@ -736,6 +832,277 @@ def _validate_manifest_run_id(
         return
     if not isinstance(value, dict) or value.get("run_id") != publication_run.run_id:
         issues.add(issue)
+
+
+def _batch_blob_contents(
+    root: Path, object_infos: dict[bytes, _ObjectInfo]
+) -> dict[bytes, bytes]:
+    ordered_ids = sorted(object_infos)
+    if not ordered_ids:
+        return {}
+    result = _run_git(
+        root,
+        ["cat-file", "--batch"],
+        input_data=b"".join(object_id + b"\n" for object_id in ordered_ids),
+        max_stdout_bytes=max(
+            1024,
+            sum(
+                object_infos[object_id].size + len(object_id) + 128
+                for object_id in ordered_ids
+            ),
+        ),
+    )
+    raw = result.stdout
+    offset = 0
+    contents: dict[bytes, bytes] = {}
+    for expected_oid in ordered_ids:
+        header_end = raw.find(b"\n", offset)
+        if header_end < 0:
+            raise _SemanticFailure
+        fields = raw[offset:header_end].split(b" ")
+        info = object_infos[expected_oid]
+        if (
+            len(fields) != 3
+            or fields[0] != expected_oid
+            or fields[1] != b"blob"
+            or not fields[2].isdigit()
+            or int(fields[2]) != info.size
+        ):
+            raise _SemanticFailure
+        content_start = header_end + 1
+        content_end = content_start + info.size
+        if content_end >= len(raw) or raw[content_end : content_end + 1] != b"\n":
+            raise _SemanticFailure
+        contents[expected_oid] = raw[content_start:content_end]
+        offset = content_end + 1
+    if offset != len(raw):
+        raise _SemanticFailure
+    return contents
+
+
+def _load_publication_blobs(
+    root: Path,
+    publication_run: _RunPath,
+    entries: list[_DiffEntry],
+    objects: dict[bytes, _ObjectInfo],
+) -> dict[str, bytes]:
+    directory = _run_directory(publication_run)
+    candidates: dict[str, tuple[bytes, _ObjectInfo]] = {}
+    for entry in entries:
+        run_path = entry.run_path
+        if (
+            run_path is None
+            or _run_directory(run_path) != directory
+            or run_path.artifact not in SEMANTIC_ARTIFACTS
+            or entry.status != "A"
+            or entry.new_mode != b"100644"
+        ):
+            continue
+        info = objects.get(entry.new_oid)
+        if info is None or info.kind != b"blob":
+            continue
+        candidates[run_path.artifact] = (entry.new_oid, info)
+    if frozenset(candidates) != SEMANTIC_ARTIFACTS:
+        return {}
+    if sum(info.size for _, info in candidates.values()) > MAX_SEMANTIC_BUNDLE_BYTES:
+        raise _SemanticFailure
+    object_infos = {object_id: info for object_id, info in candidates.values()}
+    contents = _batch_blob_contents(root, object_infos)
+    return {
+        artifact: contents[object_id] for artifact, (object_id, _) in candidates.items()
+    }
+
+
+def _parse_semantic_json(raw: bytes | None) -> Any | None:
+    if raw is None:
+        return None
+    try:
+        return json.loads(
+            raw.decode("utf-8", errors="strict"),
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_non_json_constant,
+        )
+    except (
+        MemoryError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ):
+        return None
+
+
+def _semantic_jsonl_values(raw: bytes) -> Iterable[Any]:
+    offset = 0
+    while offset < len(raw):
+        line_end = raw.find(b"\n", offset)
+        if line_end < 0:
+            line = raw[offset:]
+            offset = len(raw)
+        else:
+            line = raw[offset:line_end]
+            offset = line_end + 1
+        yield _parse_semantic_json(line)
+
+
+def _revision_fact_from_values(
+    family: str,
+    current: Any,
+    predecessor: Any,
+    supersedes: Any,
+) -> _RevisionFact | None:
+    pattern = REVISION_REF_PATTERNS[family]
+    if not isinstance(current, str) or pattern.fullmatch(current) is None:
+        return None
+    predecessors: list[str] = []
+    if isinstance(predecessor, str) and pattern.fullmatch(predecessor) is not None:
+        predecessors.append(predecessor)
+    if isinstance(supersedes, list | tuple):
+        predecessors.extend(
+            value
+            for value in supersedes
+            if isinstance(value, str) and pattern.fullmatch(value) is not None
+        )
+    return _RevisionFact(
+        family=family,
+        current=current,
+        predecessors=tuple(dict.fromkeys(predecessors)),
+    )
+
+
+def _revision_fact_from_record(
+    value: Any, fields: tuple[str, str, str, str]
+) -> _RevisionFact | None:
+    if not isinstance(value, dict):
+        return None
+    family, current_field, predecessor_field, supersedes_field = fields
+    return _revision_fact_from_values(
+        family,
+        value.get(current_field),
+        value.get(predecessor_field),
+        value.get(supersedes_field),
+    )
+
+
+def _extract_publication_facts(
+    commit_index: int, blobs: dict[str, bytes]
+) -> _PublicationFacts:
+    documents = {
+        artifact: _parse_semantic_json(blobs.get(artifact))
+        for artifact in sorted(SEMANTIC_JSON_ARTIFACTS)
+    }
+    manifest_value = documents.get("manifest.json")
+    manifest = manifest_value if isinstance(manifest_value, dict) else {}
+    campaign_ref_value = manifest.get("campaign_ref")
+    campaign_ref = (
+        campaign_ref_value
+        if isinstance(campaign_ref_value, str)
+        and CAMPAIGN_REF_RE.fullmatch(campaign_ref_value) is not None
+        else None
+    )
+    role_value = manifest.get("publication_role")
+    publication_role = (
+        role_value
+        if isinstance(role_value, str)
+        and role_value in {"campaign_root", "campaign_segment"}
+        else None
+    )
+
+    revisions: list[_RevisionFact] = []
+    supersession = manifest.get("supersession")
+    run_fact = _revision_fact_from_values(
+        "run",
+        manifest.get("run_revision_ref"),
+        None,
+        supersession.get("supersedes_run_revision_refs")
+        if isinstance(supersession, dict)
+        else None,
+    )
+    if run_fact is not None:
+        revisions.append(run_fact)
+
+    for artifact in ("coverage.json", "summary.json", "trend_report.json"):
+        fact = _revision_fact_from_record(
+            documents.get(artifact), REVISION_ARTIFACT_FIELDS[artifact]
+        )
+        if fact is not None:
+            revisions.append(fact)
+
+    coverage = documents.get("coverage.json")
+    if isinstance(coverage, dict) and isinstance(coverage.get("gaps"), list):
+        for gap in coverage["gaps"]:
+            if not isinstance(gap, dict):
+                continue
+            fact = _revision_fact_from_values(
+                "gap",
+                gap.get("gap_revision_ref"),
+                gap.get("predecessor_gap_revision_ref"),
+                None,
+            )
+            if fact is not None:
+                revisions.append(fact)
+
+    jsonl_row_count = 0
+    for artifact in sorted(SEMANTIC_JSONL_ARTIFACTS):
+        fields = REVISION_ARTIFACT_FIELDS[artifact]
+        for value in _semantic_jsonl_values(blobs.get(artifact, b"")):
+            jsonl_row_count += 1
+            if jsonl_row_count > MAX_SEMANTIC_JSONL_ROWS:
+                raise _SemanticFailure
+            fact = _revision_fact_from_record(value, fields)
+            if fact is not None:
+                revisions.append(fact)
+    if len(revisions) > MAX_RANGE_REVISION_FACTS:
+        raise _SemanticFailure
+    return _PublicationFacts(
+        commit_index=commit_index,
+        campaign_ref=campaign_ref,
+        publication_role=publication_role,
+        revisions=tuple(revisions),
+    )
+
+
+def _validate_cross_commit_order(
+    publications: list[_PublicationFacts], issues: _IssueCollector
+) -> None:
+    range_revisions = {family: set() for family in sorted(REVISION_REF_PATTERNS)}
+    campaign_segments: dict[str, list[int]] = {}
+    for publication in publications:
+        for revision in publication.revisions:
+            range_revisions[revision.family].add(revision.current)
+        if (
+            publication.publication_role == "campaign_segment"
+            and publication.campaign_ref is not None
+        ):
+            campaign_segments.setdefault(publication.campaign_ref, []).append(
+                publication.commit_index
+            )
+
+    seen_revisions = {family: set() for family in sorted(REVISION_REF_PATTERNS)}
+    for publication in sorted(publications, key=lambda item: item.commit_index):
+        for revision in publication.revisions:
+            if any(
+                predecessor in range_revisions[revision.family]
+                and predecessor not in seen_revisions[revision.family]
+                for predecessor in revision.predecessors
+            ):
+                issues.add(
+                    f"commit {publication.commit_index}: v2 revision predecessor must be published by an earlier commit"
+                )
+                break
+        if (
+            publication.publication_role == "campaign_root"
+            and publication.campaign_ref is not None
+            and any(
+                segment_index > publication.commit_index
+                for segment_index in campaign_segments.get(publication.campaign_ref, ())
+            )
+        ):
+            issues.add(
+                f"commit {publication.commit_index}: campaign root must be published after all campaign segments"
+            )
+        for revision in publication.revisions:
+            seen_revisions[revision.family].add(revision.current)
 
 
 def _parse_commit_headers(raw: bytes) -> tuple[list[_CommitHeader], bytes]:
@@ -929,26 +1296,31 @@ def _validate_commit_metadata(
     )
 
 
-def _backward_commit_pages(
+def _linear_commits(
     root: Path, base_oid: bytes, head_oid: bytes
-) -> Iterable[list[tuple[bytes, bytes]]]:
+) -> list[tuple[bytes, bytes]]:
     cursor = head_oid
     base_revision = b"^" + base_oid
+    backward_commits: list[tuple[bytes, bytes]] = []
     while cursor != base_oid:
+        remaining = MAX_RANGE_COMMITS - len(backward_commits)
+        if remaining <= 0:
+            raise _CommitLimitExceeded
+        page_size = min(COMMIT_PAGE_SIZE, remaining + 1)
         result = _run_git(
             root,
             [
                 "rev-list",
                 "--first-parent",
                 "--parents",
-                f"--max-count={COMMIT_PAGE_SIZE}",
+                f"--max-count={page_size}",
                 cursor.decode("ascii"),
                 base_revision.decode("ascii"),
             ],
-            max_stdout_bytes=COMMIT_PAGE_SIZE * 200,
+            max_stdout_bytes=page_size * 200,
         )
         lines = result.stdout.splitlines()
-        if not lines or len(lines) > COMMIT_PAGE_SIZE:
+        if not lines or len(lines) > page_size:
             raise _ParseFailure
 
         page: list[tuple[bytes, bytes]] = []
@@ -964,12 +1336,12 @@ def _backward_commit_pages(
                 raise _ParseFailure
             page.append((commit_oid, parent_oid))
             expected_commit = parent_oid
-        yield page
+        if len(page) > remaining:
+            raise _CommitLimitExceeded
+        backward_commits.extend(page)
         cursor = expected_commit
-
-
-def _count_linear_commits(root: Path, base_oid: bytes, head_oid: bytes) -> int:
-    return sum(len(page) for page in _backward_commit_pages(root, base_oid, head_oid))
+    backward_commits.reverse()
+    return backward_commits
 
 
 def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list[str]:
@@ -1013,82 +1385,129 @@ def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list
         return ["range: head is not a fast-forward descendant of base"]
 
     try:
-        commit_count = _count_linear_commits(resolved_root, base_oid, head_oid)
+        commits = _linear_commits(resolved_root, base_oid, head_oid)
+    except _CommitLimitExceeded:
+        return ["range: commit count exceeds the validation limit"]
     except (_GitFailure, _ParseFailure):
         return ["range: commit graph is not a bounded linear ancestry path"]
 
     issues = _IssueCollector()
     publisher_identity: _PublisherIdentity | None = None
-    commit_index = commit_count
-    try:
-        for page in _backward_commit_pages(resolved_root, base_oid, head_oid):
-            for commit_oid, parent_oid in page:
-                current_index = commit_index
-                commit_index -= 1
-                try:
-                    diff = _run_git(
-                        resolved_root,
-                        [
-                            "diff-tree",
-                            "--no-commit-id",
-                            "--raw",
-                            "-r",
-                            "-z",
-                            "--no-renames",
-                            "--no-abbrev",
-                            parent_oid.decode("ascii"),
-                            commit_oid.decode("ascii"),
-                            "--",
-                        ],
-                        max_stdout_bytes=MAX_DIFF_OUTPUT_BYTES,
-                    )
-                    entries = _parse_diff(diff.stdout)
-                    if not entries:
-                        continue
-                    publication_run = _validate_publication_run(
-                        resolved_root,
-                        parent_oid,
-                        current_index,
-                        entries,
-                        issues,
-                    )
-                    objects = _validate_run_entries(
-                        resolved_root, current_index, entries, issues
-                    )
-                    _validate_manifest_run_id(
-                        resolved_root,
-                        current_index,
-                        publication_run,
-                        entries,
-                        objects,
-                        issues,
-                    )
-                    identity = _validate_commit_metadata(
-                        resolved_root, commit_oid, parent_oid, publication_run
-                    )
-                    if identity is None:
-                        issues.add(
-                            f"commit {current_index}: v2 publication commit metadata is unsafe"
-                        )
-                    elif publisher_identity is None:
-                        publisher_identity = identity
-                    elif identity != publisher_identity:
-                        issues.add(
-                            f"commit {current_index}: v2 publisher identity changed within the range"
-                        )
-                except _GitFailure:
-                    issues.add(
-                        f"commit {current_index}: bounded Git object inspection failed"
-                    )
-                except _ParseFailure:
-                    issues.add(
-                        f"commit {current_index}: bounded Git diff is malformed or too large"
-                    )
-    except (_GitFailure, _ParseFailure):
-        return ["range: commit graph is not a bounded linear ancestry path"]
-    if commit_index != 0:
-        return ["range: commit graph is not a bounded linear ancestry path"]
+    publications: list[_PublicationFacts] = []
+    revision_fact_count = 0
+    for current_index, (commit_oid, parent_oid) in enumerate(commits, start=1):
+        try:
+            diff = _run_git(
+                resolved_root,
+                [
+                    "diff-tree",
+                    "--no-commit-id",
+                    "--raw",
+                    "-r",
+                    "-z",
+                    "--no-renames",
+                    "--no-abbrev",
+                    parent_oid.decode("ascii"),
+                    commit_oid.decode("ascii"),
+                    "--",
+                ],
+                max_stdout_bytes=MAX_DIFF_OUTPUT_BYTES,
+            )
+            parsed_diff = _parse_diff(diff.stdout)
+            entries = list(parsed_diff.run_entries)
+            if not entries:
+                continue
+            publication_run = _validate_publication_run(
+                resolved_root,
+                parent_oid,
+                current_index,
+                entries,
+                parsed_diff.changed_path_count,
+                issues,
+            )
+            objects = _validate_run_entries(
+                resolved_root, current_index, entries, issues
+            )
+            _validate_manifest_run_id(
+                resolved_root,
+                current_index,
+                publication_run,
+                entries,
+                objects,
+                issues,
+            )
+            if publication_run is not None:
+                blobs = _load_publication_blobs(
+                    resolved_root, publication_run, entries, objects
+                )
+                facts = _extract_publication_facts(current_index, blobs)
+                revision_fact_count += len(facts.revisions)
+                if revision_fact_count > MAX_RANGE_REVISION_FACTS:
+                    raise _SemanticFailure
+                publications.append(facts)
+            identity = _validate_commit_metadata(
+                resolved_root, commit_oid, parent_oid, publication_run
+            )
+            if identity is None:
+                issues.add(
+                    f"commit {current_index}: v2 publication commit metadata is unsafe"
+                )
+            elif publisher_identity is None:
+                publisher_identity = identity
+            elif identity != publisher_identity:
+                issues.add(
+                    f"commit {current_index}: v2 publisher identity changed within the range"
+                )
+        except _GitFailure:
+            issues.add(f"commit {current_index}: bounded Git object inspection failed")
+        except _ParseFailure:
+            issues.add(
+                f"commit {current_index}: bounded Git diff is malformed or too large"
+            )
+        except _SemanticFailure:
+            issues.add(
+                f"commit {current_index}: bounded publication semantic inspection failed"
+            )
+    _validate_cross_commit_order(publications, issues)
     return issues.items
 
 
-__all__ = ["validate_append_only_range"]
+def validate_checkout_matches_revision(root: Path, head_rev: str) -> list[str]:
+    """Bind working-tree validation to one clean, exact head revision."""
+
+    try:
+        resolved_root = Path(root).resolve(strict=True)
+    except (OSError, RuntimeError, TypeError):
+        return ["range: checkout must be an existing Git working tree"]
+    if not resolved_root.is_dir():
+        return ["range: checkout must be an existing Git working tree"]
+
+    expected_head = _resolve_commit(resolved_root, head_rev)
+    if expected_head is None:
+        return ["range: head revision is not a commit"]
+    actual_head = _resolve_commit(resolved_root, "HEAD")
+    if actual_head is None:
+        return ["range: checkout HEAD is not a commit"]
+    if actual_head != expected_head:
+        return ["range: checkout HEAD does not match the requested head revision"]
+
+    try:
+        status = _run_git(
+            resolved_root,
+            [
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--ignore-submodules=none",
+            ],
+            max_stdout_bytes=1,
+        )
+    except _GitFailure:
+        return ["range: checkout must be clean before retained tree validation"]
+    if status.stdout:
+        return ["range: checkout must be clean before retained tree validation"]
+    return []
+
+
+__all__ = ["validate_append_only_range", "validate_checkout_matches_revision"]

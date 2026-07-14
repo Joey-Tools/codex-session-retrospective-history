@@ -30,6 +30,45 @@ TEMPLATE_HEADINGS = {
     "retrospective.v2.gap_disposition": "Errors And Verification",
 }
 
+_UNIVERSAL_SECTION_TEMPLATE_IDS = frozenset(
+    {
+        DETAIL_TEMPLATE_ID,
+        "retrospective.v2.no_observation",
+    }
+)
+TEMPLATE_IDS_BY_SECTION = {
+    "what_happened": _UNIVERSAL_SECTION_TEMPLATE_IDS
+    | {"retrospective.v2.what_happened"},
+    "worked_well": _UNIVERSAL_SECTION_TEMPLATE_IDS | {"retrospective.v2.strength"},
+    "friction_and_confusion": _UNIVERSAL_SECTION_TEMPLATE_IDS
+    | {"retrospective.v2.friction"},
+    "errors_and_verification": _UNIVERSAL_SECTION_TEMPLATE_IDS
+    | {
+        "retrospective.v2.error_or_retry",
+        "retrospective.v2.gap_disposition",
+    },
+    "collaboration_patterns": _UNIVERSAL_SECTION_TEMPLATE_IDS
+    | {"retrospective.v2.collaboration_pattern"},
+    "safety_and_privacy": _UNIVERSAL_SECTION_TEMPLATE_IDS
+    | {"retrospective.v2.safety_privacy"},
+    "prompt_improvements": _UNIVERSAL_SECTION_TEMPLATE_IDS
+    | {
+        "retrospective.v2.problem_statement",
+        "retrospective.v2.cause",
+        "retrospective.v2.prompt_rewrite",
+        "retrospective.v2.expected_effect",
+    },
+    "agents_guidance": _UNIVERSAL_SECTION_TEMPLATE_IDS
+    | {"retrospective.v2.agents_guidance"},
+    "skill_candidates": _UNIVERSAL_SECTION_TEMPLATE_IDS
+    | {"retrospective.v2.skill_candidate"},
+    "follow_ups": _UNIVERSAL_SECTION_TEMPLATE_IDS
+    | {
+        "retrospective.v2.recommendation",
+        "retrospective.v2.follow_up",
+    },
+}
+
 SLOT_NAMES = frozenset(
     {
         "actor",
@@ -270,7 +309,11 @@ def render_template(template_id: Any, slots: Any) -> str | None:
     return f"{heading}: {'; '.join(rendered_slots)}."
 
 
-def validate_and_render_template(value: Any) -> str | None:
+def validate_and_render_template(
+    value: Any,
+    *,
+    allowed_template_ids: frozenset[str] | None = None,
+) -> str | None:
     """Validate fixed template metadata and return the canonical rendering."""
     if not isinstance(value, dict):
         return None
@@ -283,6 +326,8 @@ def validate_and_render_template(value: Any) -> str | None:
     }:
         return None
     template_id = value.get("template_id")
+    if allowed_template_ids is not None and template_id not in allowed_template_ids:
+        return None
     expected = render_template(template_id, value.get("slots"))
     if expected is None or value.get("rendered_text") != expected:
         return None
@@ -300,6 +345,7 @@ __all__ = [
     "DETAIL_RENDERED_TEXT",
     "DETAIL_TEMPLATE_ID",
     "TEMPLATE_HEADINGS",
+    "TEMPLATE_IDS_BY_SECTION",
     "render_template",
     "validate_and_render_template",
 ]

@@ -29,6 +29,7 @@ PUBLISHER_NAME = "Codex Session Retrospective Publisher"
 PUBLISHER_EMAIL = "codex-session-retrospective@users.noreply.github.com"
 RUN_ID = "0" * 63 + "1"
 SECOND_RUN_ID = "0" * 63 + "2"
+THIRD_RUN_ID = "0" * 63 + "3"
 COMMIT_TIMESTAMP = 1_800_000_000
 FAKE_GPG_SIGNATURE = (
     b"-----BEGIN PGP SIGNATURE-----\n\n"
@@ -358,6 +359,42 @@ class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
 
             self.assertEqual(MODULE.validate_append_only_range(root, base, head), [])
 
+    def test_linear_history_rejects_more_than_the_total_commit_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base, _ = initialize_repository(root)
+            tree_oid = git(root, "rev-parse", "HEAD^{tree}").strip()
+            parent_oid = base.encode("ascii")
+            for index in range(3):
+                parent_oid = empty_commit_object(root, tree_oid, parent_oid, index)
+            head = parent_oid.decode("ascii")
+            git(root, "update-ref", "HEAD", head, base)
+
+            with mock.patch.object(MODULE, "MAX_RANGE_COMMITS", 2):
+                issues = MODULE.validate_append_only_range(root, base, head)
+
+        self.assertEqual(issues, ["range: commit count exceeds the validation limit"])
+
+    def test_checkout_binding_requires_exact_clean_head(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base, _ = initialize_repository(root)
+            (root / "next.txt").write_text("next\n", encoding="utf-8")
+            git(root, "add", "next.txt")
+            head = commit(root, "Next")
+
+            self.assertEqual(MODULE.validate_checkout_matches_revision(root, head), [])
+            self.assertEqual(
+                MODULE.validate_checkout_matches_revision(root, base),
+                ["range: checkout HEAD does not match the requested head revision"],
+            )
+
+            (root / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+            self.assertEqual(
+                MODULE.validate_checkout_matches_revision(root, head),
+                ["range: checkout must be clean before retained tree validation"],
+            )
+
     def test_valid_append_across_intermediate_commits(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -372,6 +409,100 @@ class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
 
             self.assertEqual(validate_with_trusted_signature(root, base, head), [])
 
+    def test_campaign_root_must_follow_every_segment_commit(self) -> None:
+        campaign_ref = "campaign_ref_v2:" + "a" * 32
+
+        def manifest(
+            run_id: str, publication_role: str, segment_ordinal: int | None = None
+        ) -> bytes:
+            value: dict[str, object] = {
+                "run_id": run_id,
+                "publication_role": publication_role,
+                "campaign_ref": campaign_ref,
+                "campaign_segment_count": 2,
+            }
+            if segment_ordinal is not None:
+                value["campaign_segment_metadata"] = {
+                    "segment_ordinal": segment_ordinal
+                }
+            return json.dumps(value, separators=(",", ":")).encode() + b"\n"
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base, _ = initialize_repository(root)
+            first_segment = write_run(
+                root,
+                run_id=RUN_ID,
+                contents={"manifest.json": manifest(RUN_ID, "campaign_segment", 1)},
+            )
+            git(root, "add", "--", first_segment.parent.as_posix())
+            signed_commit(root, publication_message(first_segment))
+
+            campaign_root = write_run(
+                root,
+                run_id=SECOND_RUN_ID,
+                contents={"manifest.json": manifest(SECOND_RUN_ID, "campaign_root")},
+            )
+            git(root, "add", "--", campaign_root.parent.as_posix())
+            signed_commit(root, publication_message(campaign_root))
+
+            second_segment = write_run(
+                root,
+                run_id=THIRD_RUN_ID,
+                contents={
+                    "manifest.json": manifest(THIRD_RUN_ID, "campaign_segment", 2)
+                },
+            )
+            git(root, "add", "--", second_segment.parent.as_posix())
+            head = signed_commit(root, publication_message(second_segment))
+
+            issues = "\n".join(validate_with_trusted_signature(root, base, head))
+
+        self.assertIn(
+            "commit 2: campaign root must be published after all campaign segments",
+            issues,
+        )
+
+    def test_revision_predecessor_must_not_first_appear_in_a_later_commit(
+        self,
+    ) -> None:
+        current_revision = "summary_revision_ref_v2:" + "1" * 32
+        future_revision = "summary_revision_ref_v2:" + "2" * 32
+
+        def summary(current: str, predecessor: str | None) -> bytes:
+            value = {
+                "summary_revision_ref": current,
+                "predecessor_summary_revision_ref": predecessor,
+                "supersedes_summary_revision_refs": [],
+            }
+            return json.dumps(value, separators=(",", ":")).encode() + b"\n"
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base, _ = initialize_repository(root)
+            forward_reference = write_run(
+                root,
+                run_id=RUN_ID,
+                contents={"summary.json": summary(current_revision, future_revision)},
+            )
+            git(root, "add", "--", forward_reference.parent.as_posix())
+            signed_commit(root, publication_message(forward_reference))
+
+            predecessor = write_run(
+                root,
+                run_id=SECOND_RUN_ID,
+                contents={"summary.json": summary(future_revision, None)},
+            )
+            git(root, "add", "--", predecessor.parent.as_posix())
+            head = signed_commit(root, publication_message(predecessor))
+
+            issues = "\n".join(validate_with_trusted_signature(root, base, head))
+
+        self.assertIn(
+            "commit 1: v2 revision predecessor must be published by an earlier commit",
+            issues,
+        )
+
     def test_publication_commit_rejects_multiple_complete_runs(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -385,6 +516,19 @@ class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
 
         self.assertIn("publication commit must add exactly one complete v2 run", issues)
         self.assertNotIn(second_run.as_posix(), issues)
+
+    def test_publication_commit_rejects_non_run_companion_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base, _ = initialize_repository(root)
+            artifact = write_run(root)
+            (root / "README.md").write_text("mixed publication\n", encoding="utf-8")
+            git(root, "add", "--", artifact.parent.as_posix(), "README.md")
+            head = signed_commit(root, publication_message(artifact))
+
+            issues = "\n".join(validate_with_trusted_signature(root, base, head))
+
+        self.assertIn("publication commit must add exactly one complete v2 run", issues)
 
     def test_publication_message_must_match_the_only_run(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

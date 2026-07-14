@@ -4031,7 +4031,7 @@
       ],
       "properties": {
         "agents_guidance": {
-          "$ref": "#/$defs/template_list"
+          "$ref": "#/$defs/summary_template_list_agents_guidance"
         },
         "artifact_type": {
           "const": "summary"
@@ -4040,19 +4040,19 @@
           "$ref": "#/$defs/change_from_prior"
         },
         "collaboration_patterns": {
-          "$ref": "#/$defs/template_list"
+          "$ref": "#/$defs/summary_template_list_collaboration_patterns"
         },
         "confidence": {
           "$ref": "#/$defs/confidence_dimensions"
         },
         "errors_and_verification": {
-          "$ref": "#/$defs/template_list"
+          "$ref": "#/$defs/summary_template_list_errors_and_verification"
         },
         "follow_ups": {
-          "$ref": "#/$defs/template_list"
+          "$ref": "#/$defs/summary_template_list_follow_ups"
         },
         "friction_and_confusion": {
-          "$ref": "#/$defs/template_list"
+          "$ref": "#/$defs/summary_template_list_friction_and_confusion"
         },
         "model_era_refs": {
           "items": {
@@ -4083,7 +4083,7 @@
           ]
         },
         "prompt_improvements": {
-          "$ref": "#/$defs/template_list"
+          "$ref": "#/$defs/summary_template_list_prompt_improvements"
         },
         "publication_status": {
           "$ref": "#/$defs/publication_status"
@@ -4098,13 +4098,13 @@
           "$ref": "#/$defs/revision_kind"
         },
         "safety_and_privacy": {
-          "$ref": "#/$defs/template_list"
+          "$ref": "#/$defs/summary_template_list_safety_and_privacy"
         },
         "schema_version": {
           "const": 2
         },
         "skill_candidates": {
-          "$ref": "#/$defs/template_list"
+          "$ref": "#/$defs/summary_template_list_skill_candidates"
         },
         "summary_revision_ref": {
           "$ref": "#/$defs/summary_revision_ref"
@@ -4118,10 +4118,10 @@
           "uniqueItems": true
         },
         "what_happened": {
-          "$ref": "#/$defs/template_list_nonempty"
+          "$ref": "#/$defs/summary_template_list_what_happened"
         },
         "worked_well": {
-          "$ref": "#/$defs/template_list"
+          "$ref": "#/$defs/summary_template_list_worked_well"
         }
       },
       "required": [
@@ -4384,6 +4384,262 @@
       },
       "maxItems": 64,
       "minItems": 1,
+      "type": "array"
+    },
+    "summary_template_list_agents_guidance": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/template_instance"
+          },
+          {
+            "properties": {
+              "template_id": {
+                "enum": [
+                  "retrospective.v2.agents_guidance",
+                  "retrospective.v2.detail_not_retained",
+                  "retrospective.v2.no_observation"
+                ]
+              }
+            },
+            "required": [
+              "template_id"
+            ]
+          }
+        ]
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "summary_template_list_collaboration_patterns": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/template_instance"
+          },
+          {
+            "properties": {
+              "template_id": {
+                "enum": [
+                  "retrospective.v2.collaboration_pattern",
+                  "retrospective.v2.detail_not_retained",
+                  "retrospective.v2.no_observation"
+                ]
+              }
+            },
+            "required": [
+              "template_id"
+            ]
+          }
+        ]
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "summary_template_list_errors_and_verification": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/template_instance"
+          },
+          {
+            "properties": {
+              "template_id": {
+                "enum": [
+                  "retrospective.v2.detail_not_retained",
+                  "retrospective.v2.error_or_retry",
+                  "retrospective.v2.gap_disposition",
+                  "retrospective.v2.no_observation"
+                ]
+              }
+            },
+            "required": [
+              "template_id"
+            ]
+          }
+        ]
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "summary_template_list_follow_ups": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/template_instance"
+          },
+          {
+            "properties": {
+              "template_id": {
+                "enum": [
+                  "retrospective.v2.detail_not_retained",
+                  "retrospective.v2.follow_up",
+                  "retrospective.v2.no_observation",
+                  "retrospective.v2.recommendation"
+                ]
+              }
+            },
+            "required": [
+              "template_id"
+            ]
+          }
+        ]
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "summary_template_list_friction_and_confusion": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/template_instance"
+          },
+          {
+            "properties": {
+              "template_id": {
+                "enum": [
+                  "retrospective.v2.detail_not_retained",
+                  "retrospective.v2.friction",
+                  "retrospective.v2.no_observation"
+                ]
+              }
+            },
+            "required": [
+              "template_id"
+            ]
+          }
+        ]
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "summary_template_list_prompt_improvements": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/template_instance"
+          },
+          {
+            "properties": {
+              "template_id": {
+                "enum": [
+                  "retrospective.v2.cause",
+                  "retrospective.v2.detail_not_retained",
+                  "retrospective.v2.expected_effect",
+                  "retrospective.v2.no_observation",
+                  "retrospective.v2.problem_statement",
+                  "retrospective.v2.prompt_rewrite"
+                ]
+              }
+            },
+            "required": [
+              "template_id"
+            ]
+          }
+        ]
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "summary_template_list_safety_and_privacy": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/template_instance"
+          },
+          {
+            "properties": {
+              "template_id": {
+                "enum": [
+                  "retrospective.v2.detail_not_retained",
+                  "retrospective.v2.no_observation",
+                  "retrospective.v2.safety_privacy"
+                ]
+              }
+            },
+            "required": [
+              "template_id"
+            ]
+          }
+        ]
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "summary_template_list_skill_candidates": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/template_instance"
+          },
+          {
+            "properties": {
+              "template_id": {
+                "enum": [
+                  "retrospective.v2.detail_not_retained",
+                  "retrospective.v2.no_observation",
+                  "retrospective.v2.skill_candidate"
+                ]
+              }
+            },
+            "required": [
+              "template_id"
+            ]
+          }
+        ]
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "summary_template_list_what_happened": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/template_instance"
+          },
+          {
+            "properties": {
+              "template_id": {
+                "enum": [
+                  "retrospective.v2.detail_not_retained",
+                  "retrospective.v2.no_observation",
+                  "retrospective.v2.what_happened"
+                ]
+              }
+            },
+            "required": [
+              "template_id"
+            ]
+          }
+        ]
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "type": "array"
+    },
+    "summary_template_list_worked_well": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/template_instance"
+          },
+          {
+            "properties": {
+              "template_id": {
+                "enum": [
+                  "retrospective.v2.detail_not_retained",
+                  "retrospective.v2.no_observation",
+                  "retrospective.v2.strength"
+                ]
+              }
+            },
+            "required": [
+              "template_id"
+            ]
+          }
+        ]
+      },
+      "maxItems": 64,
       "type": "array"
     },
     "topic_record": {

@@ -64,6 +64,16 @@ def primary_fingerprints(colon_output: str) -> list[str]:
 
 
 class RetrospectiveHistoryV2CITests(unittest.TestCase):
+    def test_workflow_checks_out_the_exact_event_head(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn(
+            "ref: ${{ github.event_name == 'pull_request' && "
+            "github.event.pull_request.head.sha || github.sha }}",
+            workflow,
+        )
+
     def test_publisher_public_key_is_ascii_armored_and_allowlisted(self) -> None:
         armor = PUBLIC_KEY.read_text(encoding="ascii")
 

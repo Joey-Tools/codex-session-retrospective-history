@@ -345,6 +345,31 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
 
         self.assertIn(MODULE.ISSUE_FORMAT, issues)
 
+    def test_wide_json_containers_fail_before_materializing_children(self) -> None:
+        node_limit = 4
+        cases = (
+            ("list", [risky_password()] * node_limit, "reversed"),
+            (
+                "dict",
+                {f"unknown_{index}": risky_password() for index in range(node_limit)},
+                "sorted",
+            ),
+        )
+
+        for label, value, enumerator in cases:
+            with self.subTest(label=label):
+                issues: set[str] = set()
+                with mock.patch(
+                    f"builtins.{enumerator}",
+                    side_effect=AssertionError("wide children were enumerated"),
+                ):
+                    visited = MODULE._scan_json_value(
+                        value, issues, node_limit=node_limit
+                    )
+
+                self.assertEqual(visited, node_limit + 1)
+                self.assertEqual(issues, {MODULE.ISSUE_FORMAT})
+
     def test_json_recursion_error_is_caught_fail_closed(self) -> None:
         with mock.patch.object(MODULE, "_parse_json", side_effect=RecursionError):
             issues = MODULE.validate_v2_privacy(artifact_path("summary.json"), b"{}")

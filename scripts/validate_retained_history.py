@@ -12,12 +12,18 @@ import subprocess
 from typing import Any
 
 try:
-    from scripts.retrospective_history_git_v2 import validate_append_only_range
+    from scripts.retrospective_history_git_v2 import (
+        validate_append_only_range,
+        validate_checkout_matches_revision,
+    )
     from scripts.retrospective_history_v2 import validate_v2_runs
 except ModuleNotFoundError as exc:
     if exc.name != "scripts":
         raise
-    from retrospective_history_git_v2 import validate_append_only_range
+    from retrospective_history_git_v2 import (
+        validate_append_only_range,
+        validate_checkout_matches_revision,
+    )
     from retrospective_history_v2 import validate_v2_runs
 
 
@@ -1659,21 +1665,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.event_forced is not None and not args.base_rev:
         parser.error("--event-forced requires --base-rev and --head-rev")
     root = Path(args.root).resolve()
-    issues = validate_root(root)
+    issues: list[str] = []
     if args.base_rev and args.head_rev:
-        if args.event_forced is None:
-            issues.extend(
-                validate_append_only_range(root, args.base_rev, args.head_rev)
-            )
-        else:
-            issues.extend(
-                validate_append_only_event_range(
-                    root,
-                    args.base_rev,
-                    args.head_rev,
-                    forced=args.event_forced == "true",
+        issues.extend(validate_checkout_matches_revision(root, args.head_rev))
+    if not issues:
+        issues.extend(validate_root(root))
+        if args.base_rev and args.head_rev:
+            if args.event_forced is None:
+                issues.extend(
+                    validate_append_only_range(root, args.base_rev, args.head_rev)
                 )
-            )
+            else:
+                issues.extend(
+                    validate_append_only_event_range(
+                        root,
+                        args.base_rev,
+                        args.head_rev,
+                        forced=args.event_forced == "true",
+                    )
+                )
     if issues:
         for issue in issues:
             print(issue)

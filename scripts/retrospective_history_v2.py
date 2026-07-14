@@ -17,9 +17,13 @@ import stat
 from typing import Any, Callable, Iterable, Sequence
 
 try:
-    from retrospective_history_templates_v2 import validate_and_render_template
+    from retrospective_history_templates_v2 import (
+        TEMPLATE_IDS_BY_SECTION,
+        validate_and_render_template,
+    )
 except ModuleNotFoundError:  # Imported as scripts.retrospective_history_v2 in tests.
     from scripts.retrospective_history_templates_v2 import (
+        TEMPLATE_IDS_BY_SECTION,
         validate_and_render_template,
     )
 
@@ -574,6 +578,129 @@ def _parse_json_bytes(raw: bytes) -> Any:
     )
 
 
+def _json_bytes_within_preparse_limits(raw: bytes) -> bool:
+    """Bound JSON structure before the standard decoder materializes its graph."""
+
+    whitespace = b" \t\r\n"
+    scalar_delimiters = b" \t\r\n,]}:"
+    stack: list[list[Any]] = []
+    root_state = "value"
+    nodes = 0
+    index = 0
+
+    def register_value() -> bool:
+        nonlocal nodes, root_state
+        nodes += 1
+        if nodes > MAX_JSON_NODES:
+            return False
+        if not stack:
+            if root_state != "value":
+                return True
+            root_state = "done"
+            return True
+        frame = stack[-1]
+        if frame[0] == "array" and frame[1] == "value_or_end":
+            frame[1] = "comma_or_end"
+        elif frame[0] == "object" and frame[1] == "value":
+            frame[1] = "comma_or_end"
+        else:
+            return True
+        frame[2] += 1
+        return frame[2] <= MAX_JSON_CONTAINER_ITEMS
+
+    def skip_string(start: int) -> int:
+        cursor = start + 1
+        while cursor < len(raw):
+            byte = raw[cursor]
+            if byte == 0x22:
+                return cursor + 1
+            if byte == 0x5C:
+                cursor += 2
+            else:
+                cursor += 1
+        return len(raw)
+
+    while index < len(raw):
+        while index < len(raw) and raw[index] in whitespace:
+            index += 1
+        if index >= len(raw):
+            break
+
+        if stack:
+            frame = stack[-1]
+            byte = raw[index]
+            if frame[0] == "object":
+                if frame[1] == "key_or_end":
+                    if byte == 0x7D:
+                        stack.pop()
+                        index += 1
+                        continue
+                    if byte != 0x22:
+                        return True
+                    index = skip_string(index)
+                    frame[1] = "colon"
+                    continue
+                if frame[1] == "colon":
+                    if byte != 0x3A:
+                        return True
+                    frame[1] = "value"
+                    index += 1
+                    continue
+                if frame[1] == "comma_or_end":
+                    if byte == 0x2C:
+                        frame[1] = "key_or_end"
+                        index += 1
+                        continue
+                    if byte == 0x7D:
+                        stack.pop()
+                        index += 1
+                        continue
+                    return True
+            elif frame[1] == "value_or_end" and byte == 0x5D:
+                stack.pop()
+                index += 1
+                continue
+            elif frame[1] == "comma_or_end":
+                if byte == 0x2C:
+                    frame[1] = "value_or_end"
+                    index += 1
+                    continue
+                if byte == 0x5D:
+                    stack.pop()
+                    index += 1
+                    continue
+                return True
+        elif root_state == "done":
+            return True
+
+        byte = raw[index]
+        if byte in (0x7B, 0x5B):
+            if not register_value():
+                return False
+            if len(stack) + 1 > MAX_JSON_DEPTH:
+                return False
+            stack.append(
+                ["object", "key_or_end", 0]
+                if byte == 0x7B
+                else ["array", "value_or_end", 0]
+            )
+            index += 1
+            continue
+        if byte == 0x22:
+            if not register_value():
+                return False
+            index = skip_string(index)
+            continue
+        if byte in (0x2C, 0x3A, 0x5D, 0x7D):
+            return True
+        if not register_value():
+            return False
+        index += 1
+        while index < len(raw) and raw[index] not in scalar_delimiters:
+            index += 1
+    return True
+
+
 def _json_error_message(exc: Exception) -> str:
     if isinstance(exc, DuplicateJSONKeyError):
         return "duplicate JSON key is not allowed"
@@ -868,7 +995,10 @@ def _render_report_markdown(summary: dict[str, Any]) -> bytes | None:
             return None
         rendered: list[str] = []
         for template in templates:
-            rendered_text = validate_and_render_template(template)
+            rendered_text = validate_and_render_template(
+                template,
+                allowed_template_ids=TEMPLATE_IDS_BY_SECTION[field_name],
+            )
             if rendered_text is None:
                 return None
             rendered.append(f"- {rendered_text}")
@@ -1729,6 +1859,9 @@ def _read_bundle(
         if raw is None:
             continue
         label = f"{bundle.label}/{basename}"
+        if not _json_bytes_within_preparse_limits(raw):
+            issues.append(f"{label}: {JSON_RESOURCE_ISSUE}")
+            continue
         try:
             value = _parse_json_bytes(raw)
         except (
@@ -1786,6 +1919,9 @@ def _read_bundle(
                 return
             if not line.strip():
                 issues.append(f"{label}:{line_no}: blank JSONL line is not allowed")
+                continue
+            if not _json_bytes_within_preparse_limits(line):
+                issues.append(f"{label}:{line_no}: {JSON_RESOURCE_ISSUE}")
                 continue
             try:
                 row = _parse_json_bytes(line)
@@ -3511,6 +3647,12 @@ def _validate_campaign_consistency(bundles: list[Bundle], issues: list[str]) -> 
             or len(ordinals) != len(set(ordinals))
             or any(ordinal < 1 or ordinal > segment_count for ordinal in ordinals)
         )
+        if (
+            not invalid_ordinals
+            and not roots
+            and set(ordinals) != set(range(1, len(segments) + 1))
+        ):
+            invalid_ordinals = True
         if invalid_ordinals or (
             roots
             and (
@@ -3642,6 +3784,97 @@ def _validate_revision_graph(bundles: list[Bundle], issues: list[str]) -> None:
             issues.append(f"runs: {family} revision graph contains a cycle")
 
 
+def _collect_trend_comparison_state(
+    bundle: Bundle,
+    snapshots: dict[str, dict[tuple[str, str, str], float]],
+    claims: list[tuple[str, str, tuple[str, str, str], str, float, float]],
+) -> None:
+    manifest = bundle.documents.get("manifest.json")
+    trend = bundle.documents.get("trend_report.json")
+    if not isinstance(manifest, dict) or not isinstance(trend, dict):
+        return
+    run_revision_ref = manifest.get("run_revision_ref")
+    strata = trend.get("strata")
+    if not isinstance(run_revision_ref, str) or not isinstance(strata, list):
+        return
+    rates: dict[tuple[str, str, str], float] = {}
+    for stratum in strata:
+        if not isinstance(stratum, dict):
+            continue
+        policy_ref = stratum.get("policy_era_ref")
+        model_ref = stratum.get("model_era_ref")
+        metrics = stratum.get("metrics")
+        if (
+            not isinstance(policy_ref, str)
+            or not isinstance(model_ref, str)
+            or not isinstance(metrics, list)
+        ):
+            continue
+        for metric in metrics:
+            if not isinstance(metric, dict) or metric.get("status") != "available":
+                continue
+            metric_id = metric.get("metric")
+            rate = metric.get("rate_per_100")
+            if (
+                not isinstance(metric_id, str)
+                or isinstance(rate, bool)
+                or not isinstance(rate, (int, float))
+            ):
+                continue
+            key = (policy_ref, model_ref, metric_id)
+            rates[key] = float(rate)
+            normalized = metric.get("normalized_change")
+            if (
+                not isinstance(normalized, dict)
+                or normalized.get("status") != "available"
+            ):
+                continue
+            prior_ref = normalized.get("prior_run_revision_ref")
+            delta = normalized.get("delta_per_100")
+            if (
+                isinstance(prior_ref, str)
+                and not isinstance(delta, bool)
+                and isinstance(delta, (int, float))
+            ):
+                claims.append(
+                    (
+                        bundle.label,
+                        run_revision_ref,
+                        key,
+                        prior_ref,
+                        float(rate),
+                        float(delta),
+                    )
+                )
+    snapshots[run_revision_ref] = rates
+
+
+def _validate_trend_comparisons(
+    snapshots: dict[str, dict[tuple[str, str, str], float]],
+    claims: list[tuple[str, str, tuple[str, str, str], str, float, float]],
+    issues: list[str],
+) -> None:
+    for label, current_ref, key, prior_ref, current_rate, claimed_delta in claims:
+        if _issues_full(issues):
+            return
+        prior = snapshots.get(prior_ref)
+        if prior is None or prior_ref == current_ref:
+            issues.append(
+                f"{label}/trend_report.json: normalized change prior run revision is not present"
+            )
+            continue
+        prior_rate = prior.get(key)
+        if prior_rate is None:
+            issues.append(
+                f"{label}/trend_report.json: normalized change requires an available compatible prior metric"
+            )
+            continue
+        if abs(claimed_delta - (current_rate - prior_rate)) > 1e-9:
+            issues.append(
+                f"{label}/trend_report.json: normalized change delta must match the compatible prior metric"
+            )
+
+
 def validate_v2_runs(
     root: Path, visible_files: Sequence[Path] | None = None
 ) -> list[str]:
@@ -3673,6 +3906,10 @@ def validate_v2_runs(
         bundles = _discover_bundles(root, root_descriptor, visible_files, issues)
         revision_count = 0
         work_limit_reached = False
+        trend_snapshots: dict[str, dict[tuple[str, str, str], float]] = {}
+        trend_claims: list[
+            tuple[str, str, tuple[str, str, str], str, float, float]
+        ] = []
         for bundle in bundles:
             if _issues_full(issues):
                 break
@@ -3686,6 +3923,7 @@ def validate_v2_runs(
                 budget,
             )
             revision_count += len(bundle.revisions)
+            _collect_trend_comparison_state(bundle, trend_snapshots, trend_claims)
             bundle.raw.clear()
             bundle.documents.clear()
             bundle.rows.clear()
@@ -3697,6 +3935,8 @@ def validate_v2_runs(
             _validate_run_supersession(bundles, issues)
         if not _issues_full(issues) and not work_limit_reached:
             _validate_campaign_consistency(bundles, issues)
+        if not _issues_full(issues) and not work_limit_reached:
+            _validate_trend_comparisons(trend_snapshots, trend_claims, issues)
         if not _issues_full(issues) and not work_limit_reached:
             _validate_revision_graph(bundles, issues)
         return sorted(issues)

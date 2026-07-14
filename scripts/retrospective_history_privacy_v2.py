@@ -815,6 +815,11 @@ def _scan_json_value(
         if visited > node_limit or depth > MAX_JSON_DEPTH:
             issues.add(ISSUE_FORMAT)
             return visited
+        if isinstance(current, (dict, list)):
+            remaining_slots = node_limit - visited - len(stack)
+            if len(current) > remaining_slots:
+                issues.add(ISSUE_FORMAT)
+                return node_limit + 1
         if isinstance(current, dict):
             for key in sorted(current, reverse=True):
                 if key not in _ALLOWED_JSON_KEYS:
