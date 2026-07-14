@@ -365,7 +365,7 @@ SAFE_INFRASTRUCTURE_LINES = frozenset(
     }
 )
 SAFE_INFRASTRUCTURE_EMAILS = frozenset(
-    {"codex-session-retrospective" + "@users.noreply.github.com"}
+    {"12524680+JoeyTeng" + "@users.noreply.github.com"}
 )
 ZERO_EVENT_SHAS = frozenset({"0" * 40, "0" * 64})
 

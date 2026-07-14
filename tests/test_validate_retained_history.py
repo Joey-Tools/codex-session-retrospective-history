@@ -1949,8 +1949,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 self.assertTrue(MODULE.contains_infrastructure_risk_text(value))
 
     def test_safe_infrastructure_email_requires_exact_token_equality(self) -> None:
-        safe_email = "codex-session-retrospective" + "@users.noreply.github.com"
+        safe_email = "12524680+JoeyTeng" + "@users.noreply.github.com"
+        unsafe_fixture_email = "ci-contract" + "@users.noreply.github.com"
+        self.assertEqual(MODULE.SAFE_INFRASTRUCTURE_EMAILS, frozenset({safe_email}))
         self.assertFalse(MODULE.contains_infrastructure_risk_text(safe_email))
+        self.assertTrue(
+            MODULE.contains_infrastructure_risk_text(unsafe_fixture_email)
+        )
 
         for value in (
             "prefix" + safe_email,

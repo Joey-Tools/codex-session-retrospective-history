@@ -13,25 +13,93 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prepare trusted push validator
+        if: github.event_name == 'push'
+        env:
+          BASE_REV: ${{ github.event.before }}
+        run: |
+          TRUSTED_VALIDATOR_ROOT="$RUNNER_TEMP/retrospective-history-v2-trusted-base"
+          git worktree add --quiet --detach "$TRUSTED_VALIDATOR_ROOT" "$BASE_REV"
+          echo "TRUSTED_VALIDATOR_ROOT=$TRUSTED_VALIDATOR_ROOT" >> "$GITHUB_ENV"
+      - name: Import trusted push publisher key
+        if: github.event_name == 'push'
+        run: |
+          TRUSTED_GNUPGHOME="$RUNNER_TEMP/retrospective-history-v2-trusted-gnupg"
+          export TRUSTED_GNUPGHOME
+          install -d -m 700 "$TRUSTED_GNUPGHOME"
+          GNUPGHOME="$TRUSTED_GNUPGHOME" gpg --quiet --no-options \
+            --no-autostart --batch --import \
+            "$TRUSTED_VALIDATOR_ROOT/retrospective-history-v2-publisher.asc" \
+            >/dev/null 2>&1
+          echo "TRUSTED_GNUPGHOME=$TRUSTED_GNUPGHOME" >> "$GITHUB_ENV"
+      - name: Validate push range with trusted base
+        if: github.event_name == 'push'
+        env:
+          BASE_REV: ${{ github.event.before }}
+          EVENT_FORCED: ${{ github.event.forced }}
+          HEAD_REV: ${{ github.event.after }}
+        run: |
+          export GNUPGHOME="$TRUSTED_GNUPGHOME"
+          cd "$TRUSTED_VALIDATOR_ROOT"
+          PYTHONPATH="$TRUSTED_VALIDATOR_ROOT" PYTHONNOUSERSITE=1 python -P - <<'PY'
+          import os
+          from pathlib import Path
+
+          from scripts.retrospective_history_git_v2 import validate_append_only_range
+
+          issues = []
+          if os.environ["EVENT_FORCED"] == "true":
+              issues.append("range: force-push event is not append-only")
+          issues.extend(
+              validate_append_only_range(
+                  Path(os.environ["GITHUB_WORKSPACE"]),
+                  os.environ["BASE_REV"],
+                  os.environ["HEAD_REV"],
+              )
+          )
+          for issue in issues:
+              print(issue)
+          raise SystemExit(bool(issues))
+          PY
       - name: Import v2 publisher public key
         env:
-          EXPECTED_FINGERPRINT: EFBBC913F49A5F6E0AF0D248F70246143DC28F32
+          EXPECTED_FINGERPRINT: 40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52
+          EXPECTED_UID: Codex Session Retrospective Publisher <12524680+JoeyTeng@users.noreply.github.com>
           PUBLISHER_PUBLIC_KEY: retrospective-history-v2-publisher.asc
         run: |
           GNUPGHOME="$RUNNER_TEMP/retrospective-history-v2-gnupg"
           export GNUPGHOME
           install -d -m 700 "$GNUPGHOME"
-          gpg --no-options --no-autostart --batch --import "$PUBLISHER_PUBLIC_KEY"
-          ACTUAL_FINGERPRINT="$(
-            gpg --no-options --no-autostart --batch --with-colons \
-              --fingerprint "$EXPECTED_FINGERPRINT" |
-              awk -F: '$1 == "fpr" { print $10; exit }'
+          gpg --quiet --no-options --no-autostart --batch \
+            --import "$PUBLISHER_PUBLIC_KEY" >/dev/null 2>&1
+          KEY_RECORDS="$(
+            gpg --quiet --no-options --no-autostart --batch --with-colons \
+              --fingerprint --list-keys 2>/dev/null
           )"
+          ACTUAL_FINGERPRINT="$(
+            printf '%s\n' "$KEY_RECORDS" |
+              awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10; exit }'
+          )"
+          PRIMARY_KEY_COUNT="$(
+            printf '%s\n' "$KEY_RECORDS" |
+              awk -F: '$1 == "pub" { count += 1 } END { print count + 0 }'
+          )"
+          UID_COUNT="$(
+            printf '%s\n' "$KEY_RECORDS" |
+              awk -F: '$1 == "uid" { count += 1 } END { print count + 0 }'
+          )"
+          ACTUAL_UID="$(
+            printf '%s\n' "$KEY_RECORDS" |
+              awk -F: '$1 == "uid" { print $10; exit }'
+          )"
+          test "$PRIMARY_KEY_COUNT" = 1
           test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT"
+          test "$UID_COUNT" = 1
+          test "$ACTUAL_UID" = "$EXPECTED_UID"
           echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - name: Install v2 validation dependencies
         run: python -m pip install --requirement requirements-v2.txt
       - name: Validate JSON syntax
@@ -47,19 +115,38 @@ jobs:
           [Draft202012Validator.check_schema(json.loads(Path(schema).read_text(encoding="utf-8"))) for schema in schemas]'
       - name: Run tests
         run: python -m unittest discover -s tests
+      - name: Require current pull request base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_TIP: ${{ github.event.pull_request.base.sha }}
+          HEAD_REV: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ! git merge-base --is-ancestor "$BASE_TIP" "$HEAD_REV"; then
+            echo "Pull request head does not contain the current event base." >&2
+            exit 1
+          fi
+      - name: Reject pull request publication changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_TIP: ${{ github.event.pull_request.base.sha }}
+          HEAD_REV: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ! git diff --quiet "$BASE_TIP" "$HEAD_REV" -- runs; then
+            echo "Pull requests must not modify formal retained-history publications." >&2
+            exit 1
+          fi
       - name: Validate retained history tree
         run: python scripts/validate_retained_history.py --root .
       - name: Validate append-only pull request range
         if: github.event_name == 'pull_request'
         env:
-          BASE_TIP: ${{ github.event.pull_request.base.sha }}
+          BASE_REV: ${{ github.event.pull_request.base.sha }}
           EVENT_FORCED: "false"
           HEAD_REV: ${{ github.event.pull_request.head.sha }}
-        run: |
-          BASE_REV="$(git merge-base "$BASE_TIP" "$HEAD_REV")"
-          python scripts/validate_retained_history.py --root . \
-            --base-rev "$BASE_REV" --head-rev "$HEAD_REV" \
-            --event-forced "$EVENT_FORCED"
+        run: >-
+          python scripts/validate_retained_history.py --root .
+          --base-rev "$BASE_REV" --head-rev "$HEAD_REV"
+          --event-forced "$EVENT_FORCED"
       - name: Validate append-only master push range
         if: github.event_name == 'push'
         env:

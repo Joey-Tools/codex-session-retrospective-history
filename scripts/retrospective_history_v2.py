@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 import datetime as dt
+from decimal import Decimal
 import errno
 from functools import lru_cache
 import hashlib
@@ -69,6 +70,22 @@ PUBLICATION_ROLES = frozenset({"standalone", "campaign_segment", "campaign_root"
 PUBLICATION_CAMPAIGN_REASONS = frozenset({"size_partition", "baseline_window"})
 PUBLICATION_STATUSES = frozenset({"partial", "complete", "complete_with_terminal_gaps"})
 FULL_PUBLICATION_STATUSES = frozenset({"complete", "complete_with_terminal_gaps"})
+NEGATIVE_TREND_METRICS = frozenset(
+    {
+        "failed_command",
+        "approval_request",
+        "auth_denial",
+        "retry",
+        "user_correction",
+        "incomplete_verification",
+        "over_exploration",
+        "under_asking",
+        "context_loss",
+        "assumption_risk",
+        "verification_gap",
+        "safety_privacy_risk",
+    }
+)
 REVISION_KINDS = frozenset(
     {
         "initial",
@@ -363,6 +380,7 @@ SORTED_REFERENCE_FIELDS = frozenset(
         "job_refs",
         "key_ids",
         "leaf_root_refs",
+        "metric_refs",
         "model_era_refs",
         "page_root_refs",
         "policy_era_refs",
@@ -491,6 +509,35 @@ class Bundle:
 
 
 @dataclass(frozen=True)
+class _TrendComparison:
+    metric_ref: str
+    key: tuple[str, str, str]
+    prior_run_revision_ref: str
+    claimed_delta: Decimal
+
+
+@dataclass(frozen=True)
+class _SummaryComparison:
+    prior_run_revision_ref: str
+    direction: str
+    metric_refs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _TrendSnapshot:
+    label: str
+    run_revision_ref: str
+    mode: str
+    publication_time: dt.datetime
+    window_start: dt.datetime
+    window_end: dt.datetime
+    supersedes_run_revision_refs: tuple[str, ...]
+    rates: dict[tuple[str, str, str], Decimal]
+    comparisons: tuple[_TrendComparison, ...]
+    summary: _SummaryComparison | None
+
+
+@dataclass(frozen=True)
 class _PhysicalArtifactPath:
     relative: Path
     mode: str
@@ -544,6 +591,16 @@ class _OpenedArtifact:
     descriptor: int
     initial_stat: os.stat_result
     byte_limit: int
+
+
+@dataclass(frozen=True)
+class _OpenedDirectoryChain:
+    descriptors: tuple[int, ...]
+    identities: tuple[tuple[int, int], ...]
+
+    @property
+    def leaf_descriptor(self) -> int:
+        return self.descriptors[-1]
 
 
 @dataclass
@@ -1593,7 +1650,23 @@ def _open_validation_root(root: Path) -> int:
         raise
 
 
-def _open_bundle_directory(root_descriptor: int, bundle: Bundle) -> int:
+def _directory_identity(value: os.stat_result) -> tuple[int, int]:
+    return (value.st_dev, value.st_ino)
+
+
+def _close_directory_chain(chain: _OpenedDirectoryChain | None) -> None:
+    if chain is None:
+        return
+    for descriptor in reversed(chain.descriptors):
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
+def _open_bundle_directory(
+    root_descriptor: int, bundle: Bundle
+) -> _OpenedDirectoryChain:
     if not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
         raise OSError(errno.ENOTSUP, "safe directory traversal is unavailable")
     flags = (
@@ -1613,21 +1686,82 @@ def _open_bundle_directory(root_descriptor: int, bundle: Bundle) -> int:
         raise OSError(
             errno.EINVAL, "bundle path does not match its normalized identity"
         )
+    descriptors = [os.dup(root_descriptor)]
+    identities: list[tuple[int, int]] = []
+    try:
+        root_stat = os.fstat(descriptors[0])
+        if not stat.S_ISDIR(root_stat.st_mode):
+            raise OSError(errno.ENOTDIR, "validation root is not a directory")
+        identities.append(_directory_identity(root_stat))
+        for component in physical_parts:
+            descriptor = os.open(component, flags, dir_fd=descriptors[-1])
+            descriptors.append(descriptor)
+            opened_stat = os.fstat(descriptor)
+            if not stat.S_ISDIR(opened_stat.st_mode):
+                raise OSError(errno.ENOTDIR, "bundle component is not a directory")
+            identities.append(_directory_identity(opened_stat))
+        return _OpenedDirectoryChain(tuple(descriptors), tuple(identities))
+    except Exception:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise
+
+
+def _bundle_directory_chain_matches(
+    root_descriptor: int, bundle: Bundle, opened: _OpenedDirectoryChain
+) -> bool:
+    flags = (
+        os.O_RDONLY
+        | os.O_CLOEXEC
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    physical_parts = bundle.physical_parts or _bundle_directory_parts(
+        bundle.mode, bundle.window_component, bundle.run_id
+    )
+    if len(opened.identities) != len(physical_parts) + 1:
+        return False
+    try:
+        for descriptor, expected in zip(
+            opened.descriptors, opened.identities, strict=True
+        ):
+            if _directory_identity(os.fstat(descriptor)) != expected:
+                return False
+    except OSError:
+        return False
+
     descriptor = os.dup(root_descriptor)
     try:
-        for component in physical_parts:
+        root_stat = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(root_stat.st_mode)
+            or _directory_identity(root_stat) != opened.identities[0]
+        ):
+            return False
+        for component, expected in zip(
+            physical_parts, opened.identities[1:], strict=True
+        ):
             next_descriptor = os.open(component, flags, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = next_descriptor
-            if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
-                raise OSError
-        return descriptor
-    except Exception:
+            reopened_stat = os.fstat(descriptor)
+            if (
+                not stat.S_ISDIR(reopened_stat.st_mode)
+                or _directory_identity(reopened_stat) != expected
+            ):
+                return False
+        return True
+    except OSError:
+        return False
+    finally:
         try:
             os.close(descriptor)
         except OSError:
             pass
-        raise
 
 
 def _named_artifact_identity_status(
@@ -1671,11 +1805,13 @@ def _read_bundle_artifacts(
     )
     opened: dict[str, _OpenedArtifact] = {}
     preflight_failed = False
+    directory_chain: _OpenedDirectoryChain | None = None
     try:
-        directory_descriptor = _open_bundle_directory(root_descriptor, bundle)
+        directory_chain = _open_bundle_directory(root_descriptor, bundle)
     except Exception:
         issues.append(f"{bundle.label}: run directory could not be opened safely")
         return False
+    directory_descriptor = directory_chain.leaf_descriptor
 
     try:
         for basename in ARTIFACT_BASENAMES:
@@ -1793,14 +1929,16 @@ def _read_bundle_artifacts(
                 return False
             raw[basename] = content
 
+        if not _bundle_directory_chain_matches(root_descriptor, bundle, directory_chain):
+            issues.append(
+                f"{bundle.label}: run directory identity changed while artifacts were read"
+            )
+            return False
         bundle.raw = raw
         return True
     finally:
         _close_opened_artifacts(opened)
-        try:
-            os.close(directory_descriptor)
-        except OSError:
-            pass
+        _close_directory_chain(directory_chain)
 
 
 def _scan_bundle_privacy(
@@ -3312,20 +3450,6 @@ def _validate_cross_artifact_consistency(bundle: Bundle, issues: list[str]) -> N
         if pair not in stratum_pairs:
             issues.append(f"{trend_label}: every topic era pair must have a stratum")
 
-    negative_metrics = {
-        "failed_command",
-        "approval_request",
-        "auth_denial",
-        "retry",
-        "user_correction",
-        "incomplete_verification",
-        "over_exploration",
-        "under_asking",
-        "context_loss",
-        "assumption_risk",
-        "verification_gap",
-        "safety_privacy_risk",
-    }
     for stratum in strata:
         if _issues_full(issues):
             return
@@ -3385,7 +3509,9 @@ def _validate_cross_artifact_consistency(bundle: Bundle, issues: list[str]) -> N
                 continue
             expected_direction = "unchanged"
             if delta:
-                improves = delta < 0 if metric_id in negative_metrics else delta > 0
+                improves = (
+                    delta < 0 if metric_id in NEGATIVE_TREND_METRICS else delta > 0
+                )
                 expected_direction = "improved" if improves else "regressed"
             if direction != expected_direction:
                 issues.append(
@@ -3786,18 +3912,55 @@ def _validate_revision_graph(bundles: list[Bundle], issues: list[str]) -> None:
 
 def _collect_trend_comparison_state(
     bundle: Bundle,
-    snapshots: dict[str, dict[tuple[str, str, str], float]],
-    claims: list[tuple[str, str, tuple[str, str, str], str, float, float]],
+    snapshots: dict[str, _TrendSnapshot],
 ) -> None:
     manifest = bundle.documents.get("manifest.json")
+    summary = bundle.documents.get("summary.json")
     trend = bundle.documents.get("trend_report.json")
-    if not isinstance(manifest, dict) or not isinstance(trend, dict):
+    if (
+        not isinstance(manifest, dict)
+        or not isinstance(summary, dict)
+        or not isinstance(trend, dict)
+        or manifest.get("publication_role") == "campaign_segment"
+    ):
         return
     run_revision_ref = manifest.get("run_revision_ref")
+    mode = manifest.get("mode")
+    publication_time = _parse_coarse_timestamp(manifest.get("prepared_at"))
+    window = manifest.get("window")
+    supersession = manifest.get("supersession")
     strata = trend.get("strata")
-    if not isinstance(run_revision_ref, str) or not isinstance(strata, list):
+    if (
+        not isinstance(run_revision_ref, str)
+        or RUN_REVISION_REF_RE.fullmatch(run_revision_ref) is None
+        or not isinstance(mode, str)
+        or mode not in MODES
+        or publication_time is None
+        or not isinstance(window, dict)
+        or not isinstance(supersession, dict)
+        or not isinstance(strata, list)
+        or len(strata) > 128
+    ):
         return
-    rates: dict[tuple[str, str, str], float] = {}
+    supersedes_run_revision_refs = supersession.get(
+        "supersedes_run_revision_refs"
+    )
+    if (
+        not isinstance(supersedes_run_revision_refs, list)
+        or len(supersedes_run_revision_refs) > 32
+        or not all(
+            isinstance(reference, str)
+            and RUN_REVISION_REF_RE.fullmatch(reference) is not None
+            for reference in supersedes_run_revision_refs
+        )
+    ):
+        return
+    window_start = _parse_coarse_timestamp(window.get("start"))
+    window_end = _parse_coarse_timestamp(window.get("end"))
+    if window_start is None or window_end is None or window_start >= window_end:
+        return
+    rates: dict[tuple[str, str, str], Decimal] = {}
+    comparisons: list[_TrendComparison] = []
     for stratum in strata:
         if not isinstance(stratum, dict):
             continue
@@ -3810,19 +3973,24 @@ def _collect_trend_comparison_state(
             or not isinstance(metrics, list)
         ):
             continue
+        if len(metrics) > 64:
+            continue
         for metric in metrics:
             if not isinstance(metric, dict) or metric.get("status") != "available":
                 continue
             metric_id = metric.get("metric")
+            metric_ref = metric.get("metric_ref")
             rate = metric.get("rate_per_100")
             if (
                 not isinstance(metric_id, str)
+                or not isinstance(metric_ref, str)
                 or isinstance(rate, bool)
                 or not isinstance(rate, (int, float))
             ):
                 continue
             key = (policy_ref, model_ref, metric_id)
-            rates[key] = float(rate)
+            rate_decimal = Decimal(str(rate))
+            rates[key] = rate_decimal
             normalized = metric.get("normalized_change")
             if (
                 not isinstance(normalized, dict)
@@ -3836,42 +4004,201 @@ def _collect_trend_comparison_state(
                 and not isinstance(delta, bool)
                 and isinstance(delta, (int, float))
             ):
-                claims.append(
-                    (
-                        bundle.label,
-                        run_revision_ref,
-                        key,
-                        prior_ref,
-                        float(rate),
-                        float(delta),
+                comparisons.append(
+                    _TrendComparison(
+                        metric_ref=metric_ref,
+                        key=key,
+                        prior_run_revision_ref=prior_ref,
+                        claimed_delta=Decimal(str(delta)),
                     )
                 )
-    snapshots[run_revision_ref] = rates
+
+    summary_comparison: _SummaryComparison | None = None
+    change = summary.get("change_from_prior")
+    if isinstance(change, dict) and change.get("status") == "available":
+        prior_ref = change.get("prior_run_revision_ref")
+        direction = change.get("direction")
+        metric_refs = change.get("metric_refs")
+        if (
+            isinstance(prior_ref, str)
+            and isinstance(direction, str)
+            and isinstance(metric_refs, list)
+            and len(metric_refs) <= 64
+            and all(isinstance(metric_ref, str) for metric_ref in metric_refs)
+        ):
+            summary_comparison = _SummaryComparison(
+                prior_run_revision_ref=prior_ref,
+                direction=direction,
+                metric_refs=tuple(metric_refs),
+            )
+
+    snapshots[run_revision_ref] = _TrendSnapshot(
+        label=bundle.label,
+        run_revision_ref=run_revision_ref,
+        mode=mode,
+        publication_time=publication_time,
+        window_start=window_start,
+        window_end=window_end,
+        supersedes_run_revision_refs=tuple(supersedes_run_revision_refs),
+        rates=rates,
+        comparisons=tuple(comparisons),
+        summary=summary_comparison,
+    )
+
+
+def _resolve_compatible_prior(
+    current: _TrendSnapshot,
+    prior_ref: str,
+    snapshots: dict[str, _TrendSnapshot],
+    superseders: dict[str, list[_TrendSnapshot]],
+    artifact: str,
+    issues: list[str],
+) -> _TrendSnapshot | None:
+    prior = snapshots.get(prior_ref)
+    if prior is None or prior_ref == current.run_revision_ref:
+        issues.append(
+            f"{current.label}/{artifact}: prior run revision is not present as an eligible trend observation"
+        )
+        return None
+    if prior.publication_time > current.publication_time:
+        issues.append(
+            f"{current.label}/{artifact}: prior run was not published by the current publication point"
+        )
+        return None
+    if (
+        prior.mode != current.mode
+        or prior.window_start >= current.window_start
+        or prior.window_end > current.window_start
+    ):
+        issues.append(
+            f"{current.label}/{artifact}: prior run must share mode and use a strictly earlier non-overlapping window"
+        )
+        return None
+    if any(
+        replacement.publication_time <= current.publication_time
+        for replacement in superseders.get(prior_ref, ())
+    ):
+        issues.append(
+            f"{current.label}/{artifact}: prior run revision was not active at the current publication point"
+        )
+        return None
+    return prior
+
+
+def _exact_comparison_delta(
+    current: _TrendSnapshot,
+    prior: _TrendSnapshot,
+    comparison: _TrendComparison,
+) -> Decimal | None:
+    current_rate = current.rates.get(comparison.key)
+    prior_rate = prior.rates.get(comparison.key)
+    if current_rate is None or prior_rate is None:
+        return None
+    return current_rate - prior_rate
+
+
+def _trend_direction(metric_id: str, delta: Decimal) -> str:
+    if delta == 0:
+        return "unchanged"
+    improves = delta < 0 if metric_id in NEGATIVE_TREND_METRICS else delta > 0
+    return "improved" if improves else "regressed"
 
 
 def _validate_trend_comparisons(
-    snapshots: dict[str, dict[tuple[str, str, str], float]],
-    claims: list[tuple[str, str, tuple[str, str, str], str, float, float]],
+    snapshots: dict[str, _TrendSnapshot],
     issues: list[str],
 ) -> None:
-    for label, current_ref, key, prior_ref, current_rate, claimed_delta in claims:
-        if _issues_full(issues):
-            return
-        prior = snapshots.get(prior_ref)
-        if prior is None or prior_ref == current_ref:
+    superseders: dict[str, list[_TrendSnapshot]] = defaultdict(list)
+    for snapshot in snapshots.values():
+        for predecessor in snapshot.supersedes_run_revision_refs:
+            superseders[predecessor].append(snapshot)
+
+    for current in snapshots.values():
+        for comparison in current.comparisons:
+            if _issues_full(issues):
+                return
+            prior = _resolve_compatible_prior(
+                current,
+                comparison.prior_run_revision_ref,
+                snapshots,
+                superseders,
+                "trend_report.json",
+                issues,
+            )
+            if prior is None:
+                continue
+            exact_delta = _exact_comparison_delta(current, prior, comparison)
+            if exact_delta is None:
+                issues.append(
+                    f"{current.label}/trend_report.json: normalized change requires an available compatible prior metric"
+                )
+                continue
+            if comparison.claimed_delta != exact_delta:
+                issues.append(
+                    f"{current.label}/trend_report.json: normalized change delta must exactly match the compatible prior metric"
+                )
+
+        summary = current.summary
+        if summary is None or _issues_full(issues):
+            continue
+        prior = _resolve_compatible_prior(
+            current,
+            summary.prior_run_revision_ref,
+            snapshots,
+            superseders,
+            "summary.json",
+            issues,
+        )
+        comparisons_by_ref: dict[str, list[_TrendComparison]] = defaultdict(list)
+        for comparison in current.comparisons:
+            comparisons_by_ref[comparison.metric_ref].append(comparison)
+
+        exact_directions: list[str] = []
+        complete = prior is not None
+        for metric_ref in summary.metric_refs:
+            matches = comparisons_by_ref.get(metric_ref, [])
+            if len(matches) != 1:
+                issues.append(
+                    f"{current.label}/summary.json: metric_refs must resolve uniquely to available normalized trend comparisons"
+                )
+                complete = False
+                continue
+            comparison = matches[0]
+            if comparison.prior_run_revision_ref != summary.prior_run_revision_ref:
+                issues.append(
+                    f"{current.label}/summary.json: change_from_prior must bind to the same prior comparison as trend_report.json"
+                )
+                complete = False
+                continue
+            if prior is None:
+                complete = False
+                continue
+            exact_delta = _exact_comparison_delta(current, prior, comparison)
+            if exact_delta is None:
+                issues.append(
+                    f"{current.label}/summary.json: referenced trend comparison lacks a compatible prior metric"
+                )
+                complete = False
+                continue
+            exact_directions.append(_trend_direction(comparison.key[2], exact_delta))
+
+        if not complete or not exact_directions:
+            continue
+        direction_set = set(exact_directions)
+        if {"improved", "regressed"}.issubset(direction_set):
             issues.append(
-                f"{label}/trend_report.json: normalized change prior run revision is not present"
+                f"{current.label}/summary.json: change_from_prior cannot collapse mixed exact normalized deltas"
             )
             continue
-        prior_rate = prior.get(key)
-        if prior_rate is None:
+        if "improved" in direction_set:
+            expected_direction = "improved"
+        elif "regressed" in direction_set:
+            expected_direction = "regressed"
+        else:
+            expected_direction = "unchanged"
+        if summary.direction != expected_direction:
             issues.append(
-                f"{label}/trend_report.json: normalized change requires an available compatible prior metric"
-            )
-            continue
-        if abs(claimed_delta - (current_rate - prior_rate)) > 1e-9:
-            issues.append(
-                f"{label}/trend_report.json: normalized change delta must match the compatible prior metric"
+                f"{current.label}/summary.json: change_from_prior direction must match exact normalized trend deltas"
             )
 
 
@@ -3906,10 +4233,7 @@ def validate_v2_runs(
         bundles = _discover_bundles(root, root_descriptor, visible_files, issues)
         revision_count = 0
         work_limit_reached = False
-        trend_snapshots: dict[str, dict[tuple[str, str, str], float]] = {}
-        trend_claims: list[
-            tuple[str, str, tuple[str, str, str], str, float, float]
-        ] = []
+        trend_snapshots: dict[str, _TrendSnapshot] = {}
         for bundle in bundles:
             if _issues_full(issues):
                 break
@@ -3923,7 +4247,7 @@ def validate_v2_runs(
                 budget,
             )
             revision_count += len(bundle.revisions)
-            _collect_trend_comparison_state(bundle, trend_snapshots, trend_claims)
+            _collect_trend_comparison_state(bundle, trend_snapshots)
             bundle.raw.clear()
             bundle.documents.clear()
             bundle.rows.clear()
@@ -3936,7 +4260,7 @@ def validate_v2_runs(
         if not _issues_full(issues) and not work_limit_reached:
             _validate_campaign_consistency(bundles, issues)
         if not _issues_full(issues) and not work_limit_reached:
-            _validate_trend_comparisons(trend_snapshots, trend_claims, issues)
+            _validate_trend_comparisons(trend_snapshots, issues)
         if not _issues_full(issues) and not work_limit_reached:
             _validate_revision_graph(bundles, issues)
         return sorted(issues)

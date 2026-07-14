@@ -43,6 +43,24 @@ WINDOW = {
     "start": "2026-07-13T00:00:00Z",
     "end": "2026-07-14T00:00:00Z",
 }
+PRIOR_DAILY_WINDOW = {
+    "mode": "daily",
+    "path_component": "2026-07-12",
+    "start": "2026-07-12T00:00:00Z",
+    "end": "2026-07-13T00:00:00Z",
+}
+FUTURE_DAILY_WINDOW = {
+    "mode": "daily",
+    "path_component": "2026-07-14",
+    "start": "2026-07-14T00:00:00Z",
+    "end": "2026-07-15T00:00:00Z",
+}
+PRIOR_WEEKLY_WINDOW = {
+    "mode": "weekly",
+    "path_component": "2026-07-06_to_2026-07-12",
+    "start": "2026-07-06T00:00:00Z",
+    "end": "2026-07-13T00:00:00Z",
+}
 INVENTORY = [
     {
         "basename": "coverage.json",
@@ -405,6 +423,47 @@ def rewrite_digest(directory: Path, *, pretty_manifest: bool = False) -> None:
         )
     else:
         manifest_path.write_bytes(canonical_json(manifest))
+
+
+def set_trend_metric(
+    refs: BundleRefs,
+    *,
+    rate: int | float,
+    metric_ref: str,
+    normalized_change: dict[str, object],
+) -> None:
+    trend_path = refs.directory / "trend_report.json"
+    trend = json.loads(trend_path.read_bytes())
+    trend["strata"][0]["metrics"] = [
+        {
+            "metric": "failed_command",
+            "metric_ref": metric_ref,
+            "status": "available",
+            "numerator": 0,
+            "denominator": 1,
+            "rate_per_100": rate,
+            "normalized_change": normalized_change,
+        }
+    ]
+    trend_path.write_bytes(canonical_json(trend))
+    rewrite_digest(refs.directory)
+
+
+def set_summary_change(refs: BundleRefs, change: dict[str, object]) -> None:
+    summary_path = refs.directory / "summary.json"
+    summary = json.loads(summary_path.read_bytes())
+    summary["change_from_prior"] = change
+    summary_path.write_bytes(canonical_json(summary))
+    (refs.directory / "report.md").write_bytes(report_payload(summary))
+    rewrite_digest(refs.directory)
+
+
+def set_prepared_at(refs: BundleRefs, prepared_at: str) -> None:
+    manifest_path = refs.directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["prepared_at"] = prepared_at
+    manifest_path.write_bytes(canonical_json(manifest))
+    rewrite_digest(refs.directory)
 
 
 def write_bundle(
@@ -1335,6 +1394,7 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
                 trend["strata"][0]["metrics"] = [
                     {
                         "metric": "failed_command",
+                        "metric_ref": hex_ref("trend_metric_ref_v2:", 1),
                         "status": "available",
                         "numerator": 1,
                         "denominator": 1,
@@ -1365,45 +1425,34 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
     def test_normalized_change_binds_prior_compatible_metric_rate(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            prior = write_bundle(root, 1)
-            current = write_bundle(root, 2, predecessor=prior)
-            for refs, rate, normalized in (
-                (
-                    prior,
-                    20,
-                    {"status": "unavailable", "reason": "no_prior_period"},
-                ),
-                (
-                    current,
-                    80,
-                    {
-                        "status": "available",
-                        "prior_run_revision_ref": prior.run_revision_ref,
-                        "direction": "regressed",
-                        "delta_per_100": 10,
-                    },
-                ),
-            ):
-                trend_path = refs.directory / "trend_report.json"
-                trend = json.loads(trend_path.read_bytes())
-                trend["strata"][0]["metrics"] = [
-                    {
-                        "metric": "failed_command",
-                        "status": "available",
-                        "numerator": 0,
-                        "denominator": 1,
-                        "rate_per_100": rate,
-                        "normalized_change": normalized,
-                    }
-                ]
-                trend_path.write_bytes(canonical_json(trend))
-                rewrite_digest(refs.directory)
+            prior = write_bundle(root, 1, window=PRIOR_DAILY_WINDOW)
+            current = write_bundle(root, 2)
+            set_trend_metric(
+                prior,
+                rate=20,
+                metric_ref=hex_ref("trend_metric_ref_v2:", 1),
+                normalized_change={
+                    "status": "unavailable",
+                    "reason": "no_prior_period",
+                },
+            )
+            set_trend_metric(
+                current,
+                rate=80,
+                metric_ref=hex_ref("trend_metric_ref_v2:", 2),
+                normalized_change={
+                    "status": "available",
+                    "prior_run_revision_ref": prior.run_revision_ref,
+                    "direction": "regressed",
+                    "delta_per_100": 10,
+                },
+            )
 
             issues = MODULE.validate_v2_runs(root)
 
             self.assertTrue(
                 any(
-                    "normalized change delta must match the compatible prior metric"
+                    "normalized change delta must exactly match the compatible prior metric"
                     in issue
                     for issue in issues
                 ),
@@ -1422,8 +1471,315 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
 
             self.assertTrue(
                 any(
-                    "normalized change prior run revision is not present" in issue
+                    "prior run revision is not present as an eligible trend observation"
                     for issue in issues
+                ),
+                issues,
+            )
+
+    def test_prior_trend_requires_eligible_mode_and_window(self) -> None:
+        cases = (
+            ("future", FUTURE_DAILY_WINDOW),
+            ("different-mode", PRIOR_WEEKLY_WINDOW),
+            ("overlap", WINDOW),
+        )
+        for label, prior_window in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                prior = write_bundle(root, 1, window=prior_window)
+                current = write_bundle(root, 2)
+                set_trend_metric(
+                    prior,
+                    rate=20,
+                    metric_ref=hex_ref("trend_metric_ref_v2:", 1),
+                    normalized_change={
+                        "status": "unavailable",
+                        "reason": "no_prior_period",
+                    },
+                )
+                set_trend_metric(
+                    current,
+                    rate=80,
+                    metric_ref=hex_ref("trend_metric_ref_v2:", 2),
+                    normalized_change={
+                        "status": "available",
+                        "prior_run_revision_ref": prior.run_revision_ref,
+                        "direction": "regressed",
+                        "delta_per_100": 60,
+                    },
+                )
+
+                issues = MODULE.validate_v2_runs(root)
+
+                self.assertTrue(
+                    any(
+                        "prior run must share mode and use a strictly earlier non-overlapping window"
+                        in issue
+                        for issue in issues
+                    ),
+                    issues,
+                )
+
+    def test_campaign_segment_is_not_a_prior_trend_observation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            segment = write_campaign_bundle(
+                root,
+                1,
+                publication_role="campaign_segment",
+                mode="daily",
+                segment_count=1,
+                segment_ordinal=1,
+            )
+            current = write_bundle(root, 2)
+            set_trend_metric(
+                segment,
+                rate=20,
+                metric_ref=hex_ref("trend_metric_ref_v2:", 1),
+                normalized_change={
+                    "status": "unavailable",
+                    "reason": "no_prior_period",
+                },
+            )
+            set_trend_metric(
+                current,
+                rate=80,
+                metric_ref=hex_ref("trend_metric_ref_v2:", 2),
+                normalized_change={
+                    "status": "available",
+                    "prior_run_revision_ref": segment.run_revision_ref,
+                    "direction": "regressed",
+                    "delta_per_100": 60,
+                },
+            )
+
+            issues = MODULE.validate_v2_runs(root)
+
+            self.assertTrue(
+                any(
+                    "prior run revision is not present as an eligible trend observation"
+                    in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+
+    def test_summary_change_resolves_trend_comparison_and_exact_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prior = write_bundle(root, 1, window=PRIOR_DAILY_WINDOW)
+            current = write_bundle(root, 2)
+            current_metric_ref = hex_ref("trend_metric_ref_v2:", 2)
+            set_trend_metric(
+                prior,
+                rate=20,
+                metric_ref=hex_ref("trend_metric_ref_v2:", 1),
+                normalized_change={
+                    "status": "unavailable",
+                    "reason": "no_prior_period",
+                },
+            )
+            set_trend_metric(
+                current,
+                rate=10,
+                metric_ref=current_metric_ref,
+                normalized_change={
+                    "status": "available",
+                    "prior_run_revision_ref": prior.run_revision_ref,
+                    "direction": "improved",
+                    "delta_per_100": -10,
+                },
+            )
+            set_summary_change(
+                current,
+                {
+                    "status": "available",
+                    "direction": "regressed",
+                    "prior_run_revision_ref": prior.run_revision_ref,
+                    "metric_refs": [current_metric_ref],
+                },
+            )
+
+            issues = MODULE.validate_v2_runs(root)
+            self.assertTrue(
+                any(
+                    "change_from_prior direction must match exact normalized trend deltas"
+                    in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+
+            missing_prior = hex_ref("run_revision_ref_v2:", 999)
+            set_summary_change(
+                current,
+                {
+                    "status": "available",
+                    "direction": "improved",
+                    "prior_run_revision_ref": missing_prior,
+                    "metric_refs": [current_metric_ref],
+                },
+            )
+            issues = MODULE.validate_v2_runs(root)
+            self.assertTrue(
+                any(
+                    "/summary.json: prior run revision is not present" in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+
+            set_summary_change(
+                current,
+                {
+                    "status": "available",
+                    "direction": "improved",
+                    "prior_run_revision_ref": prior.run_revision_ref,
+                    "metric_refs": [hex_ref("trend_metric_ref_v2:", 999)],
+                },
+            )
+            issues = MODULE.validate_v2_runs(root)
+            self.assertTrue(
+                any(
+                    "metric_refs must resolve uniquely to available normalized trend comparisons"
+                    in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+
+    def test_prior_trend_must_be_active_at_current_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prior = write_bundle(root, 1, window=PRIOR_DAILY_WINDOW)
+            replacement = write_bundle(
+                root,
+                2,
+                reason="correction",
+                predecessor=prior,
+                window=PRIOR_DAILY_WINDOW,
+            )
+            current = write_bundle(root, 3)
+            current_metric_ref = hex_ref("trend_metric_ref_v2:", 3)
+            set_prepared_at(prior, "2026-07-14T00:00:00Z")
+            set_prepared_at(current, "2026-07-14T00:02:00Z")
+            set_prepared_at(replacement, "2026-07-14T00:03:00Z")
+            set_trend_metric(
+                prior,
+                rate=20,
+                metric_ref=hex_ref("trend_metric_ref_v2:", 1),
+                normalized_change={
+                    "status": "unavailable",
+                    "reason": "no_prior_period",
+                },
+            )
+            set_trend_metric(
+                replacement,
+                rate=5,
+                metric_ref=hex_ref("trend_metric_ref_v2:", 2),
+                normalized_change={
+                    "status": "unavailable",
+                    "reason": "no_prior_period",
+                },
+            )
+            set_trend_metric(
+                current,
+                rate=10,
+                metric_ref=current_metric_ref,
+                normalized_change={
+                    "status": "available",
+                    "prior_run_revision_ref": prior.run_revision_ref,
+                    "direction": "improved",
+                    "delta_per_100": -10,
+                },
+            )
+            set_summary_change(
+                current,
+                {
+                    "status": "available",
+                    "direction": "improved",
+                    "prior_run_revision_ref": prior.run_revision_ref,
+                    "metric_refs": [current_metric_ref],
+                },
+            )
+
+            issues = MODULE.validate_v2_runs(root)
+            self.assertFalse(
+                any("prior run revision was not active" in issue for issue in issues),
+                issues,
+            )
+
+            set_prepared_at(replacement, "2026-07-14T00:01:00Z")
+            issues = MODULE.validate_v2_runs(root)
+            self.assertTrue(
+                any(
+                    "/trend_report.json: prior run revision was not active" in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+            self.assertTrue(
+                any(
+                    "/summary.json: prior run revision was not active" in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+
+            set_trend_metric(
+                current,
+                rate=10,
+                metric_ref=current_metric_ref,
+                normalized_change={
+                    "status": "available",
+                    "prior_run_revision_ref": replacement.run_revision_ref,
+                    "direction": "regressed",
+                    "delta_per_100": 5,
+                },
+            )
+            set_summary_change(
+                current,
+                {
+                    "status": "available",
+                    "direction": "improved",
+                    "prior_run_revision_ref": replacement.run_revision_ref,
+                    "metric_refs": [current_metric_ref],
+                },
+            )
+            issues = MODULE.validate_v2_runs(root)
+            self.assertFalse(
+                any("prior run revision was not active" in issue for issue in issues),
+                issues,
+            )
+            self.assertTrue(
+                any(
+                    "change_from_prior direction must match exact normalized trend deltas"
+                    in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+
+            set_summary_change(
+                current,
+                {
+                    "status": "available",
+                    "direction": "regressed",
+                    "prior_run_revision_ref": replacement.run_revision_ref,
+                    "metric_refs": [current_metric_ref],
+                },
+            )
+            issues = MODULE.validate_v2_runs(root)
+            trend_contract_issues = (
+                "prior run revision was not active",
+                "normalized change delta must exactly match",
+                "change_from_prior direction must match",
+            )
+            self.assertFalse(
+                any(
+                    contract in issue
+                    for issue in issues
+                    for contract in trend_contract_issues
                 ),
                 issues,
             )
@@ -2359,6 +2715,36 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
                 ),
                 issues,
             )
+
+    def test_bundle_directory_replacement_during_read_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            refs = write_bundle(root, 1)
+            summary_inode = (refs.directory / "summary.json").stat().st_ino
+            detached = refs.directory.parent / "detached-bundle"
+            original_read = MODULE._read_fd_bounded
+            replaced = False
+
+            def racing_read(descriptor: int, byte_limit: int) -> bytes:
+                nonlocal replaced
+                if not replaced and os.fstat(descriptor).st_ino == summary_inode:
+                    refs.directory.rename(detached)
+                    refs.directory.mkdir()
+                    replaced = True
+                return original_read(descriptor, byte_limit)
+
+            with mock.patch.object(MODULE, "_read_fd_bounded", side_effect=racing_read):
+                issues = MODULE.validate_v2_runs(root)
+
+            self.assertTrue(replaced)
+            self.assertTrue(
+                any(
+                    "run directory identity changed while artifacts were read" in issue
+                    for issue in issues
+                ),
+                issues,
+            )
+            self.assertNotIn(str(root), "\n".join(issues))
 
     def test_schema_valid_adversarial_prose_is_privacy_scanned_from_raw_bytes(
         self,

@@ -26,7 +26,7 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 PUBLISHER_NAME = "Codex Session Retrospective Publisher"
-PUBLISHER_EMAIL = "codex-session-retrospective@users.noreply.github.com"
+PUBLISHER_EMAIL = "12524680+JoeyTeng@users.noreply.github.com"
 RUN_ID = "0" * 63 + "1"
 SECOND_RUN_ID = "0" * 63 + "2"
 THIRD_RUN_ID = "0" * 63 + "3"
@@ -408,6 +408,110 @@ class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
             head = signed_commit(root, publication_message(second_run))
 
             self.assertEqual(validate_with_trusted_signature(root, base, head), [])
+
+    def test_publication_range_rejects_earlier_infrastructure_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base, _ = initialize_repository(root)
+            infrastructure_name = "validator-policy.txt"
+            (root / infrastructure_name).write_text("policy\n", encoding="utf-8")
+            git(root, "add", "--", infrastructure_name)
+            commit(root, "Update validation policy")
+
+            publication = write_run(root)
+            git(root, "add", "--", publication.parent.as_posix())
+            head = signed_commit(root, publication_message(publication))
+
+            issues = validate_with_trusted_signature(root, base, head)
+
+        self.assertIn(
+            "range: publication pushes must not include infrastructure or other non-run changes",
+            issues,
+        )
+        self.assertNotIn(infrastructure_name, "\n".join(issues))
+
+    def test_transient_suffix_normalization_is_iterative_and_specific(self) -> None:
+        forbidden = (
+            b"auth.json.bak",
+            b"history.jsonl.bak",
+            b"config.toml~",
+            b"history.jsonl.gz.bak.old~",
+            b"auth.json.zst.backup.save",
+            b"history.jsonl.swp",
+            b"auth.json.tmp.123",
+            b".config.toml.swo",
+        )
+        ordinary = (
+            b"docs/backup-strategy.md",
+            b"docs/history-notes.md",
+            b"docs/old-design.md",
+            b"docs/save-points.txt",
+            b"docs/temporary-files.md",
+        )
+
+        for path in forbidden:
+            with self.subTest(path=path):
+                self.assertTrue(MODULE._is_forbidden_transient_path(path))
+        for path in ordinary:
+            with self.subTest(path=path):
+                self.assertFalse(MODULE._is_forbidden_transient_path(path))
+
+    def test_add_then_delete_raw_artifact_is_rejected_per_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base, _ = initialize_repository(root)
+            raw_component = "r" + "aw"
+            artifact_stem = "roll" + "out-private"
+            artifact = root / raw_component / (artifact_stem + ".jsonl")
+            artifact.parent.mkdir()
+            artifact.write_text("{}\n", encoding="utf-8")
+            git(root, "add", "--", artifact.relative_to(root).as_posix())
+            commit(root, "Add temporary artifact")
+
+            artifact.unlink()
+            artifact.parent.rmdir()
+            git(root, "add", "--all")
+            head = commit(root, "Delete temporary artifact")
+
+            self.assertFalse(artifact.exists())
+            issues = validate_with_trusted_signature(root, base, head)
+
+        self.assertEqual(
+            issues,
+            [
+                "commit 1: forbidden raw or transient path changed",
+                "commit 2: forbidden raw or transient path changed",
+            ],
+        )
+        self.assertNotIn(artifact_stem, "\n".join(issues))
+
+    def test_add_then_delete_transient_aliases_are_rejected_per_commit(self) -> None:
+        relative_names = ("auth.json.bak", "history.jsonl.bak", "config.toml~")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base, _ = initialize_repository(root)
+            for relative_name in relative_names:
+                (root / relative_name).write_text("{}\n", encoding="utf-8")
+            git(root, "add", "--", *relative_names)
+            commit(root, "Add temporary aliases")
+
+            for relative_name in relative_names:
+                (root / relative_name).unlink()
+            git(root, "add", "--all")
+            head = commit(root, "Delete temporary aliases")
+
+            issues = validate_with_trusted_signature(root, base, head)
+
+        self.assertEqual(
+            issues,
+            [
+                "commit 1: forbidden raw or transient path changed",
+                "commit 2: forbidden raw or transient path changed",
+            ],
+        )
+        diagnostics = "\n".join(issues)
+        for relative_name in relative_names:
+            self.assertNotIn(relative_name, diagnostics)
 
     def test_campaign_root_must_follow_every_segment_commit(self) -> None:
         campaign_ref = "campaign_ref_v2:" + "a" * 32
@@ -1028,6 +1132,10 @@ class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
         self.assertEqual(issues, [])
 
     def test_validsig_status_requires_allowlisted_fingerprint(self) -> None:
+        self.assertEqual(
+            MODULE.V2_SIGNING_FINGERPRINTS,
+            frozenset({b"40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52"}),
+        )
         allowed_fingerprint = next(iter(MODULE.V2_SIGNING_FINGERPRINTS))
         disallowed_fingerprint = b"0" * 40
 

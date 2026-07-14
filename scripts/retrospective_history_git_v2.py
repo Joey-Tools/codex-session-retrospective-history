@@ -60,8 +60,61 @@ RUN_ROUTE_COMPONENT_COUNT = 32
 RUN_PATH_COMPONENT_COUNT = 68
 WINDOW_ROUTE_DOMAIN = b"session-retrospective-retained-window-route-v2"
 V2_PUBLISHER_NAME = b"Codex Session Retrospective Publisher"
-V2_PUBLISHER_EMAIL = b"codex-session-retrospective@users.noreply.github.com"
-V2_SIGNING_FINGERPRINTS = frozenset({b"EFBBC913F49A5F6E0AF0D248F70246143DC28F32"})
+V2_PUBLISHER_EMAIL = b"12524680+JoeyTeng@users.noreply.github.com"
+V2_SIGNING_FINGERPRINTS = frozenset({b"40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52"})
+FORBIDDEN_TRANSIENT_COMPONENTS = frozenset(
+    {
+        b".codex",
+        b".codex-local",
+        b".codex-tmp",
+        b"archived_sessions",
+        b"raw",
+        b"scratch",
+        b"sessions",
+        b"transient",
+    }
+)
+FORBIDDEN_TRANSIENT_FILENAMES = frozenset(
+    {
+        b"auth.json",
+        b"config.toml",
+        b"history.jsonl",
+        b"session_index.jsonl",
+        b"source_metadata.json",
+        b"shard_manifest.json",
+        b"shards.jsonl",
+        b"turn_summaries.jsonl",
+    }
+)
+FORBIDDEN_TRANSIENT_NAME_STEMS = frozenset(
+    {
+        b"history",
+        b"session_index",
+        b"shard_manifest",
+        b"shards",
+        b"source_metadata",
+        b"turn_summaries",
+    }
+)
+FORBIDDEN_TRANSIENT_COMPACT_PARTS = frozenset(
+    {
+        b"conversationlog",
+        b"fullprompt",
+        b"messagelog",
+        b"promptlog",
+        b"rawtranscript",
+        b"tooloutput",
+        b"turnsummaries",
+        b"userprompt",
+    }
+)
+STRIPPABLE_TRANSIENT_SUFFIXES = frozenset(
+    {b".bz2", b".gz", b".json", b".jsonl", b".md", b".txt", b".xz", b".zip", b".zst"}
+)
+EDITOR_TRANSIENT_SUFFIX_RE = re.compile(
+    rb"\.(?:bak|backup|old|orig|save|swap|sw[a-z]|temp|temporary|tmp)(?:\.[0-9]+)?$",
+    re.I,
+)
 
 OID_RE = re.compile(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 RAW_DIFF_RE = re.compile(
@@ -214,6 +267,8 @@ class _DiffEntry:
 class _ParsedDiff:
     run_entries: tuple[_DiffEntry, ...]
     changed_path_count: int
+    forbidden_transient_path_changed: bool
+    non_run_path_changed: bool
 
 
 @dataclass(frozen=True)
@@ -534,9 +589,63 @@ def _is_run_candidate(path: bytes) -> bool:
     return first_component.lower() == b"runs"
 
 
+def _forbidden_transient_name(name: bytes) -> bool:
+    candidates: list[bytes] = []
+    stem = name
+    while True:
+        candidates.append(stem)
+        if stem.endswith(b"~"):
+            stem = stem[:-1]
+            continue
+        editor_match = EDITOR_TRANSIENT_SUFFIX_RE.search(stem)
+        if editor_match is not None:
+            stem = stem[: editor_match.start()]
+            continue
+        separator = stem.rfind(b".")
+        if separator <= 0 or stem[separator:].lower() not in STRIPPABLE_TRANSIENT_SUFFIXES:
+            break
+        stem = stem[:separator]
+    normalized_candidates = {
+        candidate.lower() for candidate in candidates if candidate
+    } | {
+        candidate[1:].lower()
+        for candidate in candidates
+        if candidate.startswith(b".") and len(candidate) > 1
+    }
+    if normalized_candidates.intersection(FORBIDDEN_TRANSIENT_FILENAMES):
+        return True
+    separated = re.sub(rb"([a-z0-9])([A-Z])", rb"\1 \2", stem)
+    tokens = [
+        token for token in re.split(rb"[^a-z0-9]+", separated.lower()) if token
+    ]
+    normalized = b"_".join(tokens)
+    compacted = b"".join(tokens)
+    return (
+        normalized in FORBIDDEN_TRANSIENT_NAME_STEMS
+        or compacted.startswith(b"raw")
+        or any(part in compacted for part in FORBIDDEN_TRANSIENT_COMPACT_PARTS)
+    )
+
+
+def _is_forbidden_transient_path(path: bytes) -> bool:
+    parts = tuple(path.split(b"/"))
+    if not parts or any(
+        part.lower() in FORBIDDEN_TRANSIENT_COMPONENTS
+        or _forbidden_transient_name(part)
+        for part in parts[:-1]
+    ):
+        return True
+    name = parts[-1].lower()
+    return (
+        name in FORBIDDEN_TRANSIENT_FILENAMES
+        or _forbidden_transient_name(parts[-1])
+        or name.startswith(b"rollout")
+    )
+
+
 def _parse_diff(raw: bytes) -> _ParsedDiff:
     if not raw:
-        return _ParsedDiff((), 0)
+        return _ParsedDiff((), 0, False, False)
     fields = raw.split(b"\0")
     if fields[-1] != b"":
         raise _ParseFailure
@@ -545,13 +654,19 @@ def _parse_diff(raw: bytes) -> _ParsedDiff:
         raise _ParseFailure
     entries: list[_DiffEntry] = []
     changed_path_count = 0
+    forbidden_transient_path_changed = False
+    non_run_path_changed = False
     for offset in range(0, len(fields), 2):
         metadata, path = fields[offset : offset + 2]
         match = RAW_DIFF_RE.fullmatch(metadata)
         if match is None:
             raise _ParseFailure
         changed_path_count += 1
+        forbidden_transient_path_changed = (
+            forbidden_transient_path_changed or _is_forbidden_transient_path(path)
+        )
         if not _is_run_candidate(path):
+            non_run_path_changed = True
             continue
         if len(entries) >= MAX_CHANGED_RUN_PATHS:
             raise _ParseFailure
@@ -566,7 +681,12 @@ def _parse_diff(raw: bytes) -> _ParsedDiff:
                 run_path=_parse_run_path(path),
             )
         )
-    return _ParsedDiff(tuple(entries), changed_path_count)
+    return _ParsedDiff(
+        tuple(entries),
+        changed_path_count,
+        forbidden_transient_path_changed,
+        non_run_path_changed,
+    )
 
 
 def _batch_object_info(
@@ -1395,6 +1515,8 @@ def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list
     publisher_identity: _PublisherIdentity | None = None
     publications: list[_PublicationFacts] = []
     revision_fact_count = 0
+    range_has_run_changes = False
+    range_has_non_run_changes = False
     for current_index, (commit_oid, parent_oid) in enumerate(commits, start=1):
         try:
             diff = _run_git(
@@ -1414,7 +1536,15 @@ def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list
                 max_stdout_bytes=MAX_DIFF_OUTPUT_BYTES,
             )
             parsed_diff = _parse_diff(diff.stdout)
+            if parsed_diff.forbidden_transient_path_changed:
+                issues.add(
+                    f"commit {current_index}: forbidden raw or transient path changed"
+                )
             entries = list(parsed_diff.run_entries)
+            range_has_run_changes = range_has_run_changes or bool(entries)
+            range_has_non_run_changes = (
+                range_has_non_run_changes or parsed_diff.non_run_path_changed
+            )
             if not entries:
                 continue
             publication_run = _validate_publication_run(
@@ -1468,6 +1598,10 @@ def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list
             issues.add(
                 f"commit {current_index}: bounded publication semantic inspection failed"
             )
+    if range_has_run_changes and range_has_non_run_changes:
+        issues.add(
+            "range: publication pushes must not include infrastructure or other non-run changes"
+        )
     _validate_cross_commit_order(publications, issues)
     return issues.items
 

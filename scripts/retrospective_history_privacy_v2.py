@@ -27,7 +27,7 @@ SCHEMA_PATH = (
 
 V2_COMMIT_IDENTITY = (
     "Codex Session Retrospective Publisher "
-    "<codex-session-retrospective@users.noreply.github.com>"
+    "<12524680+JoeyTeng@users.noreply.github.com>"
 )
 V2_COMMIT_MESSAGE_RE = re.compile(
     r"\APublish session retrospective v2 "
@@ -72,6 +72,7 @@ ARTIFACT_BASENAMES = frozenset(
 RUN_MODES = frozenset({"daily", "weekly", "baseline", "session"})
 MAX_JSON_DEPTH = 64
 MAX_JSON_NODES = 100_000
+MAX_JSON_CONTAINER_ITEMS = 100_000
 MAX_JSONL_ROWS = 100_000
 MAX_JSONL_NODES = 1_000_000
 RUN_ID_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -125,6 +126,7 @@ TYPED_REF_DEFS = frozenset(
         "summary_revision_ref",
         "topic_ref",
         "topic_revision_ref",
+        "trend_metric_ref",
         "transaction_ref",
         "trend_revision_ref",
         "turn_finding_revision_ref",
@@ -842,7 +844,133 @@ def _scan_json_value(
     return visited
 
 
-def _parse_json(text: str) -> Any:
+def _json_text_within_preparse_limits(
+    text: str, *, node_limit: int = MAX_JSON_NODES
+) -> bool:
+    """Bound JSON structure before the standard decoder materializes its graph."""
+
+    whitespace = " \t\r\n"
+    scalar_delimiters = " \t\r\n,]}:"
+    stack: list[list[Any]] = []
+    root_state = "value"
+    nodes = 0
+    index = 0
+
+    def register_value() -> bool:
+        nonlocal nodes, root_state
+        nodes += 1
+        if nodes > node_limit:
+            return False
+        if not stack:
+            if root_state == "value":
+                root_state = "done"
+            return True
+        frame = stack[-1]
+        if frame[0] == "array" and frame[1] == "value_or_end":
+            frame[1] = "comma_or_end"
+        elif frame[0] == "object" and frame[1] == "value":
+            frame[1] = "comma_or_end"
+        else:
+            return True
+        frame[2] += 1
+        return frame[2] <= MAX_JSON_CONTAINER_ITEMS
+
+    def skip_string(start: int) -> int:
+        cursor = start + 1
+        while cursor < len(text):
+            character = text[cursor]
+            if character == '"':
+                return cursor + 1
+            if character == "\\":
+                cursor += 2
+            else:
+                cursor += 1
+        return len(text)
+
+    while index < len(text):
+        while index < len(text) and text[index] in whitespace:
+            index += 1
+        if index >= len(text):
+            break
+
+        if stack:
+            frame = stack[-1]
+            character = text[index]
+            if frame[0] == "object":
+                if frame[1] == "key_or_end":
+                    if character == "}":
+                        stack.pop()
+                        index += 1
+                        continue
+                    if character != '"':
+                        return True
+                    index = skip_string(index)
+                    frame[1] = "colon"
+                    continue
+                if frame[1] == "colon":
+                    if character != ":":
+                        return True
+                    frame[1] = "value"
+                    index += 1
+                    continue
+                if frame[1] == "comma_or_end":
+                    if character == ",":
+                        frame[1] = "key_or_end"
+                        index += 1
+                        continue
+                    if character == "}":
+                        stack.pop()
+                        index += 1
+                        continue
+                    return True
+            elif frame[1] == "value_or_end" and character == "]":
+                stack.pop()
+                index += 1
+                continue
+            elif frame[1] == "comma_or_end":
+                if character == ",":
+                    frame[1] = "value_or_end"
+                    index += 1
+                    continue
+                if character == "]":
+                    stack.pop()
+                    index += 1
+                    continue
+                return True
+        elif root_state == "done":
+            return True
+
+        character = text[index]
+        if character in "{[":
+            if not register_value():
+                return False
+            if len(stack) + 1 > MAX_JSON_DEPTH:
+                return False
+            stack.append(
+                ["object", "key_or_end", 0]
+                if character == "{"
+                else ["array", "value_or_end", 0]
+            )
+            index += 1
+            continue
+        if character == '"':
+            if not register_value():
+                return False
+            index = skip_string(index)
+            continue
+        if character in ",:]}":
+            return True
+        if not register_value():
+            return False
+        index += 1
+        while index < len(text) and text[index] not in scalar_delimiters:
+            index += 1
+    return True
+
+
+def _parse_json(text: str, *, node_limit: int = MAX_JSON_NODES) -> Any:
+    if not _json_text_within_preparse_limits(text, node_limit=node_limit):
+        raise ValueError("retained JSON structural budget exceeded")
     return json.loads(
         text,
         object_pairs_hook=_reject_duplicate_keys,
@@ -850,7 +978,7 @@ def _parse_json(text: str) -> Any:
     )
 
 
-def _parse_jsonl(text: str) -> Any:
+def _jsonl_lines(text: str) -> Any:
     row_count = 0
     for line in io.StringIO(text):
         if not line.strip():
@@ -858,7 +986,7 @@ def _parse_jsonl(text: str) -> Any:
         row_count += 1
         if row_count > MAX_JSONL_ROWS:
             raise ValueError("retained JSONL row budget exceeded")
-        yield _parse_json(line)
+        yield line
 
 
 def _scan_report(text: str, issues: set[str]) -> None:
@@ -897,10 +1025,13 @@ def validate_v2_privacy(relative: Path, payload: bytes) -> list[str]:
     try:
         if basename.endswith(".jsonl"):
             remaining_nodes = MAX_JSONL_NODES
-            for value in _parse_jsonl(text):
+            for line in _jsonl_lines(text):
                 if remaining_nodes <= 0:
                     issues.add(ISSUE_FORMAT)
                     break
+                value = _parse_json(
+                    line, node_limit=min(MAX_JSON_NODES, remaining_nodes)
+                )
                 visited = _scan_json_value(value, issues, node_limit=remaining_nodes)
                 remaining_nodes -= visited
         elif basename.endswith(".json"):

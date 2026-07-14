@@ -370,6 +370,26 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
                 self.assertEqual(visited, node_limit + 1)
                 self.assertEqual(issues, {MODULE.ISSUE_FORMAT})
 
+    def test_wide_max_size_value_is_rejected_before_json_loads(self) -> None:
+        max_line_bytes = 16 * 1024 * 1024
+        prefix = b"[" + (b"0," * MODULE.MAX_JSON_NODES) + b"0]"
+        payload = prefix + (b" " * (max_line_bytes - len(prefix) - 1)) + b"\n"
+        self.assertEqual(len(payload), max_line_bytes)
+
+        for basename in ("summary.json", "episodes.jsonl"):
+            with self.subTest(basename=basename):
+                with mock.patch.object(
+                    MODULE.json,
+                    "loads",
+                    side_effect=AssertionError("json.loads must not be reached"),
+                ) as loads:
+                    issues = MODULE.validate_v2_privacy(
+                        artifact_path(basename), payload
+                    )
+
+                self.assertIn(MODULE.ISSUE_FORMAT, issues)
+                loads.assert_not_called()
+
     def test_json_recursion_error_is_caught_fail_closed(self) -> None:
         with mock.patch.object(MODULE, "_parse_json", side_effect=RecursionError):
             issues = MODULE.validate_v2_privacy(artifact_path("summary.json"), b"{}")

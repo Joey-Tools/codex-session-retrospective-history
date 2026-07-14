@@ -419,7 +419,7 @@
             },
             "metric_refs": {
               "items": {
-                "$ref": "#/$defs/aggregate_input_ref"
+                "$ref": "#/$defs/trend_metric_ref"
               },
               "maxItems": 64,
               "minItems": 1,
@@ -4872,6 +4872,9 @@
             "metric": {
               "$ref": "#/$defs/trend_metric_id"
             },
+            "metric_ref": {
+              "$ref": "#/$defs/trend_metric_ref"
+            },
             "normalized_change": {
               "$ref": "#/$defs/normalized_change"
             },
@@ -4889,6 +4892,7 @@
           },
           "required": [
             "metric",
+            "metric_ref",
             "status",
             "numerator",
             "denominator",
@@ -4947,6 +4951,11 @@
         "effective_recovery",
         "concise_communication"
       ],
+      "type": "string"
+    },
+    "trend_metric_ref": {
+      "maxLength": 50,
+      "pattern": "^trend_metric_ref_v2:[0-9a-f]{32}$",
       "type": "string"
     },
     "trend_report": {
