@@ -1,0 +1,790 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "The history validator must resolve the sibling schema, reject duplicate JSON keys, verify bytewise artifact inventory order, recompute retained_bundle_digest_v2 with the digest and publisher attestation omitted, and verify the detached publisher attestation over the resulting digest and run_ref.",
+  "additionalProperties": false,
+  "x-runtime-constraints": [
+    {
+      "applies_to_publication_role": "campaign_segment",
+      "constraint_id": "campaign_segment_ordinal_lte_campaign_segment_count",
+      "left_instance_pointer": "/campaign_segment_metadata/segment_ordinal",
+      "operator": "less_than_or_equal",
+      "right_instance_pointer": "/campaign_segment_count",
+      "validator": "scripts/retrospective_history_v2.py:_validate_manifest"
+    },
+    {
+      "constraint_id": "logical_run_id_matches_run_ref_and_history_path",
+      "left_instance_pointer": "/run_id",
+      "operator": "equals_run_ref_payload_and_bound_history_path",
+      "physical_path_validation": "history_validator_only",
+      "right_instance_pointer": "/run_ref",
+      "validator": "scripts/retrospective_history_v2.py:_validate_manifest"
+    },
+    {
+      "constraint_id": "production_configuration_root_binds_active_provenance",
+      "left_instance_pointer": "/production_configuration_root_v2",
+      "operator": "commits_exact_active_provenance_refs",
+      "right_instance_pointers": [
+        "/provenance/active_calibration_receipt_ref",
+        "/provenance/active_calibration_model_era_ref",
+        "/provenance/active_shadow_receipt_ref",
+        "/provenance/active_shadow_model_era_ref"
+      ],
+      "validator": "scripts/retrospective_history_v2.py:_validate_manifest"
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "partial"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gap_summary": {
+            "anyOf": [
+              {
+                "properties": {
+                  "source_repairable_gap_count": {
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "source_repairable_gap_count"
+                ]
+              },
+              {
+                "properties": {
+                  "semantic_repairable_gap_count": {
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "semantic_repairable_gap_count"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "complete"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gap_summary": {
+            "properties": {
+              "semantic_repairable_gap_count": {
+                "const": 0
+              },
+              "source_repairable_gap_count": {
+                "const": 0
+              },
+              "terminal_authorization_usage_refs": {
+                "maxItems": 0
+              },
+              "terminal_gap_count": {
+                "const": 0
+              }
+            },
+            "required": [
+              "source_repairable_gap_count",
+              "semantic_repairable_gap_count",
+              "terminal_gap_count",
+              "terminal_authorization_usage_refs"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution_kind": {
+            "const": "bootstrap_v2"
+          },
+          "status": {
+            "const": "complete_with_terminal_gaps"
+          }
+        },
+        "required": [
+          "execution_kind",
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gap_summary": {
+            "properties": {
+              "semantic_repairable_gap_count": {
+                "const": 0
+              },
+              "source_repairable_gap_count": {
+                "const": 0
+              },
+              "terminal_gap_count": {
+                "minimum": 1
+              }
+            },
+            "required": [
+              "source_repairable_gap_count",
+              "semantic_repairable_gap_count",
+              "terminal_gap_count"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution_kind": {
+            "const": "bootstrap_v2"
+          }
+        },
+        "required": [
+          "execution_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gap_summary": {
+            "properties": {
+              "privacy_breach_count": {
+                "const": 0
+              }
+            },
+            "required": [
+              "privacy_breach_count"
+            ]
+          },
+          "publication_role": {
+            "const": "standalone"
+          },
+          "supersession": {
+            "properties": {
+              "reason": {
+                "not": {
+                  "const": "compliance_retraction"
+                }
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        },
+        "required": [
+          "publication_role",
+          "gap_summary",
+          "supersession"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution_kind": {
+            "const": "retrospective"
+          },
+          "status": {
+            "const": "complete_with_terminal_gaps"
+          }
+        },
+        "required": [
+          "execution_kind",
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gap_summary": {
+            "properties": {
+              "semantic_repairable_gap_count": {
+                "const": 0
+              },
+              "source_repairable_gap_count": {
+                "const": 0
+              },
+              "terminal_authorization_usage_refs": {
+                "minItems": 1
+              },
+              "terminal_gap_count": {
+                "minimum": 1
+              }
+            },
+            "required": [
+              "source_repairable_gap_count",
+              "semantic_repairable_gap_count",
+              "terminal_gap_count",
+              "terminal_authorization_usage_refs"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution_kind": {
+            "const": "retrospective"
+          }
+        },
+        "required": [
+          "execution_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gap_summary": {
+            "properties": {
+              "privacy_breach_count": {
+                "const": 0
+              }
+            },
+            "required": [
+              "privacy_breach_count"
+            ]
+          },
+          "eras": {
+            "properties": {
+              "model_eras": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "model_eras"
+            ]
+          },
+          "provenance": {
+            "properties": {
+              "calibration_receipt_refs": {
+                "minItems": 1
+              },
+              "job_refs": {
+                "minItems": 1
+              },
+              "provider_policy_refs": {
+                "minItems": 1
+              },
+              "request_egress_receipt_refs": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "job_refs",
+              "provider_policy_refs",
+              "request_egress_receipt_refs",
+              "calibration_receipt_refs"
+            ]
+          },
+          "supersession": {
+            "properties": {
+              "reason": {
+                "not": {
+                  "const": "compliance_retraction"
+                }
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution_kind": {
+            "const": "compliance_retraction"
+          }
+        },
+        "required": [
+          "execution_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gap_summary": {
+            "properties": {
+              "privacy_breach_count": {
+                "minimum": 1
+              },
+              "semantic_repairable_gap_count": {
+                "const": 0
+              },
+              "source_repairable_gap_count": {
+                "const": 0
+              },
+              "terminal_authorization_usage_refs": {
+                "maxItems": 0
+              },
+              "terminal_gap_count": {
+                "minimum": 1
+              }
+            },
+            "required": [
+              "source_repairable_gap_count",
+              "semantic_repairable_gap_count",
+              "terminal_gap_count",
+              "terminal_authorization_usage_refs",
+              "privacy_breach_count"
+            ]
+          },
+          "publication_role": {
+            "enum": [
+              "standalone",
+              "campaign_root"
+            ]
+          },
+          "status": {
+            "const": "complete_with_terminal_gaps"
+          },
+          "supersession": {
+            "properties": {
+              "reason": {
+                "const": "compliance_retraction"
+              },
+              "supersedes_run_revision_refs": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "reason",
+              "supersedes_run_revision_refs"
+            ]
+          }
+        },
+        "required": [
+          "publication_role",
+          "status",
+          "gap_summary",
+          "supersession"
+        ]
+      }
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "mode": {
+              "const": "daily"
+            },
+            "window": {
+              "properties": {
+                "mode": {
+                  "const": "daily"
+                }
+              },
+              "required": [
+                "mode"
+              ]
+            }
+          },
+          "required": [
+            "mode",
+            "window"
+          ]
+        },
+        {
+          "properties": {
+            "mode": {
+              "const": "weekly"
+            },
+            "window": {
+              "properties": {
+                "mode": {
+                  "const": "weekly"
+                }
+              },
+              "required": [
+                "mode"
+              ]
+            }
+          },
+          "required": [
+            "mode",
+            "window"
+          ]
+        },
+        {
+          "properties": {
+            "mode": {
+              "const": "baseline"
+            },
+            "window": {
+              "properties": {
+                "mode": {
+                  "const": "baseline"
+                }
+              },
+              "required": [
+                "mode"
+              ]
+            }
+          },
+          "required": [
+            "mode",
+            "window"
+          ]
+        },
+        {
+          "properties": {
+            "mode": {
+              "const": "session"
+            },
+            "window": {
+              "properties": {
+                "mode": {
+                  "const": "session"
+                }
+              },
+              "required": [
+                "mode"
+              ]
+            }
+          },
+          "required": [
+            "mode",
+            "window"
+          ]
+        }
+      ]
+    },
+    {
+      "if": {
+        "properties": {
+          "publication_role": {
+            "enum": [
+              "campaign_segment",
+              "campaign_root"
+            ]
+          }
+        },
+        "required": [
+          "publication_role"
+        ]
+      },
+      "then": {
+        "oneOf": [
+          {
+            "properties": {
+              "mode": {
+                "const": "baseline"
+              },
+              "publication_campaign_reason": {
+                "const": "baseline_window"
+              }
+            },
+            "required": [
+              "mode",
+              "publication_campaign_reason"
+            ]
+          },
+          {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "daily",
+                  "weekly",
+                  "session"
+                ]
+              },
+              "publication_campaign_reason": {
+                "const": "size_partition"
+              }
+            },
+            "required": [
+              "mode",
+              "publication_campaign_reason"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "publication_role": {
+            "const": "standalone"
+          }
+        },
+        "required": [
+          "publication_role"
+        ]
+      },
+      "then": {
+        "properties": {
+          "campaign_ref": false,
+          "campaign_segment_count": false,
+          "campaign_segment_metadata": false,
+          "campaign_segment_root_v2": false,
+          "publication_campaign_reason": false,
+          "head_bindings": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/publication_head_bindings"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "publication_role": {
+            "const": "campaign_segment"
+          }
+        },
+        "required": [
+          "publication_role"
+        ]
+      },
+      "then": {
+        "properties": {
+          "campaign_ref": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_ref"
+          },
+          "campaign_segment_count": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_segment_count"
+          },
+          "campaign_segment_metadata": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_segment_metadata"
+          },
+          "campaign_segment_root_v2": false,
+          "execution_kind": {
+            "const": "retrospective"
+          },
+          "head_bindings": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_segment_head_bindings"
+          },
+          "publication_campaign_reason": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/publication_campaign_reason"
+          },
+          "supersession": {
+            "properties": {
+              "reason": {
+                "const": "initial"
+              },
+              "supersedes_episode_revision_refs": {
+                "maxItems": 0
+              },
+              "supersedes_run_revision_refs": {
+                "maxItems": 0
+              },
+              "supersedes_topic_revision_refs": {
+                "maxItems": 0
+              },
+              "supersedes_turn_finding_revision_refs": {
+                "maxItems": 0
+              }
+            },
+            "required": [
+              "reason",
+              "supersedes_run_revision_refs",
+              "supersedes_episode_revision_refs",
+              "supersedes_topic_revision_refs",
+              "supersedes_turn_finding_revision_refs"
+            ]
+          }
+        },
+        "required": [
+          "execution_kind",
+          "publication_campaign_reason",
+          "campaign_ref",
+          "campaign_segment_count",
+          "campaign_segment_metadata"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "publication_role": {
+            "const": "campaign_root"
+          }
+        },
+        "required": [
+          "publication_role"
+        ]
+      },
+      "then": {
+        "properties": {
+          "campaign_ref": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_ref"
+          },
+          "campaign_segment_count": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_segment_count"
+          },
+          "campaign_segment_metadata": false,
+          "campaign_segment_root_v2": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_segment_root_v2"
+          },
+          "execution_kind": {
+            "description": "A campaign root is a retrospective publication or a compliance lifecycle retraction of a prior root.",
+            "enum": [
+              "retrospective",
+              "compliance_retraction"
+            ]
+          },
+          "head_bindings": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/publication_head_bindings"
+          },
+          "publication_campaign_reason": {
+            "$ref": "session-retrospective-v2.schema.json#/$defs/publication_campaign_reason"
+          }
+        },
+        "required": [
+          "execution_kind",
+          "publication_campaign_reason",
+          "campaign_ref",
+          "campaign_segment_count",
+          "campaign_segment_root_v2"
+        ]
+      }
+    }
+  ],
+  "description": "Standalone privacy-gate entry point for retained Session Retrospective v2 manifest.json.",
+  "properties": {
+    "artifact_inventory": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/artifact_inventory"
+    },
+    "artifact_type": {
+      "const": "manifest"
+    },
+    "bundle_digest_contract": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/bundle_digest_contract"
+    },
+    "campaign_ref": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_ref"
+    },
+    "campaign_segment_count": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_segment_count"
+    },
+    "campaign_segment_metadata": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_segment_metadata"
+    },
+    "campaign_segment_root_v2": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_segment_root_v2"
+    },
+    "publication_campaign_reason": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/publication_campaign_reason"
+    },
+    "eras": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/era_catalog"
+    },
+    "execution_kind": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/execution_kind"
+    },
+    "gap_summary": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/gap_summary"
+    },
+    "head_bindings": {
+      "oneOf": [
+        {
+          "$ref": "session-retrospective-v2.schema.json#/$defs/publication_head_bindings"
+        },
+        {
+          "$ref": "session-retrospective-v2.schema.json#/$defs/campaign_segment_head_bindings"
+        }
+      ]
+    },
+    "key_ids": {
+      "items": {
+        "$ref": "session-retrospective-v2.schema.json#/$defs/key_id"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "mode": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/mode"
+    },
+    "prepared_at": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/coarse_timestamp"
+    },
+    "provenance": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/run_provenance"
+    },
+    "production_configuration_root_v2": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/production_configuration_root_v2"
+    },
+    "publisher_attestation": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/publisher_attestation"
+    },
+    "publication_role": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/publication_role"
+    },
+    "retained_bundle_digest_v2": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/retained_bundle_digest_v2"
+    },
+    "retention_contract": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/retention_contract"
+    },
+    "run_id": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/run_id"
+    },
+    "run_input_ref": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/run_input_ref"
+    },
+    "run_ref": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/run_ref"
+    },
+    "run_revision_ref": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/run_revision_ref"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "status": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/publication_status"
+    },
+    "supersession": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/supersession"
+    },
+    "window": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/window"
+    }
+  },
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "execution_kind",
+    "publication_role",
+    "mode",
+    "window",
+    "run_id",
+    "run_input_ref",
+    "run_ref",
+    "run_revision_ref",
+    "key_ids",
+    "prepared_at",
+    "status",
+    "gap_summary",
+    "supersession",
+    "artifact_inventory",
+    "retained_bundle_digest_v2",
+    "bundle_digest_contract",
+    "head_bindings",
+    "eras",
+    "provenance",
+    "production_configuration_root_v2",
+    "publisher_attestation",
+    "retention_contract"
+  ],
+  "title": "Retained Session Retrospective Manifest v2",
+  "type": "object"
+}
