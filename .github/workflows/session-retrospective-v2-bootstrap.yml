@@ -1,0 +1,118 @@
+name: Session Retrospective v2 Bootstrap
+
+on:
+  pull_request_target:
+    branches: [master]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retrospective-v2-bootstrap-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  candidate-validation:
+    name: Bootstrap candidate validation
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+      CANDIDATE_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Validate immutable candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$CANDIDATE_SHA" in
+            ""|*[!0-9a-f]*)
+              echo "Candidate SHA must be lowercase hexadecimal." >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#CANDIDATE_SHA}" -ne 40 ] && [ "${#CANDIDATE_SHA}" -ne 64 ]; then
+            echo "Candidate SHA must be a canonical object ID." >&2
+            exit 1
+          fi
+          if [ "$CANDIDATE_REPOSITORY" != "${GITHUB_REPOSITORY}" ]; then
+            echo "Candidate repository must be the base repository." >&2
+            exit 1
+          fi
+      - name: Checkout candidate without retained credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact candidate checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git -C candidate rev-parse --verify HEAD)"
+          if [ "$actual" != "$CANDIDATE_SHA" ]; then
+            echo "Candidate checkout does not match the event head." >&2
+            exit 1
+          fi
+          if git -C candidate config --local --get-regexp \
+            '^(http\..*\.extraheader|credential\.helper)$' >/dev/null 2>&1; then
+            echo "Checkout credentials remained in local Git configuration." >&2
+            exit 1
+          fi
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Install hash-pinned candidate dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          clean_home="$RUNNER_TEMP/retrospective-v2-bootstrap-home"
+          install -d -m 700 "$clean_home"
+          env -i \
+            HOME="$clean_home" \
+            LANG=C.UTF-8 \
+            LC_ALL=C.UTF-8 \
+            PATH="$PATH" \
+            PIP_CONFIG_FILE=/dev/null \
+            python -m pip --isolated install --require-hashes \
+              -r candidate/requirements-v2.txt
+      - name: Run candidate validation without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          clean_home="$RUNNER_TEMP/retrospective-v2-bootstrap-home"
+          cd candidate
+          env -i \
+            HOME="$clean_home" \
+            LANG=C.UTF-8 \
+            LC_ALL=C.UTF-8 \
+            PATH="$PATH" \
+            PYTHONUNBUFFERED=1 \
+            GIT_CONFIG_GLOBAL=/dev/null \
+            GIT_CONFIG_NOSYSTEM=1 \
+            python -m compileall -q scripts tests
+          env -i \
+            HOME="$clean_home" \
+            LANG=C.UTF-8 \
+            LC_ALL=C.UTF-8 \
+            PATH="$PATH" \
+            PYTHONUNBUFFERED=1 \
+            GIT_CONFIG_GLOBAL=/dev/null \
+            GIT_CONFIG_NOSYSTEM=1 \
+            python -m unittest discover -s tests
+          env -i \
+            HOME="$clean_home" \
+            LANG=C.UTF-8 \
+            LC_ALL=C.UTF-8 \
+            PATH="$PATH" \
+            PYTHONUNBUFFERED=1 \
+            GIT_CONFIG_GLOBAL=/dev/null \
+            GIT_CONFIG_NOSYSTEM=1 \
+            python scripts/validate_retained_history.py --root .
