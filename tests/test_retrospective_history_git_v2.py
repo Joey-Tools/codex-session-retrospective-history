@@ -431,6 +431,35 @@ def commit_tree(root: Path, tree_oid: bytes, parent_oid: str, message: str) -> s
 
 
 class RetrospectiveHistoryGitV2Tests(unittest.TestCase):
+    def test_direct_script_import_loads_the_structured_bundle_validator(self) -> None:
+        script = (
+            "import retrospective_history_git_v2 as module; "
+            "print(module._load_structured_publication_validator().__name__)"
+        )
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(SCRIPT.parent)
+        with tempfile.TemporaryDirectory() as raw:
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=raw,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                shell=False,
+                timeout=60,
+            )
+
+        self.assertEqual(
+            result.returncode,
+            0,
+            result.stderr.decode("utf-8", errors="replace"),
+        )
+        self.assertEqual(
+            result.stdout,
+            b"retrospective_history_v2\n",
+        )
+
     def test_bounded_process_kills_on_output_cap_and_timeout(self) -> None:
         environment = os.environ.copy()
         for stream_name in ("stdout", "stderr"):

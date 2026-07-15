@@ -1882,13 +1882,23 @@ def _charge_strict_publication_parse(
             )
 
 
+def _load_structured_publication_validator() -> Any:
+    try:
+        from scripts import retrospective_history_v2 as validator
+    except ModuleNotFoundError as error:
+        if error.name != "scripts":
+            raise
+        import retrospective_history_v2 as validator
+    return validator
+
+
 def _strict_validate_publication_bundle(
     publication_run: _RunPath, blobs: dict[str, bytes]
 ) -> list[str]:
     if frozenset(blobs) != RUN_ARTIFACTS:
         return ["publication bundle is incomplete"]
     try:
-        from scripts import retrospective_history_v2 as validator
+        validator = _load_structured_publication_validator()
 
         required_attributes = (
             "MAX_BUNDLE_ARTIFACT_BYTES",
