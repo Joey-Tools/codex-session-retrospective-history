@@ -132,6 +132,13 @@ immutable merge plan and cannot contain retained runs.
 A trust-root upgrade is the exception: it must contain exactly one
 maintainer-signed commit under the separate protocol below.
 
+CI imports only the checked-in public packets from
+`retrospective-history-v2-admin-public.asc` and
+`retrospective-history-v2-publisher.asc` in the trusted base. The admin bundle
+contains the pinned maintainer and GitHub signing public keys. Private signing
+keys are local authority material and must never be committed or consumed by
+the workflow.
+
 ### Publisher Attestation
 
 A publication commit adds exactly one complete eight-artifact `runs/**` bundle,

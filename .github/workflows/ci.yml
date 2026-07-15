@@ -183,7 +183,7 @@ jobs:
             .github/workflows/ci.yml
             requirements-v2.in
             requirements-v2.txt
-            retrospective-history-v2-admin.asc
+            retrospective-history-v2-admin-public.asc
             retrospective-history-v2-publisher.asc
             schemas/retained-manifest-v2.schema.json
             schemas/session-retrospective-v2.schema.json
@@ -257,7 +257,7 @@ jobs:
           TRUSTED_GNUPGHOME="$RUNNER_TEMP/rh2-gpg"
           install -d -m 700 "$TRUSTED_GNUPGHOME"
           KEY_FILES=(
-            "$TRUSTED_ROOT/retrospective-history-v2-admin.asc"
+            "$TRUSTED_ROOT/retrospective-history-v2-admin-public.asc"
             "$TRUSTED_ROOT/retrospective-history-v2-publisher.asc"
           )
           for key_file in "${KEY_FILES[@]}"; do

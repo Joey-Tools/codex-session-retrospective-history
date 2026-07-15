@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import re
 import sys
 import unittest
 from unittest import mock
@@ -149,6 +150,22 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
             ),
         )
         self.assertIn(MODULE.ISSUE_SCALAR, issues)
+
+    def test_canonical_attestation_payload_is_not_scanned_as_prose(self) -> None:
+        canonical = {
+            "signer_fingerprint": PUBLISHER_FINGERPRINT,
+            "signature": CANONICAL_PUBLISHER_SIGNATURE,
+        }
+        armor_fragment = CANONICAL_PUBLISHER_SIGNATURE.splitlines()[2][4:16]
+        with mock.patch.object(
+            MODULE,
+            "URL_PATTERNS",
+            (re.compile(re.escape(armor_fragment)),),
+        ):
+            self.assertEqual(
+                MODULE.validate_v2_privacy(artifact_path(), encoded(canonical)),
+                [],
+            )
 
     def test_accepts_closed_structured_values_and_scoped_commitments(self) -> None:
         payload = {

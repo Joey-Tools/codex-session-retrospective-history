@@ -865,6 +865,10 @@ def _scan_json_value(
         )
         if not allowed:
             issues.add(ISSUE_SCALAR)
+        if current_field == "signature" and allowed and opaque:
+            # The canonical armor parser owns cryptographic payload validation.
+            # Random base64 must not be interpreted as retained prose.
+            continue
         _scan_text_risks(current, issues, allow_opaque=opaque, prose=prose)
     return visited
 

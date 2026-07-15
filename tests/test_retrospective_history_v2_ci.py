@@ -39,7 +39,7 @@ TRUSTED_PATHS = (
     ".github/workflows/ci.yml",
     "requirements-v2.in",
     "requirements-v2.txt",
-    "retrospective-history-v2-admin.asc",
+    "retrospective-history-v2-admin-public.asc",
     "retrospective-history-v2-publisher.asc",
     "schemas/retained-manifest-v2.schema.json",
     "schemas/session-retrospective-v2.schema.json",
@@ -223,7 +223,7 @@ class RetrospectiveHistoryV2CITests(unittest.TestCase):
         for relative in ADMIN_PATHS:
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            if relative == "retrospective-history-v2-admin.asc":
+            if relative == "retrospective-history-v2-admin-public.asc":
                 target.write_bytes(self.maintainer_public_key + self.github_public_key)
             elif relative == "retrospective-history-v2-publisher.asc":
                 target.write_bytes(self.publisher_public_key)
@@ -716,10 +716,59 @@ class RetrospectiveHistoryV2CITests(unittest.TestCase):
         self,
     ) -> None:
         script = workflow_run_script("Import trusted signing keys")
+        self.assertIn("retrospective-history-v2-admin-public.asc", script)
+        self.assertNotIn("retrospective-history-v2-admin.asc", script)
         self.assertIn("--import-options show-only --dry-run --import", script)
         self.assertIn('$1 == "sec" || $1 == "ssb"', script)
         self.assertIn("--list-secret-keys", script)
         self.assertIn('[ -n "$SECRET_RECORDS" ]', script)
+
+    def test_private_admin_key_is_ignored_and_never_imported(self) -> None:
+        ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("retrospective-history-v2-admin.asc", ignored)
+        self.assertNotIn("retrospective-history-v2-admin.asc", workflow)
+        self.assertIn("retrospective-history-v2-admin-public.asc", workflow)
+
+    def test_checked_in_admin_keyring_contains_only_pinned_public_keys(
+        self,
+    ) -> None:
+        self.require_gpg()
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw) / "gnupg"
+            home.mkdir(mode=0o700)
+            inspected = gpg(
+                home,
+                "--with-colons",
+                "--import-options",
+                "show-only",
+                "--dry-run",
+                "--import",
+                str(ROOT / "retrospective-history-v2-admin-public.asc"),
+            )
+
+        self.assertEqual(
+            inspected.returncode, 0, inspected.stderr.decode(errors="replace")
+        )
+        records = [
+            line.split(":")
+            for line in inspected.stdout.decode("utf-8").splitlines()
+            if line
+        ]
+        self.assertFalse(any(record[0] in {"sec", "ssb"} for record in records))
+        primary_fingerprints: list[str] = []
+        expect_primary_fingerprint = False
+        for record in records:
+            if record[0] == "pub":
+                expect_primary_fingerprint = True
+            elif record[0] == "fpr" and expect_primary_fingerprint:
+                primary_fingerprints.append(record[9])
+                expect_primary_fingerprint = False
+        self.assertEqual(
+            primary_fingerprints,
+            [MAINTAINER_FINGERPRINT, GITHUB_FINGERPRINT],
+        )
 
     def test_empty_gnupg_import_and_production_validation_chain(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

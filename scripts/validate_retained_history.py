@@ -151,7 +151,7 @@ ROOT_DOC_FILES = frozenset(
         "reports/README.md",
         "requirements-v2.in",
         "requirements-v2.txt",
-        "retrospective-history-v2-admin.asc",
+        "retrospective-history-v2-admin-public.asc",
         "retrospective-history-v2-publisher.asc",
     }
 )

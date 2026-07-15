@@ -2553,7 +2553,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (root / "retrospective-history-v2-admin.asc").write_text(
+            (root / "retrospective-history-v2-admin-public.asc").write_text(
                 "-----BEGIN PGP PUBLIC KEY BLOCK-----\n"
                 "reviewed-public-key-fixture\n"
                 "-----END PGP PUBLIC KEY BLOCK-----\n",
