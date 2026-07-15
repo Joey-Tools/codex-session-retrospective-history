@@ -13,7 +13,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("pull_request_target:", workflow)
-        self.assertNotIn("pull_request:", workflow)
+        self.assertIn("\n  pull_request:\n", workflow)
         self.assertEqual(workflow.count("contents: read"), 2)
         self.assertNotIn("contents: write", workflow)
         self.assertNotIn("pull-requests: write", workflow)
@@ -26,6 +26,16 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertIn(
             "github.event.pull_request.head.ref == "
             "'wip/session-retrospective-v2-history'",
+            workflow,
+        )
+        self.assertIn("github.event_name == 'pull_request_target'", workflow)
+        self.assertIn("github.event_name == 'pull_request'", workflow)
+        self.assertIn(
+            "'wip/session-retrospective-v2-ci-bootstrap'",
+            workflow,
+        )
+        self.assertIn(
+            ".github/workflows/session-retrospective-v2-bootstrap.yml",
             workflow,
         )
         self.assertIn("timeout-minutes: 30", workflow)

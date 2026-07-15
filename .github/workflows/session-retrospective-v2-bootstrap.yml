@@ -1,6 +1,12 @@
 name: Session Retrospective v2 Bootstrap
 
 on:
+  pull_request:
+    branches: [master]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - .github/workflows/session-retrospective-v2-bootstrap.yml
+      - tests/test_session_retrospective_v2_bootstrap.py
   pull_request_target:
     branches: [master]
     types: [opened, reopened, synchronize, ready_for_review]
@@ -18,7 +24,11 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.base.ref == 'master' &&
-      github.event.pull_request.head.ref == 'wip/session-retrospective-v2-history'
+      ((github.event_name == 'pull_request_target' &&
+        github.event.pull_request.head.ref == 'wip/session-retrospective-v2-history') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.ref ==
+          'wip/session-retrospective-v2-ci-bootstrap'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
