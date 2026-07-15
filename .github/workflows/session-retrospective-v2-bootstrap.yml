@@ -17,8 +17,10 @@ jobs:
     name: Bootstrap candidate validation
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.base.ref == 'master'
+      github.event.pull_request.base.ref == 'master' &&
+      github.event.pull_request.head.ref == 'wip/session-retrospective-v2-history'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     env:

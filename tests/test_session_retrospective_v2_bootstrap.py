@@ -23,6 +23,12 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("github.event.pull_request.base.ref == 'master'", workflow)
+        self.assertIn(
+            "github.event.pull_request.head.ref == "
+            "'wip/session-retrospective-v2-history'",
+            workflow,
+        )
+        self.assertIn("timeout-minutes: 30", workflow)
 
     def test_bootstrap_binds_and_scrubs_candidate_execution(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
