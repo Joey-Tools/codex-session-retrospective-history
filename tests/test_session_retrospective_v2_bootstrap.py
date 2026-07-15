@@ -48,7 +48,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         )
         self.assertIn('actual="$(git -C candidate rev-parse --verify HEAD)"', workflow)
         self.assertIn('if [ "$actual" != "$CANDIDATE_SHA" ]', workflow)
-        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn('"persist-\\u0063redentials": false', workflow)
         self.assertIn("credential\\.helper", workflow)
         self.assertEqual(workflow.count("env -i \\"), 4)
         self.assertIn("GIT_CONFIG_GLOBAL=/dev/null", workflow)

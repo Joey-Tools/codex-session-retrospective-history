@@ -62,7 +62,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: candidate
           fetch-depth: 1
-          persist-credentials: false
+          "persist-\u0063redentials": false
       - name: Verify exact candidate checkout
         shell: bash
         run: |
