@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "The history validator must resolve the sibling schema, reject duplicate JSON keys, verify bytewise artifact inventory order, and recompute retained_bundle_digest_v2 with only that manifest member omitted.",
+  "$comment": "The history validator must resolve the sibling schema, reject duplicate JSON keys, verify bytewise artifact inventory order, recompute retained_bundle_digest_v2 with the digest and publisher attestation omitted, and verify the detached publisher attestation over the resulting digest and run_ref.",
   "additionalProperties": false,
   "x-runtime-constraints": [
     {
@@ -722,6 +722,9 @@
     "production_configuration_root_v2": {
       "$ref": "session-retrospective-v2.schema.json#/$defs/production_configuration_root_v2"
     },
+    "publisher_attestation": {
+      "$ref": "session-retrospective-v2.schema.json#/$defs/publisher_attestation"
+    },
     "publication_role": {
       "$ref": "session-retrospective-v2.schema.json#/$defs/publication_role"
     },
@@ -779,6 +782,7 @@
     "eras",
     "provenance",
     "production_configuration_root_v2",
+    "publisher_attestation",
     "retention_contract"
   ],
   "title": "Retained Session Retrospective Manifest v2",

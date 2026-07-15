@@ -21,6 +21,13 @@ SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
 LOGICAL_RUN_ID = "ab" * 32
 CAMPAIGN_MODES = ("daily", "weekly", "session", "baseline")
 PRODUCTION_CONFIGURATION_ROOT = "production_configuration_root_v2:sha256:" + "a" * 64
+FAKE_PUBLISHER_SIGNATURE = (
+    "-----BEGIN PGP SIGNATURE-----\n\n"
+    "wjQEAAEIAB0FAgAAAAEWIQRA+l0FrHo9XBgLA3/23Pegb/ycUgAKCRD23Pegb/yc\n"
+    "UgAAAAEB\n"
+    "=pLXK\n"
+    "-----END PGP SIGNATURE-----"
+)
 BOOTSTRAP_GAP_REASONS = (
     "bootstrap_deferred_to_baseline",
     "legacy_horizon_unknown",
@@ -389,12 +396,17 @@ def full_manifest(
         "supersession": supersession_value,
         "artifact_inventory": artifact_inventory(),
         "retained_bundle_digest_v2": "retained_bundle_digest_v2:sha256:" + "a" * 64,
+        "publisher_attestation": {
+            "scheme": "openpgp-detached-v1",
+            "signer_fingerprint": "40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52",
+            "signature": FAKE_PUBLISHER_SIGNATURE,
+        },
         "bundle_digest_contract": {
             "algorithm": "sha-256",
             "domain_tag": "session-retrospective-retained-bundle-v2",
             "ordering": "bytewise-basename",
             "framing": "typed-name-length-v2",
-            "manifest_projection": "omit-retained_bundle_digest_v2-only",
+            "manifest_projection": "omit-digest-and-publisher-attestation-v2",
         },
         "head_bindings": canonical_head_bindings(),
         "eras": era_catalog(with_model_provenance),
@@ -542,6 +554,55 @@ class RetrospectiveHistoryV2SchemaExtensionTests(unittest.TestCase):
         )
         self.assertFalse(SESSION_SCHEMA["$defs"]["manifest"]["additionalProperties"])
         self.assertFalse(MANIFEST_SCHEMA["additionalProperties"])
+
+    def test_publisher_attestation_is_required_and_closed(self) -> None:
+        manifest = full_manifest()
+        assert_valid_for_both(self, manifest)
+
+        missing = copy.deepcopy(manifest)
+        del missing["publisher_attestation"]
+        assert_invalid_for_both(self, missing)
+
+        invalid_attestations = (
+            {
+                "scheme": "commit-signature-v1",
+                "signer_fingerprint": "A" * 40,
+                "signature": FAKE_PUBLISHER_SIGNATURE,
+            },
+            {
+                "scheme": "openpgp-detached-v1",
+                "signer_fingerprint": "a" * 40,
+                "signature": FAKE_PUBLISHER_SIGNATURE,
+            },
+            {
+                "scheme": "openpgp-detached-v1",
+                "signer_fingerprint": "A" * 40,
+                "signature": "not-an-armored-signature",
+            },
+            {
+                "scheme": "openpgp-detached-v1",
+                "signer_fingerprint": "A" * 40,
+                "signature": FAKE_PUBLISHER_SIGNATURE.replace(
+                    "\n\n", "\nComment: retained-header-leak\n\n", 1
+                ),
+            },
+            {
+                "scheme": "openpgp-detached-v1",
+                "signer_fingerprint": "A" * 40,
+                "signature": FAKE_PUBLISHER_SIGNATURE.replace("=pLXK\n", ""),
+            },
+            {
+                "scheme": "openpgp-detached-v1",
+                "signer_fingerprint": "A" * 40,
+                "signature": FAKE_PUBLISHER_SIGNATURE,
+                "extra": "not-allowed",
+            },
+        )
+        for attestation in invalid_attestations:
+            with self.subTest(attestation=attestation):
+                invalid = copy.deepcopy(manifest)
+                invalid["publisher_attestation"] = attestation
+                assert_invalid_for_both(self, invalid)
 
     def test_v1_schema_hashes_remain_unchanged(self) -> None:
         for path, expected in V1_SCHEMA_HASHES.items():

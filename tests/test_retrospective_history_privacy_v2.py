@@ -36,6 +36,14 @@ GIT_SPEC.loader.exec_module(GIT_MODULE)
 
 RUN_ID = "a" * 64
 RUN_REF = "run_ref_v2:" + RUN_ID
+PUBLISHER_FINGERPRINT = "40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52"
+CANONICAL_PUBLISHER_SIGNATURE = (
+    "-----BEGIN PGP SIGNATURE-----\n\n"
+    "wjQEAAEIAB0FAgAAAAEWIQRA+l0FrHo9XBgLA3/23Pegb/ycUgAKCRD23Pegb/yc\n"
+    "UgAAAAEB\n"
+    "=pLXK\n"
+    "-----END PGP SIGNATURE-----"
+)
 
 
 def artifact_path(basename: str = "manifest.json") -> Path:
@@ -105,6 +113,43 @@ def risky_publisher_email() -> str:
 
 
 class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
+    def test_attestation_armor_is_canonical_and_header_free(self) -> None:
+        canonical = {
+            "signer_fingerprint": PUBLISHER_FINGERPRINT,
+            "signature": CANONICAL_PUBLISHER_SIGNATURE,
+        }
+        self.assertEqual(
+            MODULE.validate_v2_privacy(artifact_path(), encoded(canonical)), []
+        )
+
+        noncanonical = (
+            "-----BEGIN PGP SIGNATURE-----\n"
+            "Comment: retained-header-leak\n\n"
+            + CANONICAL_PUBLISHER_SIGNATURE.split("\n\n", 1)[1]
+        )
+        issues = MODULE.validate_v2_privacy(
+            artifact_path(),
+            encoded(
+                {
+                    "signer_fingerprint": PUBLISHER_FINGERPRINT,
+                    "signature": noncanonical,
+                }
+            ),
+        )
+        self.assertIn(MODULE.ISSUE_SCALAR, issues)
+
+        bad_checksum = CANONICAL_PUBLISHER_SIGNATURE.replace("=pLXK", "=AAAA")
+        issues = MODULE.validate_v2_privacy(
+            artifact_path(),
+            encoded(
+                {
+                    "signer_fingerprint": PUBLISHER_FINGERPRINT,
+                    "signature": bad_checksum,
+                }
+            ),
+        )
+        self.assertIn(MODULE.ISSUE_SCALAR, issues)
+
     def test_accepts_closed_structured_values_and_scoped_commitments(self) -> None:
         payload = {
             "artifact_type": "manifest",
@@ -253,6 +298,87 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
                 )
                 self.assertIn(expected, issues)
                 self.assertNotIn(text, "\n".join(issues))
+
+    def test_rejects_shared_high_confidence_credential_families(self) -> None:
+        credentials = (
+            "ASIA" + "A" * 16,
+            "xoxb-" + "A" * 20,
+            "xoxe-" + "A" * 20,
+            "AIza" + "A" * 35,
+            "glpat-" + "A" * 20,
+            "npm_" + "A" * 36,
+        )
+        for credential in credentials:
+            with self.subTest(prefix=credential[:6]):
+                issues = MODULE.validate_v2_privacy(
+                    artifact_path(),
+                    encoded({"artifact_type": "manifest", "value": credential}),
+                )
+
+            self.assertIn(MODULE.ISSUE_SENSITIVE_MATERIAL, issues)
+
+    def test_authorization_bearer_detection_covers_source_containers(self) -> None:
+        token = "0123456789abcdef"
+        values = (
+            f"Authorization: Bearer {token}",
+            f"curl -H 'Authorization: Bearer {token}' endpoint",
+            f'headers = ["Authorization: Bearer {token}"]',
+            f'- "Authorization: Bearer {token}"',
+            f'{{"Authorization": "Bearer {token}"}}',
+            f'AUTHORIZATION="Bearer {token}"',
+        )
+        for value in values:
+            with self.subTest(value=value):
+                self.assertTrue(
+                    MODULE.contains_high_confidence_credential(value.encode("utf-8"))
+                )
+                issues = MODULE.validate_v2_privacy(
+                    artifact_path(),
+                    encoded({"artifact_type": "manifest", "value": value}),
+                )
+                self.assertIn(MODULE.ISSUE_SENSITIVE_MATERIAL, issues)
+
+    def test_authorization_bearer_detection_preserves_bounded_false_positives(
+        self,
+    ) -> None:
+        values = (
+            "Use Bearer 0123456789abcdef in documentation.",
+            "Explain Authorization: Bearer 0123456789abcdef in documentation.",
+            "Authorization: Bearer <credential>",
+            "X-Authorization: Bearer 0123456789abcdef",
+            'SOME_AUTHORIZATION="Bearer 0123456789abcdef"',
+            '{"Proxy-Authorization": "Bearer 0123456789abcdef"}',
+            'headers = ["Authorization: Bearer 0123456789abc"]',
+            f'headers = ["Authorization: Bearer {"a" * 4097}"]',
+        )
+        for value in values:
+            with self.subTest(value=value[:80]):
+                self.assertFalse(
+                    MODULE.contains_high_confidence_credential(value.encode("utf-8"))
+                )
+
+    def test_binary_openpgp_secret_packet_detection_is_structured(self) -> None:
+        key_prefix = b"\x04\x00\x00\x00\x00\x01"
+        secret_packets = (
+            b"\xc5\x06" + key_prefix,
+            b"\xc7\x06" + key_prefix,
+            b"\x94\x06" + key_prefix,
+        )
+        for packet in secret_packets:
+            with self.subTest(header=packet[:1]):
+                self.assertTrue(
+                    MODULE.contains_high_confidence_credential(
+                        b"reviewed-prefix\x00" + packet + b"\x00reviewed-suffix"
+                    )
+                )
+
+        for payload in (
+            b"\xc6\x06" + key_prefix,
+            b"\xc5\x07" + key_prefix,
+            b"\xc5\x06\x01\x00\x00\x00\x00\x01",
+        ):
+            with self.subTest(payload=payload[:2]):
+                self.assertFalse(MODULE.contains_high_confidence_credential(payload))
 
     def test_rejects_unknown_keys_and_arbitrary_closed_field_prose(self) -> None:
         risky_key = "original_prompt"
@@ -441,29 +567,31 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
         self.assertNotIn("hunter2", findings)
         self.assertNotIn("unknown_secret_field", findings)
 
-    def test_commit_metadata_accepts_only_fixed_identity_and_message(self) -> None:
+    def test_commit_metadata_accepts_safe_identity_and_fixed_message(self) -> None:
         message = f"Publish session retrospective v2 daily 2026-07-14 {RUN_REF}\n"
+        author = "Joey Teng <12524680+JoeyTeng@users.noreply.github.com>"
+        committer = "GitHub <noreply@github.com>"
 
         self.assertEqual(
             MODULE.validate_v2_commit_metadata(
-                MODULE.V2_COMMIT_IDENTITY,
-                MODULE.V2_COMMIT_IDENTITY,
+                author,
+                committer,
                 message,
             ),
             [],
         )
         self.assertEqual(
             MODULE.validate_v2_commit_metadata(
-                MODULE.V2_COMMIT_IDENTITY,
-                MODULE.V2_COMMIT_IDENTITY,
+                author,
+                committer,
                 f"Publish session retrospective v2 daily 2026-07-14 {RUN_ID}\n",
             ),
             [MODULE.ISSUE_COMMIT_MESSAGE],
         )
         self.assertEqual(
             MODULE.validate_v2_commit_metadata(
-                MODULE.V2_COMMIT_IDENTITY,
-                MODULE.V2_COMMIT_IDENTITY,
+                author,
+                committer,
                 message.removesuffix("\n"),
             ),
             [MODULE.ISSUE_COMMIT_MESSAGE],
@@ -482,7 +610,6 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
             sorted(
                 {
                     MODULE.ISSUE_COMMIT_AUTHOR,
-                    MODULE.ISSUE_COMMIT_COMMITTER,
                     MODULE.ISSUE_COMMIT_MESSAGE,
                 }
             ),
@@ -492,20 +619,15 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
         self.assertNotIn("ghp_", findings)
 
     def test_commit_metadata_matches_git_validator_contract(self) -> None:
-        expected_identity = (
-            GIT_MODULE.V2_PUBLISHER_NAME.decode("ascii")
-            + " <"
-            + GIT_MODULE.V2_PUBLISHER_EMAIL.decode("ascii")
-            + ">"
-        )
+        expected_identity = "GitHub <noreply@github.com>"
         message = f"Publish session retrospective v2 daily 2026-07-14 {RUN_REF}\n"
 
-        self.assertEqual(MODULE.V2_COMMIT_IDENTITY, expected_identity)
         self.assertIsNotNone(
-            GIT_MODULE.IDENTITY_RE.fullmatch(
+            GIT_MODULE.ADMIN_AUTHOR_IDENTITY_RE.fullmatch(
                 f"{expected_identity} 1800000000 +0000".encode("ascii")
             )
         )
+        self.assertIsNotNone(MODULE.V2_COMMIT_IDENTITY_RE.fullmatch(expected_identity))
         self.assertIsNotNone(
             GIT_MODULE.COMMIT_MESSAGE_RE.fullmatch(message.encode("ascii"))
         )
@@ -519,11 +641,12 @@ class RetrospectiveHistoryPrivacyV2Tests(unittest.TestCase):
 
     def test_commit_metadata_rejects_invalid_calendar_window(self) -> None:
         message = f"Publish session retrospective v2 daily 2026-02-30 {RUN_REF}\n"
+        identity = "GitHub <noreply@github.com>"
 
         self.assertEqual(
             MODULE.validate_v2_commit_metadata(
-                MODULE.V2_COMMIT_IDENTITY,
-                MODULE.V2_COMMIT_IDENTITY,
+                identity,
+                identity,
                 message,
             ),
             [MODULE.ISSUE_COMMIT_MESSAGE],

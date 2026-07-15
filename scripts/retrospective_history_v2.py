@@ -66,6 +66,7 @@ SCHEMA_TARGETS = {
 }
 MODES = frozenset({"daily", "weekly", "baseline", "session"})
 EXECUTION_KINDS = frozenset({"retrospective", "bootstrap_v2", "compliance_retraction"})
+MODEL_EXECUTION_KINDS = frozenset({"retrospective"})
 PUBLICATION_ROLES = frozenset({"standalone", "campaign_segment", "campaign_root"})
 CAMPAIGN_SEGMENT_REVISION_FAMILIES = frozenset(
     {
@@ -79,9 +80,7 @@ CAMPAIGN_SEGMENT_REVISION_FAMILIES = frozenset(
         "turn_finding",
     }
 )
-CAMPAIGN_SEGMENT_AGGREGATE_FAMILIES = frozenset(
-    {"coverage", "summary", "trend"}
-)
+CAMPAIGN_SEGMENT_AGGREGATE_FAMILIES = frozenset({"coverage", "summary", "trend"})
 CAMPAIGN_SEGMENT_MANIFEST_SUPERSESSION_FIELDS = {
     "run": "supersedes_run_revision_refs",
     "episode": "supersedes_episode_revision_refs",
@@ -262,7 +261,7 @@ BUNDLE_DIGEST_CONTRACT = {
     "domain_tag": BUNDLE_DOMAIN_TAG.decode("ascii"),
     "ordering": "bytewise-basename",
     "framing": "typed-name-length-v2",
-    "manifest_projection": "omit-retained_bundle_digest_v2-only",
+    "manifest_projection": "omit-digest-and-publisher-attestation-v2",
 }
 PRODUCTION_CONFIGURATION_DOMAIN_TAG = (
     b"session-retrospective-production-configuration-v2"
@@ -295,6 +294,7 @@ MANIFEST_KEYS = frozenset(
         "supersession",
         "artifact_inventory",
         "retained_bundle_digest_v2",
+        "publisher_attestation",
         "bundle_digest_contract",
         "head_bindings",
         "eras",
@@ -1179,6 +1179,7 @@ def _compute_retained_bundle_digest(
 ) -> str:
     projection = dict(manifest)
     projection.pop("retained_bundle_digest_v2")
+    projection.pop("publisher_attestation")
     manifest_projection = _canonical_json(projection)
 
     hasher = hashlib.sha256()
@@ -1380,12 +1381,19 @@ def _validate_manifest_eras(
     )
     for field_name, ref_field, pattern in definitions:
         rows = eras.get(field_name)
+        requires_non_empty = (
+            field_name != "model_eras"
+            or manifest.get("execution_kind") in MODEL_EXECUTION_KINDS
+        )
         if (
             not isinstance(rows, list)
-            or not rows
+            or (requires_non_empty and not rows)
             or not all(isinstance(row, dict) for row in rows)
         ):
-            issues.append(f"{label}: {field_name} must be a non-empty array of objects")
+            requirement = "a non-empty" if requires_non_empty else "an"
+            issues.append(
+                f"{label}: {field_name} must be {requirement} array of objects"
+            )
             continue
         refs = [row.get(ref_field) for row in rows]
         if not all(
@@ -1984,7 +1992,9 @@ def _read_bundle_artifacts(
                 return False
             raw[basename] = content
 
-        if not _bundle_directory_chain_matches(root_descriptor, bundle, directory_chain):
+        if not _bundle_directory_chain_matches(
+            root_descriptor, bundle, directory_chain
+        ):
             issues.append(
                 f"{bundle.label}: run directory identity changed while artifacts were read"
             )
@@ -2647,20 +2657,25 @@ def _validate_era_and_key_refs(
         issues.append(f"{label}: key_id must be declared by manifest.json")
     policy_refs = _manifest_era_refs(bundle.manifest, "policy_eras", "policy_era_ref")
     model_refs = _manifest_era_refs(bundle.manifest, "model_eras", "model_era_ref")
+    bind_model_refs = bundle.manifest.get("execution_kind") in MODEL_EXECUTION_KINDS
     if "policy_era_ref" in value and (
         not isinstance(value.get("policy_era_ref"), str)
         or value.get("policy_era_ref") not in policy_refs
     ):
         issues.append(f"{label}: policy_era_ref must be declared by manifest.json")
-    if "model_era_ref" in value and (
-        not isinstance(value.get("model_era_ref"), str)
-        or value.get("model_era_ref") not in model_refs
+    if (
+        bind_model_refs
+        and "model_era_ref" in value
+        and (
+            not isinstance(value.get("model_era_ref"), str)
+            or value.get("model_era_ref") not in model_refs
+        )
     ):
         issues.append(f"{label}: model_era_ref must be declared by manifest.json")
-    for field_name, allowed in (
-        ("policy_era_refs", policy_refs),
-        ("model_era_refs", model_refs),
-    ):
+    era_ref_collections = [("policy_era_refs", policy_refs)]
+    if bind_model_refs:
+        era_ref_collections.append(("model_era_refs", model_refs))
+    for field_name, allowed in era_ref_collections:
         refs = value.get(field_name)
         if isinstance(refs, list) and any(
             not isinstance(ref, str) or ref not in allowed for ref in refs
@@ -4100,9 +4115,7 @@ def _collect_trend_comparison_state(
         or len(strata) > 128
     ):
         return
-    supersedes_run_revision_refs = supersession.get(
-        "supersedes_run_revision_refs"
-    )
+    supersedes_run_revision_refs = supersession.get("supersedes_run_revision_refs")
     if (
         not isinstance(supersedes_run_revision_refs, list)
         or len(supersedes_run_revision_refs) > 32
@@ -4360,13 +4373,13 @@ def _validate_trend_comparisons(
             )
 
 
-def validate_v2_runs(
+def validate_v2_runs_with_inventory(
     root: Path, visible_files: Iterable[Path] | None = None
-) -> list[str]:
+) -> tuple[list[str], tuple[Path, ...]]:
     """Validate immutable Session Retrospective v2 retained-run bundles.
 
     Diagnostics intentionally avoid JSON values and unvalidated path components.
-    The returned list is de-duplicated and lexicographically sorted.
+    The inventory is returned only when the complete v2 tree is structurally valid.
     """
 
     root = Path(os.path.abspath(os.fspath(root)))
@@ -4374,19 +4387,19 @@ def validate_v2_runs(
         root_descriptor = _open_validation_root(root)
     except OSError as exc:
         if exc.errno in {errno.ENOENT, errno.ENOTDIR}:
-            return ["root must be an existing directory"]
-        return ["root could not be opened safely"]
+            return ["root must be an existing directory"], ()
+        return ["root could not be opened safely"], ()
 
     issues = _IssueCollector()
     try:
         validators = _load_schema_validators()
         if validators is None:
             issues.append(SCHEMA_UNAVAILABLE_ISSUE)
-            return sorted(issues)
+            return sorted(issues), ()
         privacy_validator = _load_privacy_validator()
         if privacy_validator is None:
             issues.append(PRIVACY_UNAVAILABLE_ISSUE)
-            return sorted(issues)
+            return sorted(issues), ()
 
         bundles = _discover_bundles(root, root_descriptor, visible_files, issues)
         revision_count = 0
@@ -4423,9 +4436,26 @@ def validate_v2_runs(
             _validate_trend_comparisons(trend_snapshots, issues)
         if not _issues_full(issues) and not work_limit_reached:
             _validate_revision_graph(bundles, issues)
-        return sorted(issues)
+        sorted_issues = sorted(issues)
+        if sorted_issues:
+            return sorted_issues, ()
+        manifest_paths = tuple(
+            bundle.files["manifest.json"]
+            for bundle in bundles
+            if frozenset(bundle.files) == ARTIFACT_BASENAME_SET
+        )
+        return [], manifest_paths
     finally:
         os.close(root_descriptor)
 
 
-__all__ = ["validate_v2_runs"]
+def validate_v2_runs(
+    root: Path, visible_files: Iterable[Path] | None = None
+) -> list[str]:
+    """Validate v2 runs without exposing the admitted manifest inventory."""
+
+    issues, _ = validate_v2_runs_with_inventory(root, visible_files)
+    return issues
+
+
+__all__ = ["validate_v2_runs", "validate_v2_runs_with_inventory"]

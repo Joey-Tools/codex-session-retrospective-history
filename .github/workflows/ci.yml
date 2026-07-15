@@ -1,404 +1,455 @@
 name: CI
 
 on:
-  pull_request:
+  pull_request_target:
+    branches: [master]
+    types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [master]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: trusted-history-${{ github.repository }}-master
+  cancel-in-progress: false
+
 jobs:
-  test:
+  trusted-validation:
+    name: Trusted history validation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_BINDING_PATH: ${{ github.workspace }}/.trusted-merge-state/candidate-binding.json
+      MERGE_PLAN_PATH: ${{ github.workspace }}/.trusted-merge-state/merge-plan.json
+      MERGE_RECEIPT_PATH: ${{ github.workspace }}/.trusted-merge-state/merge-receipt.json
+      TRUSTED_ROOT: ${{ github.workspace }}/trusted-base
+      UNTRUSTED_ROOT: ${{ github.workspace }}/untrusted-head
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout trusted base
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          fetch-depth: 0
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-python@v5
+          repository: ${{ github.repository }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.workflow_sha || github.event.before }}
+          path: trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up trusted Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - name: Prepare trusted push validator
-        if: github.event_name == 'push'
+      - name: Create trusted merge token
+        id: merge-token
+        if: ${{ github.event_name == 'pull_request_target' }}
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.RETROSPECTIVE_HISTORY_MERGE_APP_ID }}
+          private-key: ${{ secrets.RETROSPECTIVE_HISTORY_MERGE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: read
+          permission-checks: write
+          permission-contents: write
+          permission-pull-requests: read
+      - name: Resolve immutable candidate
+        id: resolve-candidate
+        if: ${{ github.event_name == 'pull_request_target' }}
         env:
-          BASE_REV: ${{ github.event.before }}
+          EVENT_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.merge-token.outputs.token }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          WORKFLOW_SOURCE_OID: ${{ github.workflow_sha }}
+        shell: bash
         run: |
-          TRUSTED_VALIDATOR_ROOT="$RUNNER_TEMP/retrospective-history-v2-trusted-base"
-          git worktree add --quiet --detach "$TRUSTED_VALIDATOR_ROOT" "$BASE_REV"
-          TRUSTED_KEY="$TRUSTED_VALIDATOR_ROOT/retrospective-history-v2-publisher.asc"
-          TRUSTED_VALIDATOR="$TRUSTED_VALIDATOR_ROOT/scripts/retrospective_history_git_v2.py"
-          KEY_EXISTS=false
-          VALIDATOR_EXISTS=false
-          if [ -e "$TRUSTED_KEY" ] || [ -L "$TRUSTED_KEY" ]; then
-            KEY_EXISTS=true
-          fi
-          if [ -e "$TRUSTED_VALIDATOR" ] || [ -L "$TRUSTED_VALIDATOR" ]; then
-            VALIDATOR_EXISTS=true
-          fi
-          if [ "$KEY_EXISTS" = true ] && [ "$VALIDATOR_EXISTS" = true ]; then
-            if [ ! -f "$TRUSTED_KEY" ] || [ -L "$TRUSTED_KEY" ] || \
-              [ ! -f "$TRUSTED_VALIDATOR" ] || [ -L "$TRUSTED_VALIDATOR" ]; then
-              echo "Trusted push base artifacts are unsafe." >&2
-              exit 1
-            fi
-            PUSH_VALIDATION_MODE=trusted
-          elif [ "$KEY_EXISTS" = false ] && [ "$VALIDATOR_EXISTS" = false ]; then
-            PUSH_VALIDATION_MODE=bootstrap
-          else
-            echo "Trusted push base is partially initialized." >&2
+          set -euo pipefail
+          umask 077
+          install -d -m 700 "$(dirname "$CANDIDATE_BINDING_PATH")"
+
+          if [ -z "$GH_TOKEN" ]; then
+            echo "The trusted merge GitHub App token is unavailable." >&2
             exit 1
           fi
-          echo "TRUSTED_VALIDATOR_ROOT=$TRUSTED_VALIDATOR_ROOT" >> "$GITHUB_ENV"
-          echo "PUSH_VALIDATION_MODE=$PUSH_VALIDATION_MODE" >> "$GITHUB_ENV"
-      - name: Validate first push bootstrap range
-        if: github.event_name == 'push'
+          python -I - resolve \
+            --repository "$EVENT_REPOSITORY" \
+            --pull-request "$PULL_REQUEST_NUMBER" \
+            --workflow-oid "$WORKFLOW_SOURCE_OID" \
+            --output "$CANDIDATE_BINDING_PATH" \
+            --github-output "$GITHUB_OUTPUT" <<'PY'
+          from pathlib import Path
+          import os
+          import sys
+
+          trusted_root = Path(os.environ["TRUSTED_ROOT"]).resolve(strict=True)
+          sys.path.insert(0, str(trusted_root))
+          from scripts.retrospective_history_merge_v2 import main
+
+          raise SystemExit(main(sys.argv[1:]))
+          PY
+      - name: Checkout candidate head as data
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.resolve-candidate.outputs.head_oid || github.event.after }}
+          path: untrusted-head
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact trusted and untrusted checkouts
         env:
-          BASE_REV: ${{ github.event.before }}
-          EVENT_FORCED: ${{ github.event.forced }}
-          HEAD_REV: ${{ github.event.after }}
+          BASE_OID: ${{ steps.resolve-candidate.outputs.base_oid || github.event.before }}
+          BASE_REF: ${{ github.event_name == 'pull_request_target' && 'master' || '' }}
+          BASE_REPOSITORY: ${{ github.event_name == 'pull_request_target' && github.repository || '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          EVENT_REPOSITORY: ${{ github.repository }}
+          HEAD_OID: ${{ steps.resolve-candidate.outputs.head_oid || github.event.after }}
+          PUSH_FORCED: ${{ github.event.forced }}
+          WORKFLOW_SOURCE_OID: ${{ github.workflow_sha }}
+        shell: bash
         run: |
-          if [ "$PUSH_VALIDATION_MODE" != bootstrap ]; then
-            exit 0
-          fi
-          if [ "$EVENT_FORCED" = true ] || \
-            ! git merge-base --is-ancestor "$BASE_REV" "$HEAD_REV"; then
-            echo "Bootstrap push must be a non-force descendant of its event base." >&2
-            exit 1
-          fi
-          MAX_BOOTSTRAP_COMMITS=512
-          COMMIT_OUTPUT="$(
-            git rev-list --first-parent --reverse \
-              --max-count="$((MAX_BOOTSTRAP_COMMITS + 1))" \
-              "$BASE_REV..$HEAD_REV"
-          )"
-          COMMITS=()
-          if [ -n "$COMMIT_OUTPUT" ]; then
-            while IFS= read -r COMMIT_REV; do
-              COMMITS+=("$COMMIT_REV")
-            done <<< "$COMMIT_OUTPUT"
-          fi
-          if [ "${#COMMITS[@]}" -eq 0 ] || \
-            [ "${#COMMITS[@]}" -gt "$MAX_BOOTSTRAP_COMMITS" ]; then
-            echo "Bootstrap push exceeds its bounded linear range." >&2
-            exit 1
-          fi
-          EXPECTED_PARENT="$BASE_REV"
-          SAW_INFRASTRUCTURE_CHANGE=false
-          for COMMIT_REV in "${COMMITS[@]}"; do
-            PARENT_LINE="$(git rev-list --parents --max-count=1 "$COMMIT_REV")"
-            read -r -a PARENT_FIELDS <<< "$PARENT_LINE"
-            if [ "${#PARENT_FIELDS[@]}" -ne 2 ] || \
-              [ "${PARENT_FIELDS[0]}" != "$COMMIT_REV" ] || \
-              [ "${PARENT_FIELDS[1]}" != "$EXPECTED_PARENT" ]; then
-              echo "Bootstrap push must use bounded linear infrastructure commits." >&2
+          set -euo pipefail
+
+          require_oid() {
+            case "$1" in
+              ""|*[!0-9a-f]*)
+                echo "$2 must be a lowercase hexadecimal commit OID." >&2
+                exit 1
+                ;;
+            esac
+            if [ "${#1}" -ne 40 ] && [ "${#1}" -ne 64 ]; then
+              echo "$2 must be a canonical commit OID." >&2
               exit 1
             fi
-            if git diff-tree --quiet --no-commit-id -r --no-renames \
-              "$EXPECTED_PARENT" "$COMMIT_REV" -- runs; then
-              :
-            else
-              DIFF_STATUS=$?
-              if [ "$DIFF_STATUS" -eq 1 ]; then
-                echo "Bootstrap push must not change retained publications." >&2
-              else
-                echo "Bootstrap push range inspection failed." >&2
-              fi
-              exit 1
-            fi
-            if git diff-tree --quiet --no-commit-id -r --no-renames \
-              "$EXPECTED_PARENT" "$COMMIT_REV" --; then
-              :
-            else
-              DIFF_STATUS=$?
-              if [ "$DIFF_STATUS" -eq 1 ]; then
-                SAW_INFRASTRUCTURE_CHANGE=true
-              else
-                echo "Bootstrap push range inspection failed." >&2
+          }
+
+          require_oid "$BASE_OID" "Pull request base"
+          require_oid "$HEAD_OID" "Pull request head"
+          require_oid "$WORKFLOW_SOURCE_OID" "Workflow source"
+          case "$EVENT_NAME" in
+            pull_request_target)
+              if [ "$BASE_REPOSITORY" != "$EVENT_REPOSITORY" ]; then
+                echo "Pull request base repository does not match the event repository." >&2
                 exit 1
               fi
+              if [ "$BASE_REF" != "$DEFAULT_BRANCH" ] || [ "$BASE_REF" != master ]; then
+                echo "Pull request validation is restricted to the default master branch." >&2
+                exit 1
+              fi
+              if [ "$WORKFLOW_SOURCE_OID" != "$BASE_OID" ]; then
+                echo "Pull request validation must execute from its exact current base." >&2
+                exit 1
+              fi
+              ;;
+            push)
+              if [ "$EVENT_REF" != refs/heads/master ] || [ "$DEFAULT_BRANCH" != master ]; then
+                echo "Push validation is restricted to the default master branch." >&2
+                exit 1
+              fi
+              if [ "$PUSH_FORCED" != true ] && [ "$PUSH_FORCED" != false ]; then
+                echo "Push event force status is invalid." >&2
+                exit 1
+              fi
+              if [ "$WORKFLOW_SOURCE_OID" != "$HEAD_OID" ]; then
+                echo "Push monitoring must identify the candidate-controlled after workflow." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported trusted validation event." >&2
+              exit 1
+              ;;
+          esac
+
+          trusted_oid="$(
+            git -C "$TRUSTED_ROOT" rev-parse --verify --end-of-options \
+              "${BASE_OID}^{commit}"
+          )"
+          untrusted_oid="$(
+            git -C "$UNTRUSTED_ROOT" rev-parse --verify --end-of-options \
+              "${HEAD_OID}^{commit}"
+          )"
+          if [ "$trusted_oid" != "$BASE_OID" ] || [ "$untrusted_oid" != "$HEAD_OID" ]; then
+            echo "A checkout does not match its exact event commit OID." >&2
+            exit 1
+          fi
+          if ! git -C "$UNTRUSTED_ROOT" merge-base --is-ancestor \
+            "$BASE_OID" "$HEAD_OID"; then
+            echo "Pull request head must contain the exact current event base." >&2
+            exit 1
+          fi
+
+          TRUSTED_PATHS=(
+            .github/workflows/ci.yml
+            requirements-v2.in
+            requirements-v2.txt
+            retrospective-history-v2-admin.asc
+            retrospective-history-v2-publisher.asc
+            schemas/retained-manifest-v2.schema.json
+            schemas/session-retrospective-v2.schema.json
+            scripts/retrospective_history_attestation_v2.py
+            scripts/retrospective_history_credentials_v2.py
+            scripts/retrospective_history_git_v2.py
+            scripts/retrospective_history_merge_v2.py
+            scripts/retrospective_history_privacy_v2.py
+            scripts/retrospective_history_templates_v2.py
+            scripts/retrospective_history_v2.py
+            scripts/validate_retained_history.py
+          )
+          for relative in "${TRUSTED_PATHS[@]}"; do
+            entry="$(
+              git -C "$TRUSTED_ROOT" ls-tree "$BASE_OID" -- \
+                ":(literal)$relative"
+            )"
+            metadata="${entry%%$'\t'*}"
+            tree_path="${entry#*$'\t'}"
+            mode=""
+            object_type=""
+            object_id=""
+            extra=""
+            read -r mode object_type object_id extra <<< "$metadata"
+            candidate="$TRUSTED_ROOT/$relative"
+            if [ "$entry" = "$metadata" ] || [ "$tree_path" != "$relative" ] || \
+              [ "$mode" != 100644 ] || [ "$object_type" != blob ] || \
+              [ -z "$object_id" ] || [ -n "$extra" ] || \
+              [ ! -f "$candidate" ] || [ -L "$candidate" ]; then
+              echo "Trusted base is missing an exact regular trust-root file." >&2
+              exit 1
             fi
-            EXPECTED_PARENT="$COMMIT_REV"
           done
-          if [ "$EXPECTED_PARENT" != "$HEAD_REV" ] || \
-            [ "$SAW_INFRASTRUCTURE_CHANGE" != true ]; then
-            echo "Bootstrap push must contain only infrastructure changes." >&2
+
+          for checkout in "$TRUSTED_ROOT" "$UNTRUSTED_ROOT"; do
+            if git -C "$checkout" config --local --get-regexp \
+              '^(http\..*\.extraheader|credential\.helper)$' >/dev/null 2>&1; then
+              echo "Checkout credentials remained in local Git configuration." >&2
+              exit 1
+            fi
+          done
+          if [ -n "${GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ]; then
+            echo "A GitHub token was exported to the validation shell." >&2
             exit 1
           fi
 
-          MAX_BOOTSTRAP_TREE_BYTES=8388608
-          MAX_BOOTSTRAP_TREE_ENTRIES=65536
-          MAX_BOOTSTRAP_TREE_ENTRY_BYTES=4096
-          MAX_BOOTSTRAP_KEY_BYTES=65536
-          MAX_BOOTSTRAP_VALIDATOR_BYTES=1048576
-          export LC_ALL=C
-
-          bootstrap_pair_failure() {
-            echo "Bootstrap push must install the complete trusted validation pair." >&2
-            exit 1
-          }
-
-          validate_bootstrap_tree_object() {
-            local object_id="$1"
-            local object_type object_size
-            if ! object_type="$(git cat-file -t "$object_id" 2>/dev/null)" || \
-              [ "$object_type" != tree ]; then
-              return 1
-            fi
-            if ! object_size="$(git cat-file -s "$object_id" 2>/dev/null)"; then
-              return 1
-            fi
-            case "$object_size" in
-              ''|*[!0-9]*) return 1 ;;
-            esac
-            if [ "$object_size" -le 0 ] || \
-              [ "$object_size" -gt "$MAX_BOOTSTRAP_TREE_BYTES" ]; then
-              return 1
-            fi
-          }
-
-          find_unique_bootstrap_entry() {
-            local listing="$1"
-            local expected_name="$2"
-            local entry metadata entry_name extra
-            local entry_count=0
-            local match_count=0
-            BOOTSTRAP_ENTRY_MODE=
-            BOOTSTRAP_ENTRY_TYPE=
-            BOOTSTRAP_ENTRY_OBJECT=
-            BOOTSTRAP_ENTRY_NAME=
-            while IFS= read -r -d '' entry; do
-              entry_count=$((entry_count + 1))
-              if [ "$entry_count" -gt "$MAX_BOOTSTRAP_TREE_ENTRIES" ] || \
-                [ "${#entry}" -gt "$MAX_BOOTSTRAP_TREE_ENTRY_BYTES" ]; then
-                return 1
-              fi
-              case "$entry" in
-                *$'\t'*) ;;
-                *) return 1 ;;
-              esac
-              metadata="${entry%%$'\t'*}"
-              entry_name="${entry#*$'\t'}"
-              if [[ "$entry_name" == "$expected_name" ]]; then
-                match_count=$((match_count + 1))
-                BOOTSTRAP_ENTRY_NAME="$entry_name"
-                extra=
-                IFS=' ' read -r BOOTSTRAP_ENTRY_MODE BOOTSTRAP_ENTRY_TYPE \
-                  BOOTSTRAP_ENTRY_OBJECT extra <<< "$metadata"
-                if [ -n "$extra" ] || [ -z "$BOOTSTRAP_ENTRY_OBJECT" ]; then
-                  return 1
-                fi
-              fi
-            done < "$listing"
-            if [ "$match_count" -ne 1 ] || \
-              [ "$BOOTSTRAP_ENTRY_NAME" != "$expected_name" ]; then
-              return 1
-            fi
-          }
-
-          validate_bootstrap_regular_blob() {
-            local mode="$1"
-            local declared_type="$2"
-            local object_id="$3"
-            local maximum_size="$4"
-            local object_type object_size
-            if [ "$declared_type" != blob ] || \
-              { [ "$mode" != 100644 ] && [ "$mode" != 100755 ]; }; then
-              return 1
-            fi
-            if ! object_type="$(git cat-file -t "$object_id" 2>/dev/null)" || \
-              [ "$object_type" != blob ]; then
-              return 1
-            fi
-            if ! object_size="$(git cat-file -s "$object_id" 2>/dev/null)"; then
-              return 1
-            fi
-            case "$object_size" in
-              ''|*[!0-9]*) return 1 ;;
-            esac
-            if [ "$object_size" -le 0 ] || \
-              [ "$object_size" -gt "$maximum_size" ]; then
-              return 1
-            fi
-          }
-
-          shopt -s nocasematch
-          if ! HEAD_TREE="$(git rev-parse --verify "$HEAD_REV^{tree}" 2>/dev/null)" || \
-            ! validate_bootstrap_tree_object "$HEAD_TREE"; then
-            bootstrap_pair_failure
-          fi
-          BOOTSTRAP_TREE_LIST="$(
-            mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/retrospective-bootstrap-tree.XXXXXX" \
-              2>/dev/null
-          )" || bootstrap_pair_failure
-          trap 'rm -f "$BOOTSTRAP_TREE_LIST"' EXIT
-          if ! git ls-tree -z "$HEAD_TREE" > "$BOOTSTRAP_TREE_LIST" 2>/dev/null; then
-            bootstrap_pair_failure
-          fi
-
-          if ! find_unique_bootstrap_entry \
-            "$BOOTSTRAP_TREE_LIST" retrospective-history-v2-publisher.asc; then
-            bootstrap_pair_failure
-          fi
-          if ! validate_bootstrap_regular_blob \
-            "$BOOTSTRAP_ENTRY_MODE" "$BOOTSTRAP_ENTRY_TYPE" \
-            "$BOOTSTRAP_ENTRY_OBJECT" "$MAX_BOOTSTRAP_KEY_BYTES"; then
-            bootstrap_pair_failure
-          fi
-
-          if ! find_unique_bootstrap_entry "$BOOTSTRAP_TREE_LIST" scripts || \
-            [ "$BOOTSTRAP_ENTRY_MODE" != 040000 ] || \
-            [ "$BOOTSTRAP_ENTRY_TYPE" != tree ]; then
-            bootstrap_pair_failure
-          fi
-          SCRIPTS_TREE="$BOOTSTRAP_ENTRY_OBJECT"
-          if ! validate_bootstrap_tree_object "$SCRIPTS_TREE" || \
-            ! git ls-tree -z "$SCRIPTS_TREE" \
-              > "$BOOTSTRAP_TREE_LIST" 2>/dev/null; then
-            bootstrap_pair_failure
-          fi
-          if ! find_unique_bootstrap_entry \
-            "$BOOTSTRAP_TREE_LIST" retrospective_history_git_v2.py; then
-            bootstrap_pair_failure
-          fi
-          if ! validate_bootstrap_regular_blob \
-            "$BOOTSTRAP_ENTRY_MODE" "$BOOTSTRAP_ENTRY_TYPE" \
-            "$BOOTSTRAP_ENTRY_OBJECT" "$MAX_BOOTSTRAP_VALIDATOR_BYTES"; then
-            bootstrap_pair_failure
-          fi
-      - name: Import trusted push publisher key
-        if: github.event_name == 'push'
+          {
+            echo "TRUSTED_BASE_OID=$BASE_OID"
+            echo "UNTRUSTED_HEAD_OID=$HEAD_OID"
+          } >> "$GITHUB_ENV"
+      - name: Install trusted validation dependencies
+        shell: bash
         run: |
-          if [ "$PUSH_VALIDATION_MODE" != trusted ]; then
-            exit 0
-          fi
-          TRUSTED_GNUPGHOME="$RUNNER_TEMP/retrospective-history-v2-trusted-gnupg"
-          export TRUSTED_GNUPGHOME
+          set -euo pipefail
+          cd "$TRUSTED_ROOT"
+          TRUSTED_VENV="$RUNNER_TEMP/retrospective-history-v2-trusted-venv"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            python -I -m venv "$TRUSTED_VENV"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            "$TRUSTED_VENV/bin/python" -I -m pip install \
+              --disable-pip-version-check \
+              --no-input \
+              --only-binary=:all: \
+              --require-hashes \
+              --requirement "$TRUSTED_ROOT/requirements-v2.txt"
+          echo "TRUSTED_PYTHON=$TRUSTED_VENV/bin/python" >> "$GITHUB_ENV"
+      - name: Import trusted signing keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          TRUSTED_GNUPGHOME="$RUNNER_TEMP/rh2-gpg"
           install -d -m 700 "$TRUSTED_GNUPGHOME"
-          GNUPGHOME="$TRUSTED_GNUPGHOME" gpg --quiet --no-options \
-            --no-autostart --batch --import \
-            "$TRUSTED_VALIDATOR_ROOT/retrospective-history-v2-publisher.asc" \
+          KEY_FILES=(
+            "$TRUSTED_ROOT/retrospective-history-v2-admin.asc"
+            "$TRUSTED_ROOT/retrospective-history-v2-publisher.asc"
+          )
+          for key_file in "${KEY_FILES[@]}"; do
+            if ! SHOW_RECORDS="$(
+              GNUPGHOME="$TRUSTED_GNUPGHOME" gpg \
+                --quiet --no-options --no-autostart --batch --with-colons \
+                --import-options show-only --dry-run --import "$key_file"
+            )"; then
+              echo "Trusted signing key material is not a valid public-key export." >&2
+              exit 1
+            fi
+            if ! printf '%s\n' "$SHOW_RECORDS" |
+              awk -F: '$1 == "pub" { found = 1 } END { exit !found }'; then
+              echo "Trusted signing key material contains no public primary key." >&2
+              exit 1
+            fi
+            if printf '%s\n' "$SHOW_RECORDS" |
+              awk -F: '$1 == "sec" || $1 == "ssb" { found = 1 } END { exit !found }'; then
+              echo "Trusted signing key material contains secret-key packets." >&2
+              exit 1
+            fi
+          done
+          GNUPGHOME="$TRUSTED_GNUPGHOME" gpg \
+            --quiet --no-options --batch --import \
+            "${KEY_FILES[@]}" \
             >/dev/null 2>&1
-          echo "TRUSTED_GNUPGHOME=$TRUSTED_GNUPGHOME" >> "$GITHUB_ENV"
-      - name: Validate push range with trusted base
-        if: github.event_name == 'push'
-        env:
-          BASE_REV: ${{ github.event.before }}
-          EVENT_FORCED: ${{ github.event.forced }}
-          HEAD_REV: ${{ github.event.after }}
-        run: |
-          if [ "$PUSH_VALIDATION_MODE" != trusted ]; then
-            exit 0
+          SECRET_RECORDS="$(
+            GNUPGHOME="$TRUSTED_GNUPGHOME" gpg \
+              --quiet --no-options --no-autostart --batch --with-colons \
+              --list-secret-keys
+          )"
+          if [ -n "$SECRET_RECORDS" ]; then
+            echo "Trusted signing key import populated the secret keyring." >&2
+            exit 1
           fi
+          KEY_RECORDS="$(
+            GNUPGHOME="$TRUSTED_GNUPGHOME" gpg \
+              --quiet --no-options --no-autostart --batch --with-colons \
+              --fingerprint --list-keys
+          )"
+          EXPECTED_FINGERPRINTS=(
+            EFBBC913F49A5F6E0AF0D248F70246143DC28F32
+            968479A1AFF927E37D1A566BB5690EEEBB952194
+            40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52
+          )
+          PRIMARY_FINGERPRINTS="$(
+            printf '%s\n' "$KEY_RECORDS" |
+              awk -F: '
+                $1 == "pub" { primary = 1; next }
+                $1 == "fpr" && primary { print $10; primary = 0 }
+              '
+          )"
+          if [ "$(printf '%s\n' "$PRIMARY_FINGERPRINTS" | sed '/^$/d' | wc -l | tr -d ' ')" -ne 3 ]; then
+            echo "Trusted signing key set has an unexpected primary-key count." >&2
+            exit 1
+          fi
+          for expected in "${EXPECTED_FINGERPRINTS[@]}"; do
+            if ! printf '%s\n' "$PRIMARY_FINGERPRINTS" |
+              awk -v expected="$expected" '$0 == expected { found = 1 } END { exit !found }'; then
+              echo "Trusted signing key fingerprint is unavailable." >&2
+              exit 1
+            fi
+          done
+          while IFS= read -r actual; do
+            case " ${EXPECTED_FINGERPRINTS[*]} " in
+              *" $actual "*) ;;
+              *)
+                echo "Trusted signing key set contains an unexpected primary key." >&2
+                exit 1
+                ;;
+            esac
+          done <<< "$PRIMARY_FINGERPRINTS"
+          echo "TRUSTED_GNUPGHOME=$TRUSTED_GNUPGHOME" >> "$GITHUB_ENV"
+      - name: Build immutable candidate merge plan
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          BASE_OID: ${{ steps.resolve-candidate.outputs.base_oid }}
+          HEAD_OID: ${{ steps.resolve-candidate.outputs.head_oid }}
+        shell: bash
+        run: |
+          set -euo pipefail
           export GNUPGHOME="$TRUSTED_GNUPGHOME"
-          cd "$TRUSTED_VALIDATOR_ROOT"
-          PYTHONPATH="$TRUSTED_VALIDATOR_ROOT" PYTHONNOUSERSITE=1 python -P - <<'PY'
+          cd "$TRUSTED_ROOT"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            "$TRUSTED_PYTHON" -I - <<'PY'
+          from __future__ import annotations
+
+          import json
           import os
           from pathlib import Path
+          import sys
 
-          from scripts.retrospective_history_git_v2 import validate_append_only_range
 
-          issues = []
-          if os.environ["EVENT_FORCED"] == "true":
-              issues.append("range: force-push event is not append-only")
-          issues.extend(
-              validate_append_only_range(
-                  Path(os.environ["GITHUB_WORKSPACE"]),
-                  os.environ["BASE_REV"],
-                  os.environ["HEAD_REV"],
-              )
+          trusted_root = Path(os.environ["TRUSTED_ROOT"]).resolve(strict=True)
+          sys.path.insert(0, str(trusted_root))
+          from scripts.validate_retained_history import build_pull_request_candidate_plan
+
+
+          plan, issues = build_pull_request_candidate_plan(
+              Path(os.environ["UNTRUSTED_ROOT"]),
+              os.environ["BASE_OID"],
+              os.environ["HEAD_OID"],
           )
+          for issue in issues:
+              print(issue)
+          if issues or plan is None:
+              raise SystemExit(1)
+          Path(os.environ["MERGE_PLAN_PATH"]).write_text(
+              json.dumps(plan.as_dict(), sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Monitor default branch squash
+        if: ${{ github.event_name == 'push' }}
+        env:
+          BASE_OID: ${{ github.event.before }}
+          EVENT_FORCED: ${{ github.event.forced }}
+          HEAD_OID: ${{ github.event.after }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$TRUSTED_GNUPGHOME"
+          cd "$TRUSTED_ROOT"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            "$TRUSTED_PYTHON" -I - <<'PY'
+          from __future__ import annotations
+
+          import os
+          from pathlib import Path
+          import sys
+
+
+          trusted_root = Path(os.environ["TRUSTED_ROOT"]).resolve(strict=True)
+          sys.path.insert(0, str(trusted_root))
+          from scripts.validate_retained_history import (
+              validate_append_only_event_range,
+              validate_fixed_head_snapshot,
+          )
+
+
+          candidate = Path(os.environ["UNTRUSTED_ROOT"])
+          issues = validate_fixed_head_snapshot(candidate, os.environ["HEAD_OID"])
+          if not issues:
+              issues.extend(
+                  validate_append_only_event_range(
+                      candidate,
+                      os.environ["BASE_OID"],
+                      os.environ["HEAD_OID"],
+                      forced=os.environ["EVENT_FORCED"] == "true",
+                  )
+              )
           for issue in issues:
               print(issue)
           raise SystemExit(bool(issues))
           PY
-      - name: Import v2 publisher public key
+
+      - name: Execute trusted App squash transaction
+        if: ${{ github.event_name == 'pull_request_target' }}
         env:
-          EXPECTED_FINGERPRINT: 40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52
-          EXPECTED_UID: Codex Session Retrospective Publisher <12524680+JoeyTeng@users.noreply.github.com>
-          PUBLISHER_PUBLIC_KEY: retrospective-history-v2-publisher.asc
+          EXPECTED_APP_ID: ${{ secrets.RETROSPECTIVE_HISTORY_MERGE_APP_ID }}
+          EXPECTED_APP_SLUG: ${{ steps.merge-token.outputs.app-slug }}
+          EVENT_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.merge-token.outputs.token }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
         run: |
-          GNUPGHOME="$RUNNER_TEMP/retrospective-history-v2-gnupg"
-          export GNUPGHOME
-          install -d -m 700 "$GNUPGHOME"
-          gpg --quiet --no-options --no-autostart --batch \
-            --import "$PUBLISHER_PUBLIC_KEY" >/dev/null 2>&1
-          KEY_RECORDS="$(
-            gpg --quiet --no-options --no-autostart --batch --with-colons \
-              --fingerprint --list-keys 2>/dev/null
-          )"
-          ACTUAL_FINGERPRINT="$(
-            printf '%s\n' "$KEY_RECORDS" |
-              awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10; exit }'
-          )"
-          PRIMARY_KEY_COUNT="$(
-            printf '%s\n' "$KEY_RECORDS" |
-              awk -F: '$1 == "pub" { count += 1 } END { print count + 0 }'
-          )"
-          UID_COUNT="$(
-            printf '%s\n' "$KEY_RECORDS" |
-              awk -F: '$1 == "uid" { count += 1 } END { print count + 0 }'
-          )"
-          ACTUAL_UID="$(
-            printf '%s\n' "$KEY_RECORDS" |
-              awk -F: '$1 == "uid" { print $10; exit }'
-          )"
-          test "$PRIMARY_KEY_COUNT" = 1
-          test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT"
-          test "$UID_COUNT" = 1
-          test "$ACTUAL_UID" = "$EXPECTED_UID"
-          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
-      - name: Install v2 validation dependencies
-        run: python -m pip install --requirement requirements-v2.txt
-      - name: Validate JSON syntax
-        run: |
-          python -m json.tool schemas/session-retrospective-v1.schema.json >/dev/null
-          python -m json.tool schemas/retained-manifest-v1.schema.json >/dev/null
-          python -m json.tool schemas/session-retrospective-v2.schema.json >/dev/null
-          python -m json.tool schemas/retained-manifest-v2.schema.json >/dev/null
-      - name: Meta-validate v2 schemas
-        run: >-
-          python -c 'import json; from pathlib import Path; from jsonschema import Draft202012Validator;
-          schemas = ("schemas/session-retrospective-v2.schema.json", "schemas/retained-manifest-v2.schema.json");
-          [Draft202012Validator.check_schema(json.loads(Path(schema).read_text(encoding="utf-8"))) for schema in schemas]'
-      - name: Run tests
-        run: python -m unittest discover -s tests
-      - name: Require current pull request base
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_TIP: ${{ github.event.pull_request.base.sha }}
-          HEAD_REV: ${{ github.event.pull_request.head.sha }}
-        run: |
-          if ! git merge-base --is-ancestor "$BASE_TIP" "$HEAD_REV"; then
-            echo "Pull request head does not contain the current event base." >&2
+          set -euo pipefail
+          umask 077
+
+          if [ -z "$GH_TOKEN" ]; then
+            echo "The trusted merge GitHub App token is unavailable." >&2
             exit 1
           fi
-      - name: Reject pull request publication changes
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_TIP: ${{ github.event.pull_request.base.sha }}
-          HEAD_REV: ${{ github.event.pull_request.head.sha }}
-        run: |
-          if ! git diff --quiet "$BASE_TIP" "$HEAD_REV" -- runs; then
-            echo "Pull requests must not modify formal retained-history publications." >&2
-            exit 1
-          fi
-      - name: Validate retained history tree
-        run: python scripts/validate_retained_history.py --root .
-      - name: Validate append-only pull request range
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_REV: ${{ github.event.pull_request.base.sha }}
-          EVENT_FORCED: "false"
-          HEAD_REV: ${{ github.event.pull_request.head.sha }}
-        run: >-
-          python scripts/validate_retained_history.py --root .
-          --base-rev "$BASE_REV" --head-rev "$HEAD_REV"
-          --event-forced "$EVENT_FORCED"
-      - name: Validate append-only master push range
-        if: github.event_name == 'push'
-        env:
-          BASE_REV: ${{ github.event.before }}
-          EVENT_FORCED: ${{ github.event.forced }}
-          HEAD_REV: ${{ github.event.after }}
-        run: >-
-          python scripts/validate_retained_history.py --root .
-          --base-rev "$BASE_REV" --head-rev "$HEAD_REV"
-          --event-forced "$EVENT_FORCED"
+          env -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            "$TRUSTED_PYTHON" -I - transact \
+              --repository "$EVENT_REPOSITORY" \
+              --pull-request "$PULL_REQUEST_NUMBER" \
+              --binding "$CANDIDATE_BINDING_PATH" \
+              --plan "$MERGE_PLAN_PATH" \
+              --app-id "$EXPECTED_APP_ID" \
+              --app-slug "$EXPECTED_APP_SLUG" \
+              --details-url "$RUN_DETAILS_URL" \
+              --receipt "$MERGE_RECEIPT_PATH" <<'PY'
+          from pathlib import Path
+          import os
+          import sys
+
+          trusted_root = Path(os.environ["TRUSTED_ROOT"]).resolve(strict=True)
+          sys.path.insert(0, str(trusted_root))
+          from scripts.retrospective_history_merge_v2 import main
+
+          raise SystemExit(main(sys.argv[1:]))
+          PY

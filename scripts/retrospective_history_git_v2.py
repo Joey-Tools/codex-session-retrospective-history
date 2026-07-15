@@ -12,8 +12,30 @@ from pathlib import Path
 import re
 import selectors
 import subprocess
+import tempfile
 import time
 from typing import Any, Iterable
+
+try:
+    from retrospective_history_attestation_v2 import (
+        PUBLISHER_ATTESTATION_SCHEME,
+        PublisherAttestationError,
+        canonical_openpgp_detached_signature,
+        publisher_attestation_payload,
+    )
+    from retrospective_history_credentials_v2 import (
+        contains_high_confidence_credential,
+    )
+except ModuleNotFoundError:  # Imported as scripts.retrospective_history_git_v2.
+    from scripts.retrospective_history_attestation_v2 import (
+        PUBLISHER_ATTESTATION_SCHEME,
+        PublisherAttestationError,
+        canonical_openpgp_detached_signature,
+        publisher_attestation_payload,
+    )
+    from scripts.retrospective_history_credentials_v2 import (
+        contains_high_confidence_credential,
+    )
 
 
 RUN_MODES = frozenset({"baseline", "daily", "session", "weekly"})
@@ -41,8 +63,19 @@ MAX_ARTIFACT_BYTES = {
 }
 MAX_COMMIT_OBJECT_BYTES = 64 * 1024
 MAX_CHANGED_RUN_PATHS = 4096
+MAX_CHANGED_ADMIN_PATHS = 4096
 MAX_DIFF_OUTPUT_BYTES = 4 * 1024 * 1024
+MAX_RANGE_DIFF_BYTES = 32 * 1024 * 1024
+MAX_RANGE_DIFF_ENTRIES = 65_536
+MAX_RANGE_PATH_BYTES = 16 * 1024 * 1024
+MAX_RANGE_OID_REFERENCES = 131_072
+MAX_RANGE_UNIQUE_OIDS = 16_384
+MAX_TREE_INVENTORY_OUTPUT_BYTES = 32 * 1024 * 1024
+MAX_RANGE_TREE_INVENTORY_BYTES = 256 * 1024 * 1024
+MAX_RANGE_TREE_INVENTORY_ENTRIES = 1_000_000
+MAX_RANGE_TREE_INVENTORY_PATH_BYTES = 256 * 1024 * 1024
 MAX_REVISION_BYTES = 256
+MAX_SQUASH_SUBJECT_BYTES = 256
 MAX_PATH_BYTES = 256
 MAX_DIAGNOSTICS = 64
 MAX_GIT_STDERR_BYTES = 4096
@@ -55,22 +88,109 @@ MAX_SEMANTIC_JSON_NODES = 200_000
 MAX_SEMANTIC_JSON_CONTAINER_ITEMS = 100_000
 MAX_SEMANTIC_JSON_STRING_BYTES = 1024 * 1024
 MAX_SEMANTIC_JSON_SCALAR_BYTES = 4096
-MAX_SEMANTIC_JSONL_ROWS = 200_000
-MAX_SEMANTIC_JSONL_NODES = 1_000_000
 MAX_SEMANTIC_JSONL_ROW_BYTES = 1024 * 1024
 MAX_RANGE_REVISION_FACTS = 1_000_000
+MAX_RANGE_SEMANTIC_BYTES = 256 * 1024 * 1024
+MAX_RANGE_SEMANTIC_LINES = 800_000
+MAX_RANGE_SEMANTIC_NODES = 1_000_000
+MAX_ADMIN_BLOB_BYTES = 1024 * 1024
+MAX_ADMIN_SCAN_BYTES = 16 * 1024 * 1024
+MAX_ADMIN_SCAN_OBJECTS = 4096
 MAX_TRANSIENT_NAME_BYTES = 4096
 MAX_TRANSIENT_SUFFIX_STRIPS = 32
 PROCESS_IO_CHUNK_BYTES = 64 * 1024
 PROCESS_TERMINATION_SECONDS = 1
 DIAGNOSTIC_OMISSION = "validation: additional issues omitted"
+RANGE_WORK_LIMIT_DIAGNOSTIC = "range: aggregate change work exceeds validation limit"
 WINDOW_ROUTE_COMPONENT_COUNT = 32
 RUN_ROUTE_COMPONENT_COUNT = 32
 RUN_PATH_COMPONENT_COUNT = 68
 WINDOW_ROUTE_DOMAIN = b"session-retrospective-retained-window-route-v2"
-V2_PUBLISHER_NAME = b"Codex Session Retrospective Publisher"
-V2_PUBLISHER_EMAIL = b"12524680+JoeyTeng@users.noreply.github.com"
+TRUST_GENERATION_DOMAIN = b"session-retrospective-trust-generation-v2\0"
 V2_SIGNING_FINGERPRINTS = frozenset({b"40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52"})
+V2_ADMIN_BOOTSTRAP_BASE = b"97f236c56cbbf24776899178175e2603ecf30fb0"
+V2_ADMIN_BOOTSTRAP_MESSAGE = b"Bootstrap session retrospective history v2\n"
+V2_ADMIN_MAINTAINER_NAME = b"Joey Teng"
+V2_ADMIN_MAINTAINER_EMAIL = b"joey.teng.dev@gmail.com"
+V2_ADMIN_GITHUB_NAME = b"GitHub"
+V2_ADMIN_GITHUB_EMAIL = b"noreply@github.com"
+V2_ADMIN_MAINTAINER_SIGNING_FINGERPRINTS = frozenset(
+    {b"EFBBC913F49A5F6E0AF0D248F70246143DC28F32"}
+)
+V2_ADMIN_GITHUB_SIGNING_FINGERPRINTS = frozenset(
+    {b"968479A1AFF927E37D1A566BB5690EEEBB952194"}
+)
+V2_ADMIN_PATHS = frozenset(
+    {
+        b".github/workflows/ci.yml",
+        b".gitignore",
+        b"AGENTS.md",
+        b"README.md",
+        b"data/README.md",
+        b"reports/README.md",
+        b"requirements-v2.in",
+        b"requirements-v2.txt",
+        b"retrospective-history-v2-admin.asc",
+        b"retrospective-history-v2-publisher.asc",
+        b"schemas/retained-manifest-v1.schema.json",
+        b"schemas/retained-manifest-v2.schema.json",
+        b"schemas/session-retrospective-v1.schema.json",
+        b"schemas/session-retrospective-v2.schema.json",
+        b"scripts/retrospective_history_git_v2.py",
+        b"scripts/retrospective_history_merge_v2.py",
+        b"scripts/retrospective_history_attestation_v2.py",
+        b"scripts/retrospective_history_credentials_v2.py",
+        b"scripts/retrospective_history_privacy_v2.py",
+        b"scripts/retrospective_history_templates_v2.py",
+        b"scripts/retrospective_history_v2.py",
+        b"scripts/validate_retained_history.py",
+        b"tests/test_retrospective_history_git_v2.py",
+        b"tests/test_retrospective_history_merge_v2.py",
+        b"tests/test_retrospective_history_privacy_v2.py",
+        b"tests/test_retrospective_history_v2.py",
+        b"tests/test_retrospective_history_v2_ci.py",
+        b"tests/test_retrospective_history_v2_schema_extensions.py",
+        b"tests/test_validate_retained_history.py",
+    }
+)
+V2_ADMIN_REQUIRED_PATHS = frozenset(
+    {
+        b".github/workflows/ci.yml",
+        b"requirements-v2.in",
+        b"requirements-v2.txt",
+        b"retrospective-history-v2-admin.asc",
+        b"retrospective-history-v2-publisher.asc",
+        b"schemas/retained-manifest-v2.schema.json",
+        b"schemas/session-retrospective-v2.schema.json",
+        b"scripts/retrospective_history_git_v2.py",
+        b"scripts/retrospective_history_merge_v2.py",
+        b"scripts/retrospective_history_attestation_v2.py",
+        b"scripts/retrospective_history_credentials_v2.py",
+        b"scripts/retrospective_history_privacy_v2.py",
+        b"scripts/retrospective_history_templates_v2.py",
+        b"scripts/retrospective_history_v2.py",
+        b"scripts/validate_retained_history.py",
+    }
+)
+V2_TRUST_ROOT_PATHS = frozenset(
+    {
+        b".github/workflows/ci.yml",
+        b"requirements-v2.in",
+        b"requirements-v2.txt",
+        b"retrospective-history-v2-admin.asc",
+        b"retrospective-history-v2-publisher.asc",
+        b"schemas/retained-manifest-v2.schema.json",
+        b"schemas/session-retrospective-v2.schema.json",
+        b"scripts/retrospective_history_attestation_v2.py",
+        b"scripts/retrospective_history_credentials_v2.py",
+        b"scripts/retrospective_history_git_v2.py",
+        b"scripts/retrospective_history_merge_v2.py",
+        b"scripts/retrospective_history_privacy_v2.py",
+        b"scripts/retrospective_history_templates_v2.py",
+        b"scripts/retrospective_history_v2.py",
+        b"scripts/validate_retained_history.py",
+    }
+)
 FORBIDDEN_TRANSIENT_COMPONENTS = frozenset(
     {
         b".codex",
@@ -97,11 +217,36 @@ FORBIDDEN_TRANSIENT_FILENAMES = frozenset(
 )
 FORBIDDEN_TRANSIENT_NAME_STEMS = frozenset(
     {
+        b"archived_sessions",
+        b"auth",
+        b"authentication",
+        b"authorization",
+        b"config",
+        b"credential",
+        b"credentials",
         b"history",
+        b"index",
+        b"password",
+        b"passwd",
+        b"rollout",
+        b"runs",
+        b"scratch",
+        b"secret",
+        b"session",
+        b"session_data",
         b"session_index",
+        b"session_log",
+        b"session_metadata",
+        b"sessions",
+        b"shard",
+        b"shard_cache",
+        b"shard_index",
         b"shard_manifest",
+        b"shard_metadata",
         b"shards",
         b"source_metadata",
+        b"token",
+        b"transient",
         b"turn_summaries",
     }
 )
@@ -117,8 +262,26 @@ FORBIDDEN_TRANSIENT_COMPACT_PARTS = frozenset(
         b"userprompt",
     }
 )
+FORBIDDEN_TRANSIENT_COMPACT_PREFIXES = (b"raw", b"rollout")
+FORBIDDEN_TRANSIENT_COMPACT_NAMES = frozenset(
+    re.sub(rb"[^a-z0-9]", b"", name.lower()) for name in FORBIDDEN_TRANSIENT_NAME_STEMS
+)
 STRIPPABLE_TRANSIENT_SUFFIXES = frozenset(
-    {b".bz2", b".gz", b".json", b".jsonl", b".md", b".txt", b".xz", b".zip", b".zst"}
+    {
+        b".asc",
+        b".bz2",
+        b".gz",
+        b".json",
+        b".jsonl",
+        b".md",
+        b".py",
+        b".txt",
+        b".xz",
+        b".yaml",
+        b".yml",
+        b".zip",
+        b".zst",
+    }
 )
 EDITOR_TRANSIENT_SUFFIX_RE = re.compile(
     rb"\.(?:bak|backup|old|orig|save|swap|sw[a-z]|temp|temporary|tmp)(?:\.[0-9]+)?$",
@@ -126,13 +289,16 @@ EDITOR_TRANSIENT_SUFFIX_RE = re.compile(
 )
 NUMERIC_ROTATION_SUFFIX_RE = re.compile(rb"\.[0-9]+$")
 EMACS_VERSION_BACKUP_SUFFIX_RE = re.compile(rb"\.~[0-9]+~$")
-
 OID_RE = re.compile(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 RAW_DIFF_RE = re.compile(
     rb":(?P<old_mode>[0-7]{6}) (?P<new_mode>[0-7]{6}) "
     rb"(?P<old_oid>[0-9a-f]{40}|[0-9a-f]{64}) "
     rb"(?P<new_oid>[0-9a-f]{40}|[0-9a-f]{64}) "
     rb"(?P<status>[A-Z])(?:[0-9]+)?"
+)
+TREE_ENTRY_METADATA_RE = re.compile(
+    rb"(?P<mode>[0-7]{6}) (?P<kind>blob|tree|commit) "
+    rb"(?P<oid>[0-9a-f]{40}|[0-9a-f]{64})"
 )
 DATE_COMPONENT = rb"\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
 WINDOW_RE = re.compile(
@@ -196,15 +362,36 @@ SEMANTIC_JSONL_ARTIFACTS = frozenset(
     {"episodes.jsonl", "topics.jsonl", "turn_findings.jsonl"}
 )
 SEMANTIC_ARTIFACTS = SEMANTIC_JSON_ARTIFACTS | SEMANTIC_JSONL_ARTIFACTS
-IDENTITY_RE = re.compile(
-    re.escape(V2_PUBLISHER_NAME) + rb" <" + re.escape(V2_PUBLISHER_EMAIL) + rb"> "
-    rb"(?P<timestamp>0|[1-9][0-9]{0,11}) \+0000"
-)
 COMMIT_MESSAGE_RE = re.compile(
     rb"Publish session retrospective v2 "
     rb"(?P<mode>baseline|daily|session|weekly) "
     rb"(?P<window>" + DATE_COMPONENT + rb"(?:_to_" + DATE_COMPONENT + rb")?) "
     rb"(?P<run_ref>run_ref_v2:[0-9a-f]{64})\n"
+)
+ADMIN_COMMIT_MESSAGE_RE = re.compile(
+    rb"Administer session retrospective history v2: "
+    rb"[A-Za-z0-9][A-Za-z0-9 ._:/()#-]{0,120}\n"
+)
+TRUST_ROOT_UPGRADE_MESSAGE = b"Upgrade session retrospective history v2 trust root\n"
+GIT_TIMEZONE_RE = rb"(?:[+-](?:0[0-9]|1[0-3])[0-5][0-9]|[+-]1400)"
+ADMIN_MAINTAINER_IDENTITY_RE = re.compile(
+    re.escape(V2_ADMIN_MAINTAINER_NAME)
+    + rb" <"
+    + re.escape(V2_ADMIN_MAINTAINER_EMAIL)
+    + rb"> (?P<timestamp>0|[1-9][0-9]{0,11}) "
+    + GIT_TIMEZONE_RE
+)
+ADMIN_GITHUB_IDENTITY_RE = re.compile(
+    re.escape(V2_ADMIN_GITHUB_NAME)
+    + rb" <"
+    + re.escape(V2_ADMIN_GITHUB_EMAIL)
+    + rb"> (?P<timestamp>0|[1-9][0-9]{0,11}) "
+    + GIT_TIMEZONE_RE
+)
+ADMIN_AUTHOR_IDENTITY_RE = re.compile(
+    rb"[A-Za-z0-9][A-Za-z0-9 ._'()-]{0,99} "
+    rb"<[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@"
+    rb"[A-Za-z0-9.-]{1,189}> (?P<timestamp>0|[1-9][0-9]{0,11}) " + GIT_TIMEZONE_RE
 )
 ARMOR_HEADER_RE = re.compile(rb"[A-Za-z][A-Za-z0-9-]{0,31}: [\x20-\x7e]{0,200}")
 ARMOR_PAYLOAD_RE = re.compile(rb"[A-Za-z0-9+/]+={0,2}")
@@ -229,7 +416,19 @@ class _CommitLimitExceeded(Exception):
     pass
 
 
+class _RangeWorkLimitExceeded(Exception):
+    pass
+
+
+class _TreeInventoryFailure(Exception):
+    pass
+
+
 class _SemanticFailure(Exception):
+    pass
+
+
+class _AdminFailure(Exception):
     pass
 
 
@@ -255,6 +454,58 @@ class _IssueCollector:
 
 
 @dataclass(frozen=True)
+class PullRequestMergePlan:
+    base_oid: str
+    head_oid: str
+    head_tree_oid: str
+    squash_subject: str
+    trust_generation: str
+
+    def as_dict(self) -> dict[str, str | int]:
+        return {
+            "schema_version": 1,
+            "base_oid": self.base_oid,
+            "head_oid": self.head_oid,
+            "head_tree_oid": self.head_tree_oid,
+            "squash_subject": self.squash_subject,
+            "trust_generation": self.trust_generation,
+        }
+
+
+def trust_generation_from_entries(
+    entries: Iterable[tuple[str, str, str, str]],
+) -> str:
+    expected_paths = {path.decode("ascii") for path in V2_TRUST_ROOT_PATHS}
+    normalized: dict[str, tuple[str, str, str]] = {}
+    for path, mode, object_type, object_id in entries:
+        try:
+            path.encode("ascii")
+            encoded_object_id = object_id.encode("ascii")
+        except (AttributeError, UnicodeEncodeError) as exc:
+            raise ValueError("trust generation entry is not canonical ASCII") from exc
+        if (
+            path not in expected_paths
+            or path in normalized
+            or mode != "100644"
+            or object_type != "blob"
+            or OID_RE.fullmatch(encoded_object_id) is None
+        ):
+            raise ValueError("trust generation entry is invalid")
+        normalized[path] = (mode, object_type, object_id)
+    if set(normalized) != expected_paths:
+        raise ValueError("trust generation entry set is incomplete")
+
+    digest = hashlib.sha256(TRUST_GENERATION_DOMAIN)
+    for path in sorted(normalized):
+        mode, object_type, object_id = normalized[path]
+        for field in (path, mode, object_type, object_id):
+            encoded = field.encode("ascii")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+    return f"sha256:{digest.hexdigest()}"
+
+
+@dataclass(frozen=True)
 class _RunPath:
     value: str
     mode: str
@@ -277,6 +528,7 @@ class _DiffEntry:
 @dataclass(frozen=True)
 class _ParsedDiff:
     run_entries: tuple[_DiffEntry, ...]
+    admin_entries: tuple[_DiffEntry, ...]
     changed_path_count: int
     forbidden_transient_path_changed: bool
     non_run_path_changed: bool
@@ -286,6 +538,34 @@ class _ParsedDiff:
 class _ObjectInfo:
     kind: bytes
     size: int
+
+
+@dataclass
+class _AdminScanState:
+    object_infos: dict[bytes, _ObjectInfo]
+    scan_results: dict[bytes, bool]
+    scanned_blob_bytes: int = 0
+    scanned_blob_count: int = 0
+    exhausted: bool = False
+
+
+@dataclass
+class _PublicationObjectCache:
+    object_infos: dict[bytes, _ObjectInfo]
+    blobs: dict[bytes, bytes]
+
+
+@dataclass
+class _RangeWorkBudget:
+    diff_bytes: int
+    entry_count: int
+    path_bytes: int
+    oid_references: int
+    unique_oids: set[bytes]
+    tree_inventory_bytes: int = 0
+    tree_inventory_entries: int = 0
+    tree_inventory_path_bytes: int = 0
+    exhausted: bool = False
 
 
 @dataclass(frozen=True)
@@ -298,15 +578,10 @@ class _RevisionFact:
 @dataclass(frozen=True)
 class _PublicationFacts:
     commit_index: int
+    manifest_run_id: str | None
     campaign_ref: str | None
     publication_role: str | None
     revisions: tuple[_RevisionFact, ...]
-
-
-@dataclass(frozen=True)
-class _PublisherIdentity:
-    name: bytes
-    email: bytes
 
 
 @dataclass(frozen=True)
@@ -316,12 +591,14 @@ class _CommitHeader:
 
 
 @dataclass
-class _SemanticJSONLBudget:
-    rows_remaining: int
-    nodes_remaining: int
+class _SemanticRangeBudget:
+    bytes_attempted: int = 0
+    lines_attempted: int = 0
+    nodes_attempted: int = 0
+    exhausted: bool = False
 
 
-def _git_environment() -> dict[str, str]:
+def sanitized_git_environment() -> dict[str, str]:
     environment = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
     }
@@ -489,7 +766,7 @@ def _run_git(
     result = _run_process_bounded(
         ["git", "-C", str(root), *arguments],
         input_data=input_data,
-        environment=_git_environment(),
+        environment=sanitized_git_environment(),
         max_stdout_bytes=max_stdout_bytes,
         max_stderr_bytes=MAX_GIT_STDERR_BYTES,
         timeout_seconds=GIT_TIMEOUT_SECONDS,
@@ -648,81 +925,268 @@ def _forbidden_transient_name(name: bytes) -> bool:
         for candidate in candidates
         if candidate.startswith(b".") and len(candidate) > 1
     }
+    if any(candidate.lower().startswith(b".codex") for candidate in candidates):
+        return True
     if normalized_candidates.intersection(FORBIDDEN_TRANSIENT_FILENAMES):
         return True
     separated = re.sub(rb"([a-z0-9])([A-Z])", rb"\1 \2", stem)
-    tokens = [
-        token for token in re.split(rb"[^a-z0-9]+", separated.lower()) if token
-    ]
+    tokens = [token for token in re.split(rb"[^a-z0-9]+", separated.lower()) if token]
     normalized = b"_".join(tokens)
     compacted = b"".join(tokens)
     return (
         normalized in FORBIDDEN_TRANSIENT_NAME_STEMS
-        or compacted.startswith(b"raw")
+        or compacted in FORBIDDEN_TRANSIENT_COMPACT_NAMES
+        or compacted.startswith(FORBIDDEN_TRANSIENT_COMPACT_PREFIXES)
         or any(part in compacted for part in FORBIDDEN_TRANSIENT_COMPACT_PARTS)
     )
 
 
 def _is_forbidden_transient_path(path: bytes) -> bool:
+    if _parse_run_path(path) is not None:
+        return False
     parts = tuple(path.split(b"/"))
-    if not parts or any(
-        part.lower() in FORBIDDEN_TRANSIENT_COMPONENTS
+    return not parts or any(
+        not part
+        or part in {b".", b".."}
+        or part.lower() in FORBIDDEN_TRANSIENT_COMPONENTS
         or _forbidden_transient_name(part)
-        for part in parts[:-1]
-    ):
-        return True
-    name = parts[-1].lower()
-    return (
-        name in FORBIDDEN_TRANSIENT_FILENAMES
-        or _forbidden_transient_name(parts[-1])
-        or name.startswith(b"rollout")
+        for part in parts
     )
 
 
-def _parse_diff(raw: bytes) -> _ParsedDiff:
+def _admin_blob_is_safe(raw: bytes) -> bool:
+    return not contains_high_confidence_credential(raw)
+
+
+def _parse_diff(raw: bytes, work_budget: _RangeWorkBudget) -> _ParsedDiff:
+    if work_budget.exhausted:
+        raise _RangeWorkLimitExceeded
     if not raw:
-        return _ParsedDiff((), 0, False, False)
+        return _ParsedDiff((), (), 0, False, False)
     fields = raw.split(b"\0")
     if fields[-1] != b"":
         raise _ParseFailure
     fields.pop()
     if len(fields) % 2:
         raise _ParseFailure
-    entries: list[_DiffEntry] = []
-    changed_path_count = 0
-    forbidden_transient_path_changed = False
-    non_run_path_changed = False
+    commit_entry_count = len(fields) // 2
+    if (
+        work_budget.diff_bytes + len(raw) > MAX_RANGE_DIFF_BYTES
+        or work_budget.entry_count + commit_entry_count > MAX_RANGE_DIFF_ENTRIES
+    ):
+        work_budget.exhausted = True
+        raise _RangeWorkLimitExceeded
+    matches: list[re.Match[bytes]] = []
+    commit_path_bytes = 0
+    commit_oid_references = 0
+    commit_unique_oids: set[bytes] = set()
     for offset in range(0, len(fields), 2):
         metadata, path = fields[offset : offset + 2]
         match = RAW_DIFF_RE.fullmatch(metadata)
-        if match is None:
+        if match is None or not path or len(path) > MAX_TRANSIENT_NAME_BYTES:
             raise _ParseFailure
+        matches.append(match)
+        commit_path_bytes += len(path)
+        if work_budget.path_bytes + commit_path_bytes > MAX_RANGE_PATH_BYTES:
+            work_budget.exhausted = True
+            raise _RangeWorkLimitExceeded
+        for object_id in (match.group("old_oid"), match.group("new_oid")):
+            if object_id in ZERO_OIDS:
+                continue
+            commit_oid_references += 1
+            if (
+                work_budget.oid_references + commit_oid_references
+                > MAX_RANGE_OID_REFERENCES
+            ):
+                work_budget.exhausted = True
+                raise _RangeWorkLimitExceeded
+            if object_id not in work_budget.unique_oids:
+                commit_unique_oids.add(object_id)
+                if (
+                    len(work_budget.unique_oids) + len(commit_unique_oids)
+                    > MAX_RANGE_UNIQUE_OIDS
+                ):
+                    work_budget.exhausted = True
+                    raise _RangeWorkLimitExceeded
+    work_budget.diff_bytes += len(raw)
+    work_budget.entry_count += commit_entry_count
+    work_budget.path_bytes += commit_path_bytes
+    work_budget.oid_references += commit_oid_references
+    work_budget.unique_oids.update(commit_unique_oids)
+
+    run_entries: list[_DiffEntry] = []
+    admin_entries: list[_DiffEntry] = []
+    changed_path_count = 0
+    forbidden_transient_path_changed = False
+    non_run_path_changed = False
+    for entry_index, offset in enumerate(range(0, len(fields), 2)):
+        metadata, path = fields[offset : offset + 2]
+        match = matches[entry_index]
         changed_path_count += 1
         forbidden_transient_path_changed = (
             forbidden_transient_path_changed or _is_forbidden_transient_path(path)
         )
+        entry = _DiffEntry(
+            path=path,
+            old_mode=match.group("old_mode"),
+            new_mode=match.group("new_mode"),
+            old_oid=match.group("old_oid"),
+            new_oid=match.group("new_oid"),
+            status=match.group("status").decode("ascii"),
+            run_path=_parse_run_path(path),
+        )
         if not _is_run_candidate(path):
             non_run_path_changed = True
+            if len(admin_entries) >= MAX_CHANGED_ADMIN_PATHS:
+                raise _ParseFailure
+            admin_entries.append(entry)
             continue
-        if len(entries) >= MAX_CHANGED_RUN_PATHS:
+        if len(run_entries) >= MAX_CHANGED_RUN_PATHS:
             raise _ParseFailure
-        entries.append(
-            _DiffEntry(
-                path=path,
-                old_mode=match.group("old_mode"),
-                new_mode=match.group("new_mode"),
-                old_oid=match.group("old_oid"),
-                new_oid=match.group("new_oid"),
-                status=match.group("status").decode("ascii"),
-                run_path=_parse_run_path(path),
-            )
-        )
+        run_entries.append(entry)
     return _ParsedDiff(
-        tuple(entries),
+        tuple(run_entries),
+        tuple(admin_entries),
         changed_path_count,
         forbidden_transient_path_changed,
         non_run_path_changed,
     )
+
+
+def _bounded_empty_tree_inventory(
+    root: Path,
+    commit_oid: bytes,
+    work_budget: _RangeWorkBudget,
+) -> dict[bytes, bytes]:
+    if work_budget.exhausted:
+        raise _RangeWorkLimitExceeded
+    result = _run_git(
+        root,
+        [
+            "ls-tree",
+            "-r",
+            "-t",
+            "-z",
+            "--full-tree",
+            commit_oid.decode("ascii"),
+        ],
+        max_stdout_bytes=MAX_TREE_INVENTORY_OUTPUT_BYTES,
+    )
+    raw = result.stdout
+    if work_budget.tree_inventory_bytes + len(raw) > MAX_RANGE_TREE_INVENTORY_BYTES:
+        work_budget.exhausted = True
+        raise _RangeWorkLimitExceeded
+
+    records = raw.split(b"\0")
+    if records[-1] != b"":
+        raise _TreeInventoryFailure
+    records.pop()
+    if (
+        work_budget.tree_inventory_entries + len(records)
+        > MAX_RANGE_TREE_INVENTORY_ENTRIES
+    ):
+        work_budget.exhausted = True
+        raise _RangeWorkLimitExceeded
+
+    tree_entries: dict[bytes, bytes] = {}
+    seen_paths: set[bytes] = set()
+    nonempty_tree_paths: set[bytes] = set()
+    inventory_path_bytes = 0
+    for record in records:
+        metadata, separator, path = record.partition(b"\t")
+        match = TREE_ENTRY_METADATA_RE.fullmatch(metadata)
+        if (
+            not separator
+            or match is None
+            or not path
+            or len(path) > MAX_TRANSIENT_NAME_BYTES
+            or path in seen_paths
+        ):
+            raise _TreeInventoryFailure
+        seen_paths.add(path)
+        inventory_path_bytes += len(path)
+        if (
+            work_budget.tree_inventory_path_bytes + inventory_path_bytes
+            > MAX_RANGE_TREE_INVENTORY_PATH_BYTES
+        ):
+            work_budget.exhausted = True
+            raise _RangeWorkLimitExceeded
+
+        parent, parent_separator, _name = path.rpartition(b"/")
+        if parent_separator:
+            if not parent:
+                raise _TreeInventoryFailure
+            nonempty_tree_paths.add(parent)
+        if match.group("kind") == b"tree":
+            if match.group("mode") != b"040000":
+                raise _TreeInventoryFailure
+            tree_entries[path] = match.group("oid")
+
+    if not nonempty_tree_paths.issubset(tree_entries):
+        raise _TreeInventoryFailure
+    work_budget.tree_inventory_bytes += len(raw)
+    work_budget.tree_inventory_entries += len(records)
+    work_budget.tree_inventory_path_bytes += inventory_path_bytes
+    return {
+        path: object_id
+        for path, object_id in tree_entries.items()
+        if path not in nonempty_tree_paths
+    }
+
+
+def _empty_tree_diff(
+    parent_inventory: dict[bytes, bytes],
+    commit_inventory: dict[bytes, bytes],
+    *,
+    byte_limit: int,
+) -> bytes:
+    output = bytearray()
+    for path in sorted(parent_inventory.keys() | commit_inventory.keys()):
+        old_oid = parent_inventory.get(path)
+        new_oid = commit_inventory.get(path)
+        if old_oid == new_oid:
+            continue
+        object_id = old_oid if old_oid is not None else new_oid
+        if object_id is None:
+            raise _TreeInventoryFailure
+        zero_oid = b"0" * len(object_id)
+        if old_oid is None:
+            old_mode = b"000000"
+            new_mode = b"040000"
+            old_value = zero_oid
+            new_value = new_oid
+            status = b"A"
+        elif new_oid is None:
+            old_mode = b"040000"
+            new_mode = b"000000"
+            old_value = old_oid
+            new_value = zero_oid
+            status = b"D"
+        else:
+            new_mode = b"040000"
+            old_mode = b"040000"
+            old_value = old_oid
+            new_value = new_oid
+            status = b"M"
+        record = (
+            b":"
+            + old_mode
+            + b" "
+            + new_mode
+            + b" "
+            + old_value
+            + b" "
+            + new_value
+            + b" "
+            + status
+            + b"\0"
+            + path
+            + b"\0"
+        )
+        if len(output) + len(record) > byte_limit:
+            raise _RangeWorkLimitExceeded
+        output.extend(record)
+    return bytes(output)
 
 
 def _batch_object_info(
@@ -748,6 +1212,18 @@ def _batch_object_info(
             raise _GitFailure
         objects[expected_oid] = _ObjectInfo(kind=fields[1], size=int(fields[2]))
     return objects
+
+
+def _cached_object_info(
+    root: Path,
+    object_ids: Iterable[bytes],
+    cache: dict[bytes, _ObjectInfo],
+) -> dict[bytes, _ObjectInfo]:
+    requested = set(object_ids)
+    missing = requested.difference(cache)
+    if missing:
+        cache.update(_batch_object_info(root, missing))
+    return {object_id: cache[object_id] for object_id in requested}
 
 
 def _run_directory(run_path: _RunPath) -> str:
@@ -863,6 +1339,7 @@ def _validate_run_entries(
     root: Path,
     commit_index: int,
     entries: list[_DiffEntry],
+    object_cache: dict[bytes, _ObjectInfo],
     issues: _IssueCollector,
 ) -> dict[bytes, _ObjectInfo]:
     inspect_objects: list[bytes] = []
@@ -906,7 +1383,7 @@ def _validate_run_entries(
     if deleted_objects & added_objects:
         issues.add(f"commit {commit_index}: v2 run file rename is not allowed")
 
-    objects = _batch_object_info(root, inspect_objects)
+    objects = _cached_object_info(root, inspect_objects, object_cache)
     for entry in entries:
         if entry.run_path is None or entry.new_oid not in objects:
             continue
@@ -930,54 +1407,6 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def _reject_non_json_constant(_: str) -> None:
     raise ValueError
-
-
-def _validate_manifest_run_id(
-    root: Path,
-    commit_index: int,
-    publication_run: _RunPath | None,
-    entries: list[_DiffEntry],
-    objects: dict[bytes, _ObjectInfo],
-    issues: _IssueCollector,
-) -> None:
-    if publication_run is None:
-        return
-    issue = f"commit {commit_index}: manifest run_id does not match the physical v2 run route"
-    manifest_entries = [
-        entry
-        for entry in entries
-        if entry.run_path is not None
-        and entry.run_path.artifact == "manifest.json"
-        and _run_directory(entry.run_path) == _run_directory(publication_run)
-    ]
-    if len(manifest_entries) != 1:
-        issues.add(issue)
-        return
-    entry = manifest_entries[0]
-    info = objects.get(entry.new_oid)
-    if (
-        entry.status != "A"
-        or entry.new_mode != b"100644"
-        or info is None
-        or info.kind != b"blob"
-        or info.size > MAX_ARTIFACT_BYTES["manifest.json"]
-    ):
-        issues.add(issue)
-        return
-    raw = _run_git(
-        root,
-        ["cat-file", "blob", entry.new_oid.decode("ascii")],
-        max_stdout_bytes=info.size,
-    ).stdout
-    if len(raw) != info.size:
-        issues.add(issue)
-        return
-    value = _parse_semantic_json(raw)
-    if value is None:
-        issues.add(issue)
-        return
-    if not isinstance(value, dict) or value.get("run_id") != publication_run.run_id:
-        issues.add(issue)
 
 
 def _batch_blob_contents(
@@ -1026,11 +1455,101 @@ def _batch_blob_contents(
     return contents
 
 
+def _validate_admin_entries(
+    root: Path,
+    commit_index: int,
+    entries: tuple[_DiffEntry, ...],
+    scan_state: _AdminScanState,
+    issues: _IssueCollector,
+) -> None:
+    if scan_state.exhausted:
+        raise _RangeWorkLimitExceeded
+
+    unsafe = False
+    inspect_objects: list[bytes] = []
+    for entry in entries:
+        if _is_forbidden_transient_path(entry.path):
+            continue
+        if entry.path not in V2_ADMIN_PATHS:
+            unsafe = True
+            continue
+        if entry.status == "D":
+            if entry.path in V2_ADMIN_REQUIRED_PATHS:
+                unsafe = True
+            continue
+        if (
+            entry.status not in {"A", "M"}
+            or entry.new_mode != b"100644"
+            or entry.new_oid in ZERO_OIDS
+        ):
+            unsafe = True
+            continue
+        inspect_objects.append(entry.new_oid)
+
+    new_object_ids = {
+        object_id
+        for object_id in inspect_objects
+        if object_id not in scan_state.object_infos
+    }
+    if (
+        scan_state.scanned_blob_count + len(new_object_ids) > MAX_ADMIN_SCAN_OBJECTS
+        or len(scan_state.object_infos) + len(new_object_ids) > MAX_ADMIN_SCAN_OBJECTS
+    ):
+        scan_state.exhausted = True
+        raise _RangeWorkLimitExceeded
+    if new_object_ids:
+        inspected = _batch_object_info(root, new_object_ids)
+        scan_state.object_infos.update(inspected)
+
+    scannable: dict[bytes, _ObjectInfo] = {}
+    for object_id in inspect_objects:
+        info = scan_state.object_infos.get(object_id)
+        if info is None or info.kind != b"blob" or info.size > MAX_ADMIN_BLOB_BYTES:
+            unsafe = True
+            continue
+        scannable[object_id] = info
+
+    unscanned = {
+        object_id: info
+        for object_id, info in scannable.items()
+        if object_id not in scan_state.scan_results
+    }
+    additional_bytes = sum(info.size for info in unscanned.values())
+    if (
+        scan_state.exhausted
+        or scan_state.scanned_blob_count + len(unscanned) > MAX_ADMIN_SCAN_OBJECTS
+        or scan_state.scanned_blob_bytes + additional_bytes > MAX_ADMIN_SCAN_BYTES
+    ):
+        scan_state.exhausted = True
+        raise _RangeWorkLimitExceeded
+    if unscanned:
+        try:
+            contents = _batch_blob_contents(root, unscanned)
+        except _SemanticFailure as exc:
+            raise _AdminFailure from exc
+        results = {
+            object_id: _admin_blob_is_safe(contents[object_id])
+            for object_id in sorted(unscanned)
+        }
+        scan_state.scanned_blob_count += len(unscanned)
+        scan_state.scanned_blob_bytes += additional_bytes
+        scan_state.scan_results.update(results)
+
+    if any(
+        not scan_state.scan_results.get(object_id, False) for object_id in scannable
+    ):
+        unsafe = True
+    if unsafe:
+        issues.add(f"commit {commit_index}: admin path, object, or secret gate failed")
+
+
 def _load_publication_blobs(
     root: Path,
     publication_run: _RunPath,
     entries: list[_DiffEntry],
     objects: dict[bytes, _ObjectInfo],
+    cache: _PublicationObjectCache,
+    budget: _SemanticRangeBudget,
 ) -> dict[str, bytes]:
     directory = _run_directory(publication_run)
     candidates: dict[str, tuple[bytes, _ObjectInfo]] = {}
@@ -1039,7 +1558,7 @@ def _load_publication_blobs(
         if (
             run_path is None
             or _run_directory(run_path) != directory
-            or run_path.artifact not in SEMANTIC_ARTIFACTS
+            or run_path.artifact not in RUN_ARTIFACTS
             or entry.status != "A"
             or entry.new_mode != b"100644"
         ):
@@ -1048,20 +1567,76 @@ def _load_publication_blobs(
         if info is None or info.kind != b"blob":
             continue
         candidates[run_path.artifact] = (entry.new_oid, info)
-    if frozenset(candidates) != SEMANTIC_ARTIFACTS:
+    if frozenset(candidates) != RUN_ARTIFACTS:
         return {}
-    if sum(info.size for _, info in candidates.values()) > MAX_SEMANTIC_BUNDLE_BYTES:
+
+    bundle_bytes = sum(info.size for _, info in candidates.values())
+    if bundle_bytes > MAX_SEMANTIC_BUNDLE_BYTES:
         raise _SemanticFailure
-    object_infos = {object_id: info for object_id, info in candidates.values()}
-    contents = _batch_blob_contents(root, object_infos)
+
+    missing_infos = {
+        object_id: info
+        for object_id, info in candidates.values()
+        if object_id not in cache.blobs
+    }
+    read_bytes = sum(info.size for info in missing_infos.values())
+    _consume_semantic_bytes(budget, read_bytes)
+    if missing_infos:
+        contents = _batch_blob_contents(root, missing_infos)
+        if any(
+            len(contents[object_id]) != info.size
+            for object_id, info in missing_infos.items()
+        ):
+            raise _SemanticFailure
+        cache.blobs.update(contents)
+
     return {
-        artifact: contents[object_id] for artifact, (object_id, _) in candidates.items()
+        artifact: cache.blobs[object_id]
+        for artifact, (object_id, _) in candidates.items()
     }
 
 
+def _consume_semantic_bytes(budget: _SemanticRangeBudget, amount: int) -> None:
+    if budget.exhausted or amount < 0:
+        budget.exhausted = True
+        raise _SemanticFailure
+    budget.bytes_attempted += amount
+    if budget.bytes_attempted > MAX_RANGE_SEMANTIC_BYTES:
+        budget.exhausted = True
+        raise _SemanticFailure
+
+
+def _consume_semantic_lines(budget: _SemanticRangeBudget, amount: int) -> None:
+    if budget.exhausted or amount < 0:
+        budget.exhausted = True
+        raise _SemanticFailure
+    budget.lines_attempted += amount
+    if budget.lines_attempted > MAX_RANGE_SEMANTIC_LINES:
+        budget.exhausted = True
+        raise _SemanticFailure
+
+
+def _consume_semantic_nodes(budget: _SemanticRangeBudget | None, amount: int) -> None:
+    if budget is None:
+        return
+    if budget.exhausted or amount < 0:
+        budget.exhausted = True
+        raise _SemanticFailure
+    budget.nodes_attempted += amount
+    if budget.nodes_attempted > MAX_RANGE_SEMANTIC_NODES:
+        budget.exhausted = True
+        raise _SemanticFailure
+
+
 def _semantic_json_preparse_node_count(
-    raw: bytes, *, node_limit: int = MAX_SEMANTIC_JSON_NODES
+    raw: bytes,
+    *,
+    node_limit: int = MAX_SEMANTIC_JSON_NODES,
+    range_budget: _SemanticRangeBudget | None = None,
+    range_charge_multiplier: int = 1,
 ) -> int | None:
+    if range_charge_multiplier <= 0:
+        raise _SemanticFailure
     whitespace = b" \t\r\n"
     scalar_delimiters = b" \t\r\n,]}:"
     stack: list[list[Any]] = []
@@ -1072,6 +1647,7 @@ def _semantic_json_preparse_node_count(
     def register_value() -> bool:
         nonlocal nodes, root_state
         nodes += 1
+        _consume_semantic_nodes(range_budget, range_charge_multiplier)
         if nodes > node_limit or nodes > MAX_SEMANTIC_JSON_NODES:
             raise _SemanticFailure
         if not stack:
@@ -1218,23 +1794,33 @@ def _decode_semantic_json(raw: bytes) -> Any | None:
 
 
 def _parse_semantic_json_with_nodes(
-    raw: bytes | None, *, node_limit: int = MAX_SEMANTIC_JSON_NODES
+    raw: bytes | None,
+    *,
+    node_limit: int = MAX_SEMANTIC_JSON_NODES,
+    range_budget: _SemanticRangeBudget | None = None,
+    range_charge_multiplier: int = 1,
 ) -> tuple[Any | None, int]:
     if raw is None:
         return None, 0
-    nodes = _semantic_json_preparse_node_count(raw, node_limit=node_limit)
+    _consume_semantic_nodes(range_budget, range_charge_multiplier)
+    nodes = _semantic_json_preparse_node_count(
+        raw,
+        node_limit=node_limit,
+        range_budget=range_budget,
+        range_charge_multiplier=range_charge_multiplier,
+    )
     if nodes is None:
         return None, 0
     return _decode_semantic_json(raw), nodes
 
 
-def _parse_semantic_json(raw: bytes | None) -> Any | None:
-    return _parse_semantic_json_with_nodes(raw)[0]
+def _parse_semantic_json(
+    raw: bytes | None, range_budget: _SemanticRangeBudget | None = None
+) -> Any | None:
+    return _parse_semantic_json_with_nodes(raw, range_budget=range_budget)[0]
 
 
-def _semantic_jsonl_values(
-    raw: bytes, budget: _SemanticJSONLBudget
-) -> Iterable[Any]:
+def _semantic_jsonl_values(raw: bytes, budget: _SemanticRangeBudget) -> Iterable[Any]:
     offset = 0
     while offset < len(raw):
         line_end = raw.find(b"\n", offset)
@@ -1244,15 +1830,117 @@ def _semantic_jsonl_values(
         else:
             line = raw[offset:line_end]
             offset = line_end + 1
-        if len(line) > MAX_SEMANTIC_JSONL_ROW_BYTES or budget.rows_remaining <= 0:
+        if len(line) > MAX_SEMANTIC_JSONL_ROW_BYTES:
             raise _SemanticFailure
-        budget.rows_remaining -= 1
-        value, nodes = _parse_semantic_json_with_nodes(
+        value, _ = _parse_semantic_json_with_nodes(
             line,
-            node_limit=min(MAX_SEMANTIC_JSON_NODES, budget.nodes_remaining),
+            range_budget=budget,
         )
-        budget.nodes_remaining -= nodes
         yield value
+
+
+def _publication_line_count(blobs: dict[str, bytes]) -> int:
+    return sum(
+        raw.count(b"\n") + (not raw.endswith(b"\n")) for raw in blobs.values() if raw
+    )
+
+
+def _charge_strict_publication_parse(
+    blobs: dict[str, bytes], budget: _SemanticRangeBudget
+) -> None:
+    # One bounded preparse accounts for itself and the trusted bundle validator pass.
+    _consume_semantic_bytes(budget, 2 * sum(len(raw) for raw in blobs.values()))
+    _consume_semantic_lines(budget, 2 * _publication_line_count(blobs))
+    for artifact in sorted(SEMANTIC_JSON_ARTIFACTS):
+        raw = blobs.get(artifact)
+        if raw is None:
+            continue
+        _consume_semantic_nodes(budget, 2)
+        _semantic_json_preparse_node_count(
+            raw,
+            range_budget=budget,
+            range_charge_multiplier=2,
+        )
+    for artifact in sorted(SEMANTIC_JSONL_ARTIFACTS):
+        raw = blobs.get(artifact, b"")
+        offset = 0
+        while offset < len(raw):
+            line_end = raw.find(b"\n", offset)
+            if line_end < 0:
+                line = raw[offset:]
+                offset = len(raw)
+            else:
+                line = raw[offset:line_end]
+                offset = line_end + 1
+            if len(line) > MAX_SEMANTIC_JSONL_ROW_BYTES:
+                raise _SemanticFailure
+            _consume_semantic_nodes(budget, 2)
+            _semantic_json_preparse_node_count(
+                line,
+                range_budget=budget,
+                range_charge_multiplier=2,
+            )
+
+
+def _strict_validate_publication_bundle(
+    publication_run: _RunPath, blobs: dict[str, bytes]
+) -> list[str]:
+    if frozenset(blobs) != RUN_ARTIFACTS:
+        return ["publication bundle is incomplete"]
+    try:
+        from scripts import retrospective_history_v2 as validator
+
+        required_attributes = (
+            "MAX_BUNDLE_ARTIFACT_BYTES",
+            "_ReadBudget",
+            "_discover_bundles",
+            "_load_privacy_validator",
+            "_load_schema_validators",
+            "_open_validation_root",
+            "_validate_bundle",
+        )
+        if any(not hasattr(validator, name) for name in required_attributes):
+            raise RuntimeError
+        with tempfile.TemporaryDirectory(
+            prefix="retrospective-history-v2-publication-"
+        ) as temporary:
+            root = Path(temporary)
+            directory = root / _run_directory(publication_run)
+            directory.mkdir(parents=True)
+            visible_files: list[Path] = []
+            for artifact in sorted(RUN_ARTIFACTS):
+                relative = Path(_run_directory(publication_run), artifact)
+                (root / relative).write_bytes(blobs[artifact])
+                visible_files.append(relative)
+
+            root_descriptor = validator._open_validation_root(root)
+            try:
+                issues: list[str] = []
+                validators = validator._load_schema_validators()
+                privacy_validator = validator._load_privacy_validator()
+                if validators is None or privacy_validator is None:
+                    raise RuntimeError
+                bundles = validator._discover_bundles(
+                    root, root_descriptor, visible_files, issues
+                )
+                if len(bundles) != 1:
+                    raise RuntimeError
+                read_budget = validator._ReadBudget(validator.MAX_BUNDLE_ARTIFACT_BYTES)
+                validator._validate_bundle(
+                    bundles[0],
+                    root_descriptor,
+                    issues,
+                    validators,
+                    privacy_validator,
+                    read_budget,
+                )
+            finally:
+                os.close(root_descriptor)
+        if any(not isinstance(issue, str) for issue in issues):
+            raise RuntimeError
+        return sorted(dict.fromkeys(issues))
+    except Exception:
+        return ["trusted structured publication validation failed"]
 
 
 def _revision_fact_from_values(
@@ -1295,14 +1983,20 @@ def _revision_fact_from_record(
 
 
 def _extract_publication_facts(
-    commit_index: int, blobs: dict[str, bytes]
+    commit_index: int,
+    blobs: dict[str, bytes],
+    budget: _SemanticRangeBudget,
 ) -> _PublicationFacts:
     documents = {
-        artifact: _parse_semantic_json(blobs.get(artifact))
+        artifact: _parse_semantic_json(blobs.get(artifact), budget)
         for artifact in sorted(SEMANTIC_JSON_ARTIFACTS)
     }
     manifest_value = documents.get("manifest.json")
     manifest = manifest_value if isinstance(manifest_value, dict) else {}
+    manifest_run_id_value = manifest.get("run_id")
+    manifest_run_id = (
+        manifest_run_id_value if isinstance(manifest_run_id_value, str) else None
+    )
     campaign_ref_value = manifest.get("campaign_ref")
     campaign_ref = (
         campaign_ref_value
@@ -1352,15 +2046,9 @@ def _extract_publication_facts(
             if fact is not None:
                 revisions.append(fact)
 
-    jsonl_budget = _SemanticJSONLBudget(
-        rows_remaining=MAX_SEMANTIC_JSONL_ROWS,
-        nodes_remaining=MAX_SEMANTIC_JSONL_NODES,
-    )
     for artifact in sorted(SEMANTIC_JSONL_ARTIFACTS):
         fields = REVISION_ARTIFACT_FIELDS[artifact]
-        for value in _semantic_jsonl_values(
-            blobs.get(artifact, b""), jsonl_budget
-        ):
+        for value in _semantic_jsonl_values(blobs.get(artifact, b""), budget):
             fact = _revision_fact_from_record(value, fields)
             if fact is not None:
                 revisions.append(fact)
@@ -1368,6 +2056,7 @@ def _extract_publication_facts(
         raise _SemanticFailure
     return _PublicationFacts(
         commit_index=commit_index,
+        manifest_run_id=manifest_run_id,
         campaign_ref=campaign_ref,
         publication_role=publication_role,
         revisions=tuple(revisions),
@@ -1483,7 +2172,12 @@ def _valid_signature(value: bytes) -> bool:
     return bool(decoded)
 
 
-def _validsig_matches_allowlist(status: bytes) -> bool:
+def _validsig_matches_allowlist(
+    status: bytes,
+    allowed_fingerprints: frozenset[bytes] | None = None,
+) -> bool:
+    if allowed_fingerprints is None:
+        allowed_fingerprints = V2_SIGNING_FINGERPRINTS
     if len(status) > MAX_GIT_STDERR_BYTES or b"\0" in status or b"\r" in status:
         return False
     signer_fingerprints: list[bytes] = []
@@ -1511,10 +2205,14 @@ def _validsig_matches_allowlist(status: bytes) -> bool:
         signer_fingerprints.append(signer_fingerprint)
     if len(signer_fingerprints) != 1:
         return False
-    return signer_fingerprints[0] in V2_SIGNING_FINGERPRINTS
+    return signer_fingerprints[0] in allowed_fingerprints
 
 
-def _verify_commit_signature(root: Path, commit_oid: bytes) -> bool:
+def _verify_commit_signature(
+    root: Path,
+    commit_oid: bytes,
+    allowed_fingerprints: frozenset[bytes] | None = None,
+) -> bool:
     try:
         result = _run_git(
             root,
@@ -1533,7 +2231,91 @@ def _verify_commit_signature(root: Path, commit_oid: bytes) -> bool:
         )
     except (_GitFailure, UnicodeDecodeError):
         return False
-    return _validsig_matches_allowlist(result.stderr)
+    return _validsig_matches_allowlist(result.stderr, allowed_fingerprints)
+
+
+def _verify_detached_openpgp_signature(
+    signature: bytes,
+    payload: bytes,
+    signer_fingerprint: bytes,
+) -> bool:
+    if signer_fingerprint not in V2_SIGNING_FINGERPRINTS:
+        return False
+    try:
+        canonical_signature = canonical_openpgp_detached_signature(
+            signature,
+            signer_fingerprint.decode("ascii"),
+        )
+    except (PublisherAttestationError, UnicodeDecodeError):
+        return False
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="retrospective-history-v2-attestation-"
+        ) as raw:
+            temporary = Path(raw)
+            signature_path = temporary / "publisher-signature.asc"
+            payload_path = temporary / "publisher-attestation.bin"
+            signature_path.write_bytes(canonical_signature)
+            payload_path.write_bytes(payload)
+            result = _run_process_bounded(
+                [
+                    "gpg",
+                    "--quiet",
+                    "--no-options",
+                    "--no-autostart",
+                    "--batch",
+                    "--status-fd=2",
+                    "--verify",
+                    str(signature_path),
+                    str(payload_path),
+                ],
+                input_data=None,
+                environment=sanitized_git_environment(),
+                max_stdout_bytes=0,
+                max_stderr_bytes=MAX_GIT_STDERR_BYTES,
+                timeout_seconds=GIT_TIMEOUT_SECONDS,
+            )
+    except (OSError, _GitFailure):
+        return False
+    return result.returncode == 0 and _validsig_matches_allowlist(
+        result.stderr,
+        frozenset({signer_fingerprint}),
+    )
+
+
+def _verify_publisher_attestation(blobs: dict[str, bytes]) -> bool:
+    manifest = _decode_semantic_json(blobs.get("manifest.json", b""))
+    if not isinstance(manifest, dict):
+        return False
+    attestation = manifest.get("publisher_attestation")
+    if not isinstance(attestation, dict) or set(attestation) != {
+        "scheme",
+        "signature",
+        "signer_fingerprint",
+    }:
+        return False
+    if attestation.get("scheme") != PUBLISHER_ATTESTATION_SCHEME:
+        return False
+    signature = attestation.get("signature")
+    signer_fingerprint = attestation.get("signer_fingerprint")
+    run_ref = manifest.get("run_ref")
+    bundle_digest = manifest.get("retained_bundle_digest_v2")
+    if not all(
+        isinstance(value, str)
+        for value in (signature, signer_fingerprint, run_ref, bundle_digest)
+    ):
+        return False
+    try:
+        encoded_signature = signature.encode("ascii")
+        encoded_fingerprint = signer_fingerprint.encode("ascii")
+        payload = publisher_attestation_payload(run_ref, bundle_digest)
+    except (UnicodeEncodeError, ValueError):
+        return False
+    return _verify_detached_openpgp_signature(
+        encoded_signature,
+        payload,
+        encoded_fingerprint,
+    )
 
 
 def _load_commit(root: Path, commit_oid: bytes) -> bytes:
@@ -1551,45 +2333,45 @@ def _load_commit(root: Path, commit_oid: bytes) -> bytes:
     ).stdout
 
 
+def _load_commit_message(root: Path, commit_oid: bytes) -> bytes:
+    raw = _load_commit(root, commit_oid)
+    _headers, message = _parse_commit_headers(raw)
+    return message
+
+
 def _validate_commit_metadata(
     root: Path,
     commit_oid: bytes,
     expected_parent: bytes,
     publication_run: _RunPath | None,
-) -> _PublisherIdentity | None:
+) -> bool:
     try:
         raw = _load_commit(root, commit_oid)
         headers, message = _parse_commit_headers(raw)
     except (_GitFailure, _ParseFailure):
-        return None
+        return False
 
     names = tuple(header.name for header in headers)
-    if names != (*COMMIT_HEADER_ORDER, b"gpgsig"):
-        return None
+    if names not in {COMMIT_HEADER_ORDER, (*COMMIT_HEADER_ORDER, b"gpgsig")}:
+        return False
     values = {header.name: header.value for header in headers}
     if (
         OID_RE.fullmatch(values[b"tree"]) is None
         or values[b"parent"] != expected_parent
     ):
-        return None
-    if not _valid_signature(values[b"gpgsig"]):
-        return None
+        return False
+    if b"gpgsig" in values and not _valid_signature(values[b"gpgsig"]):
+        return False
 
-    author_match = IDENTITY_RE.fullmatch(values[b"author"])
-    committer_match = IDENTITY_RE.fullmatch(values[b"committer"])
     if (
-        author_match is None
-        or committer_match is None
-        or values[b"author"] != values[b"committer"]
+        ADMIN_AUTHOR_IDENTITY_RE.fullmatch(values[b"author"]) is None
+        or ADMIN_AUTHOR_IDENTITY_RE.fullmatch(values[b"committer"]) is None
     ):
-        return None
-    timestamp = int(author_match.group("timestamp"))
-    if timestamp % 60:
-        return None
+        return False
 
     message_match = COMMIT_MESSAGE_RE.fullmatch(message)
     if message_match is None or not _valid_window(message_match.group("window")):
-        return None
+        return False
     mode = message_match.group("mode").decode("ascii")
     window = message_match.group("window").decode("ascii")
     if (
@@ -1599,13 +2381,62 @@ def _validate_commit_metadata(
         or message_match.group("run_ref")
         != b"run_ref_v2:" + publication_run.run_id.encode("ascii")
     ):
-        return None
-    if not _verify_commit_signature(root, commit_oid):
-        return None
-    return _PublisherIdentity(
-        name=V2_PUBLISHER_NAME,
-        email=V2_PUBLISHER_EMAIL,
-    )
+        return False
+    return True
+
+
+def _validate_admin_commit_metadata(
+    root: Path,
+    commit_oid: bytes,
+    expected_parent: bytes,
+    *,
+    bootstrap: bool,
+    trust_root_upgrade: bool = False,
+    allow_github_final_squash: bool = False,
+) -> bool:
+    try:
+        raw = _load_commit(root, commit_oid)
+        headers, message = _parse_commit_headers(raw)
+    except (_GitFailure, _ParseFailure):
+        return False
+
+    names = tuple(header.name for header in headers)
+    if names != (*COMMIT_HEADER_ORDER, b"gpgsig"):
+        return False
+    values = {header.name: header.value for header in headers}
+    if (
+        OID_RE.fullmatch(values[b"tree"]) is None
+        or values[b"parent"] != expected_parent
+        or not _valid_signature(values[b"gpgsig"])
+    ):
+        return False
+    if bootstrap:
+        if message != V2_ADMIN_BOOTSTRAP_MESSAGE:
+            return False
+    elif trust_root_upgrade:
+        if message != TRUST_ROOT_UPGRADE_MESSAGE:
+            return False
+    elif ADMIN_COMMIT_MESSAGE_RE.fullmatch(message) is None:
+        return False
+
+    author = values[b"author"]
+    committer = values[b"committer"]
+    maintainer_author = ADMIN_MAINTAINER_IDENTITY_RE.fullmatch(author)
+    maintainer_committer = ADMIN_MAINTAINER_IDENTITY_RE.fullmatch(committer)
+    github_committer = ADMIN_GITHUB_IDENTITY_RE.fullmatch(committer)
+    generic_author = ADMIN_AUTHOR_IDENTITY_RE.fullmatch(author)
+    if maintainer_author is not None and maintainer_committer is not None:
+        allowed_fingerprints = V2_ADMIN_MAINTAINER_SIGNING_FINGERPRINTS
+    elif (
+        trust_root_upgrade
+        or not allow_github_final_squash
+        or github_committer is None
+        or generic_author is None
+    ):
+        return False
+    else:
+        allowed_fingerprints = V2_ADMIN_GITHUB_SIGNING_FINGERPRINTS
+    return _verify_commit_signature(root, commit_oid, allowed_fingerprints)
 
 
 def _linear_commits(
@@ -1656,9 +2487,239 @@ def _linear_commits(
     return backward_commits
 
 
-def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list[str]:
-    """Validate append-only v2 run objects in every commit from base to head."""
+def _validate_bootstrap_admin_tree(
+    root: Path, head_oid: bytes, issues: _IssueCollector
+) -> None:
+    paths = sorted(V2_ADMIN_PATHS)
+    expressions = [head_oid + b":" + path for path in paths]
+    result = _run_git(
+        root,
+        ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
+        input_data=b"".join(expression + b"\n" for expression in expressions),
+        max_stdout_bytes=max(
+            1024, sum(len(expression) + 96 for expression in expressions)
+        ),
+    )
+    lines = result.stdout.splitlines()
+    if len(lines) != len(expressions):
+        raise _GitFailure
+    for expression, line in zip(expressions, lines, strict=True):
+        fields = line.split(b" ")
+        if (
+            line == expression + b" missing"
+            or len(fields) != 3
+            or OID_RE.fullmatch(fields[0]) is None
+            or fields[1] != b"blob"
+            or not fields[2].isdigit()
+            or int(fields[2]) > MAX_ADMIN_BLOB_BYTES
+        ):
+            issues.add("range: bootstrap admin tree is incomplete or unsafe")
+            return
 
+
+def _tree_oid(root: Path, commit_oid: bytes) -> bytes:
+    result = _run_git(
+        root,
+        ["rev-parse", "--verify", f"{commit_oid.decode('ascii')}^{{tree}}"],
+        max_stdout_bytes=MAX_REVISION_BYTES,
+    )
+    tree_oid = result.stdout.strip()
+    if OID_RE.fullmatch(tree_oid) is None:
+        raise _ParseFailure
+    return tree_oid
+
+
+def _trust_root_generation(root: Path, commit_oid: bytes) -> str:
+    paths = sorted(path.decode("ascii") for path in V2_TRUST_ROOT_PATHS)
+    result = _run_git(
+        root,
+        [
+            "ls-tree",
+            "-z",
+            "--full-tree",
+            commit_oid.decode("ascii"),
+            "--",
+            *paths,
+        ],
+        max_stdout_bytes=sum(len(path) + 128 for path in paths),
+    )
+    entries: list[tuple[str, str, str, str]] = []
+    records = result.stdout.split(b"\0")
+    if not records or records[-1] != b"":
+        raise _ParseFailure
+    for record in records[:-1]:
+        try:
+            metadata, encoded_path = record.split(b"\t", 1)
+            mode, object_type, object_id = metadata.split(b" ", 2)
+            entries.append(
+                (
+                    encoded_path.decode("ascii"),
+                    mode.decode("ascii"),
+                    object_type.decode("ascii"),
+                    object_id.decode("ascii"),
+                )
+            )
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise _ParseFailure from exc
+    try:
+        return trust_generation_from_entries(entries)
+    except ValueError as exc:
+        raise _ParseFailure from exc
+
+
+def _prospective_squash_diff(
+    root: Path,
+    base_oid: bytes,
+    head_oid: bytes,
+) -> _ParsedDiff:
+    work_budget = _RangeWorkBudget(0, 0, 0, 0, set())
+    diff = _run_git(
+        root,
+        [
+            "diff-tree",
+            "--no-commit-id",
+            "--raw",
+            "-r",
+            "-z",
+            "--no-renames",
+            "--no-abbrev",
+            base_oid.decode("ascii"),
+            head_oid.decode("ascii"),
+            "--",
+        ],
+        max_stdout_bytes=MAX_DIFF_OUTPUT_BYTES,
+    )
+    base_inventory = _bounded_empty_tree_inventory(root, base_oid, work_budget)
+    head_inventory = _bounded_empty_tree_inventory(root, head_oid, work_budget)
+    empty_tree_diff = _empty_tree_diff(
+        base_inventory,
+        head_inventory,
+        byte_limit=MAX_DIFF_OUTPUT_BYTES - len(diff.stdout),
+    )
+    return _parse_diff(diff.stdout + empty_tree_diff, work_budget)
+
+
+def _validate_prospective_squash(
+    root: Path,
+    base_oid: bytes,
+    head_oid: bytes,
+    roles: set[str],
+    publication_runs: list[_RunPath],
+    admin_messages: list[bytes],
+    trust_root_upgrade: bool,
+    issues: _IssueCollector,
+) -> bytes | None:
+    try:
+        parsed_diff = _prospective_squash_diff(root, base_oid, head_oid)
+    except _RangeWorkLimitExceeded:
+        issues.add(RANGE_WORK_LIMIT_DIAGNOSTIC)
+        return None
+    except (_GitFailure, _ParseFailure, _TreeInventoryFailure):
+        issues.add("range: prospective squash tree inspection failed")
+        return None
+
+    if parsed_diff.forbidden_transient_path_changed:
+        issues.add(
+            "range: prospective squash changes a forbidden raw or transient path"
+        )
+    if not parsed_diff.changed_path_count:
+        issues.add("range: prospective squash must not be empty")
+        return None
+
+    run_entries = list(parsed_diff.run_entries)
+    admin_entries = parsed_diff.admin_entries
+    if roles == {"publication"}:
+        if admin_entries:
+            issues.add(
+                "range: prospective publication squash must not change admin paths"
+            )
+        prospective_run = _validate_publication_run(
+            root,
+            base_oid,
+            1,
+            run_entries,
+            parsed_diff.changed_path_count,
+            issues,
+        )
+        if len(publication_runs) != 1:
+            issues.add(
+                "range: publication pull request must contain exactly one v2 run"
+            )
+            return None
+        expected_run = publication_runs[0]
+        if prospective_run is None or _run_directory(prospective_run) != _run_directory(
+            expected_run
+        ):
+            issues.add(
+                "range: prospective squash tree must contain the one validated publication run"
+            )
+            return None
+        subject = (
+            "Publish session retrospective v2 "
+            f"{expected_run.mode} {expected_run.window} "
+            f"run_ref_v2:{expected_run.run_id}"
+        ).encode("ascii")
+        if len(subject) > MAX_SQUASH_SUBJECT_BYTES:
+            issues.add("range: immutable squash subject is unsafe")
+            return None
+        return subject
+
+    if roles == {"admin"}:
+        if run_entries:
+            issues.add("range: prospective admin squash must not change retained runs")
+        _validate_admin_entries(
+            root,
+            1,
+            admin_entries,
+            _AdminScanState({}, {}),
+            issues,
+        )
+        if trust_root_upgrade:
+            subject = TRUST_ROOT_UPGRADE_MESSAGE.removesuffix(b"\n")
+        else:
+            subjects = set(admin_messages)
+            if len(subjects) != 1:
+                issues.add(
+                    "range: admin commits must carry one identical immutable squash subject"
+                )
+                return None
+            message = next(iter(subjects))
+            if ADMIN_COMMIT_MESSAGE_RE.fullmatch(message) is None:
+                issues.add("range: immutable admin squash subject is invalid")
+                return None
+            subject = message.removesuffix(b"\n")
+        if contains_high_confidence_credential(subject):
+            issues.add(
+                "range: immutable admin squash subject contains sensitive material"
+            )
+            return None
+        if (
+            not subject
+            or len(subject) > MAX_SQUASH_SUBJECT_BYTES
+            or b"\n" in subject
+            or b"\r" in subject
+            or b"\0" in subject
+        ):
+            issues.add("range: immutable admin squash subject is unsafe")
+            return None
+        return subject
+
+    issues.add(
+        "range: prospective squash must have exactly one publication or admin role"
+    )
+    return None
+
+
+def _validate_role_range(
+    root: Path,
+    base_rev: str,
+    head_rev: str,
+    *,
+    require_admin_only: bool,
+    prospective_squash: bool = False,
+    merge_plan_out: list[PullRequestMergePlan] | None = None,
+    require_single_commit: bool = False,
+) -> list[str]:
     try:
         resolved_root = Path(root).resolve(strict=True)
     except (OSError, RuntimeError, TypeError):
@@ -1703,12 +2764,28 @@ def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list
     except (_GitFailure, _ParseFailure):
         return ["range: commit graph is not a bounded linear ancestry path"]
 
+    if require_single_commit and len(commits) != 1:
+        return ["range: default-branch update must be exactly one squash commit"]
+
+    bootstrap = base_oid == V2_ADMIN_BOOTSTRAP_BASE
+    if bootstrap and len(commits) != 1:
+        return [
+            "range: bootstrap must be exactly one authenticated admin squash commit"
+        ]
+
     issues = _IssueCollector()
-    publisher_identity: _PublisherIdentity | None = None
     publications: list[_PublicationFacts] = []
+    publication_runs: list[_RunPath] = []
+    admin_messages: list[bytes] = []
     revision_fact_count = 0
-    range_has_run_changes = False
-    range_has_non_run_changes = False
+    roles: set[str] = set()
+    admin_scan_state = _AdminScanState({}, {})
+    publication_cache = _PublicationObjectCache({}, {})
+    range_work_budget = _RangeWorkBudget(0, 0, 0, 0, set())
+    empty_tree_inventories: dict[bytes, dict[bytes, bytes]] = {}
+    semantic_budget = _SemanticRangeBudget()
+    trust_root_upgrade_commits: list[int] = []
+
     for current_index, (commit_oid, parent_oid) in enumerate(commits, start=1):
         try:
             diff = _run_git(
@@ -1727,77 +2804,310 @@ def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list
                 ],
                 max_stdout_bytes=MAX_DIFF_OUTPUT_BYTES,
             )
-            parsed_diff = _parse_diff(diff.stdout)
+            for inventory_oid in (parent_oid, commit_oid):
+                if inventory_oid not in empty_tree_inventories:
+                    empty_tree_inventories[inventory_oid] = (
+                        _bounded_empty_tree_inventory(
+                            resolved_root,
+                            inventory_oid,
+                            range_work_budget,
+                        )
+                    )
+            empty_tree_diff = _empty_tree_diff(
+                empty_tree_inventories[parent_oid],
+                empty_tree_inventories[commit_oid],
+                byte_limit=MAX_DIFF_OUTPUT_BYTES - len(diff.stdout),
+            )
+            parsed_diff = _parse_diff(
+                diff.stdout + empty_tree_diff,
+                range_work_budget,
+            )
             if parsed_diff.forbidden_transient_path_changed:
                 issues.add(
                     f"commit {current_index}: forbidden raw or transient path changed"
                 )
-            entries = list(parsed_diff.run_entries)
-            range_has_run_changes = range_has_run_changes or bool(entries)
-            range_has_non_run_changes = (
-                range_has_non_run_changes or parsed_diff.non_run_path_changed
+
+            run_entries = list(parsed_diff.run_entries)
+            admin_entries = parsed_diff.admin_entries
+            has_runs = bool(run_entries)
+            has_admin = bool(admin_entries) or not parsed_diff.changed_path_count
+            changes_trust_root = any(
+                entry.path in V2_TRUST_ROOT_PATHS for entry in admin_entries
             )
-            if not entries:
+            if changes_trust_root and not bootstrap:
+                trust_root_upgrade_commits.append(current_index)
+            if has_runs:
+                roles.add("publication")
+            if has_admin:
+                roles.add("admin")
+            if has_runs and admin_entries:
+                issues.add(
+                    f"commit {current_index}: admin and publication paths must not be mixed"
+                )
+            if not parsed_diff.changed_path_count:
+                issues.add(f"commit {current_index}: empty admin commit is not allowed")
+
+            admin_metadata_valid = True
+            if has_admin:
+                admin_metadata_valid = _validate_admin_commit_metadata(
+                    resolved_root,
+                    commit_oid,
+                    parent_oid,
+                    bootstrap=bootstrap,
+                    trust_root_upgrade=changes_trust_root and not bootstrap,
+                    allow_github_final_squash=(
+                        require_single_commit
+                        and not prospective_squash
+                        and merge_plan_out is None
+                        and not require_admin_only
+                    ),
+                )
+                if not admin_metadata_valid:
+                    issues.add(
+                        f"commit {current_index}: v2 admin commit metadata is unsafe"
+                    )
+                else:
+                    admin_messages.append(
+                        _load_commit_message(resolved_root, commit_oid)
+                    )
+            if admin_entries:
+                _validate_admin_entries(
+                    resolved_root,
+                    current_index,
+                    admin_entries,
+                    admin_scan_state,
+                    issues,
+                )
+
+            if not has_runs:
                 continue
+            if require_admin_only:
+                issues.add("range: pull requests must contain admin-only changes")
+            if bootstrap:
+                issues.add("range: bootstrap commit must not change retained runs")
+
             publication_run = _validate_publication_run(
                 resolved_root,
                 parent_oid,
                 current_index,
-                entries,
+                run_entries,
                 parsed_diff.changed_path_count,
                 issues,
             )
             objects = _validate_run_entries(
-                resolved_root, current_index, entries, issues
+                resolved_root,
+                current_index,
+                run_entries,
+                publication_cache.object_infos,
+                issues,
             )
-            identity = _validate_commit_metadata(
+            metadata_valid = _validate_commit_metadata(
                 resolved_root, commit_oid, parent_oid, publication_run
             )
-            if identity is None:
+            if not metadata_valid:
                 issues.add(
                     f"commit {current_index}: v2 publication commit metadata is unsafe"
                 )
                 continue
-            if publisher_identity is None:
-                publisher_identity = identity
-            elif identity != publisher_identity:
+            if publication_run is None:
+                continue
+
+            blobs = _load_publication_blobs(
+                resolved_root,
+                publication_run,
+                run_entries,
+                objects,
+                publication_cache,
+                semantic_budget,
+            )
+            if frozenset(blobs) != RUN_ARTIFACTS:
                 issues.add(
-                    f"commit {current_index}: v2 publisher identity changed within the range"
+                    f"commit {current_index}: publication bundle could not be loaded safely"
                 )
                 continue
-            _validate_manifest_run_id(
-                resolved_root,
-                current_index,
-                publication_run,
-                entries,
-                objects,
-                issues,
+
+            _charge_strict_publication_parse(blobs, semantic_budget)
+            strict_issues = _strict_validate_publication_bundle(publication_run, blobs)
+            for strict_issue in strict_issues:
+                issues.add(f"commit {current_index}: {strict_issue}")
+            if strict_issues:
+                continue
+            if not _verify_publisher_attestation(blobs):
+                issues.add(f"commit {current_index}: publisher attestation is invalid")
+                continue
+
+            semantic_blobs = {
+                artifact: blobs[artifact] for artifact in SEMANTIC_ARTIFACTS
+            }
+            _consume_semantic_bytes(
+                semantic_budget, sum(len(raw) for raw in semantic_blobs.values())
             )
-            if publication_run is not None:
-                blobs = _load_publication_blobs(
-                    resolved_root, publication_run, entries, objects
+            _consume_semantic_lines(
+                semantic_budget, _publication_line_count(semantic_blobs)
+            )
+            facts = _extract_publication_facts(
+                current_index, semantic_blobs, semantic_budget
+            )
+            if facts.manifest_run_id != publication_run.run_id:
+                issues.add(
+                    f"commit {current_index}: manifest run_id does not match the physical v2 run route"
                 )
-                facts = _extract_publication_facts(current_index, blobs)
-                revision_fact_count += len(facts.revisions)
-                if revision_fact_count > MAX_RANGE_REVISION_FACTS:
-                    raise _SemanticFailure
-                publications.append(facts)
+            revision_fact_count += len(facts.revisions)
+            if revision_fact_count > MAX_RANGE_REVISION_FACTS:
+                raise _SemanticFailure
+            publications.append(facts)
+            publication_runs.append(publication_run)
+        except _RangeWorkLimitExceeded:
+            return [RANGE_WORK_LIMIT_DIAGNOSTIC]
         except _GitFailure:
             issues.add(f"commit {current_index}: bounded Git object inspection failed")
         except _ParseFailure:
             issues.add(
                 f"commit {current_index}: bounded Git diff is malformed or too large"
             )
+        except _TreeInventoryFailure:
+            issues.add(
+                f"commit {current_index}: bounded Git tree-entry inventory failed"
+            )
+        except _AdminFailure:
+            issues.add(
+                f"commit {current_index}: bounded admin object inspection failed"
+            )
         except _SemanticFailure:
             issues.add(
                 f"commit {current_index}: bounded publication semantic inspection failed"
             )
-    if range_has_run_changes and range_has_non_run_changes:
-        issues.add(
-            "range: publication pushes must not include infrastructure or other non-run changes"
-        )
+            return issues.items
+
+    if len(roles) > 1:
+        issues.add("range: admin and publication roles must not be mixed")
+    if require_admin_only and roles.difference({"admin"}):
+        issues.add("range: pull requests must contain admin-only changes")
+    trust_root_upgrade = bool(trust_root_upgrade_commits)
+    if trust_root_upgrade:
+        if require_single_commit:
+            issues.add(
+                "range: candidate-controlled post-merge workflow cannot authorize a trust-root upgrade"
+            )
+        elif len(commits) != 1 or trust_root_upgrade_commits != [1]:
+            issues.add(
+                "range: trust-root upgrade must be exactly one maintainer-signed commit"
+            )
+    if bootstrap:
+        if roles != {"admin"}:
+            issues.add("range: bootstrap must contain one admin-only commit")
+        else:
+            try:
+                _validate_bootstrap_admin_tree(resolved_root, head_oid, issues)
+            except _GitFailure:
+                issues.add("range: bootstrap admin tree inspection failed")
     _validate_cross_commit_order(publications, issues)
+    squash_subject: bytes | None = None
+    if prospective_squash:
+        try:
+            squash_subject = _validate_prospective_squash(
+                resolved_root,
+                base_oid,
+                head_oid,
+                roles,
+                publication_runs,
+                admin_messages,
+                trust_root_upgrade,
+                issues,
+            )
+        except _RangeWorkLimitExceeded:
+            issues.add(RANGE_WORK_LIMIT_DIAGNOSTIC)
+        except (_AdminFailure, _GitFailure, _ParseFailure, _TreeInventoryFailure):
+            issues.add("range: prospective squash tree inspection failed")
+    if squash_subject is not None and not issues.items and merge_plan_out is not None:
+        try:
+            merge_plan_out.append(
+                PullRequestMergePlan(
+                    base_oid=base_oid.decode("ascii"),
+                    head_oid=head_oid.decode("ascii"),
+                    head_tree_oid=_tree_oid(resolved_root, head_oid).decode("ascii"),
+                    squash_subject=squash_subject.decode("ascii"),
+                    trust_generation=_trust_root_generation(resolved_root, base_oid),
+                )
+            )
+        except (_GitFailure, _ParseFailure, UnicodeDecodeError):
+            issues.add("range: immutable merge plan could not be constructed")
     return issues.items
+
+
+def validate_append_only_range(root: Path, base_rev: str, head_rev: str) -> list[str]:
+    """Validate authenticated publication or admin commits from base to head."""
+
+    return _validate_role_range(root, base_rev, head_rev, require_admin_only=False)
+
+
+def validate_pull_request_squash(
+    root: Path,
+    base_rev: str,
+    head_rev: str,
+) -> list[str]:
+    """Validate untrusted PR history and its immutable squash plan."""
+
+    return _validate_role_range(
+        root,
+        base_rev,
+        head_rev,
+        require_admin_only=False,
+        prospective_squash=True,
+    )
+
+
+def build_pull_request_merge_plan(
+    root: Path,
+    base_rev: str,
+    head_rev: str,
+) -> tuple[PullRequestMergePlan | None, list[str]]:
+    """Validate a candidate and return its deterministic App merge plan."""
+
+    plans: list[PullRequestMergePlan] = []
+    issues = _validate_role_range(
+        root,
+        base_rev,
+        head_rev,
+        require_admin_only=False,
+        prospective_squash=True,
+        merge_plan_out=plans,
+    )
+    if issues:
+        return None, issues
+    if len(plans) != 1:
+        return None, ["range: immutable merge plan could not be constructed"]
+    return plans[0], []
+
+
+def validate_default_branch_update(
+    root: Path,
+    base_rev: str,
+    head_rev: str,
+) -> list[str]:
+    """Validate one actual protected-branch squash commit."""
+
+    return _validate_role_range(
+        root,
+        base_rev,
+        head_rev,
+        require_admin_only=False,
+        require_single_commit=True,
+    )
+
+
+def validate_admin_pull_request_range(
+    root: Path, base_rev: str, head_rev: str
+) -> list[str]:
+    """Validate authenticated admin-only PR history and its prospective squash."""
+
+    return _validate_role_range(
+        root,
+        base_rev,
+        head_rev,
+        require_admin_only=True,
+        prospective_squash=True,
+    )
 
 
 def validate_checkout_matches_revision(root: Path, head_rev: str) -> list[str]:
@@ -1838,4 +3148,14 @@ def validate_checkout_matches_revision(root: Path, head_rev: str) -> list[str]:
     return []
 
 
-__all__ = ["validate_append_only_range", "validate_checkout_matches_revision"]
+__all__ = [
+    "PullRequestMergePlan",
+    "build_pull_request_merge_plan",
+    "sanitized_git_environment",
+    "trust_generation_from_entries",
+    "validate_admin_pull_request_range",
+    "validate_append_only_range",
+    "validate_checkout_matches_revision",
+    "validate_default_branch_update",
+    "validate_pull_request_squash",
+]

@@ -12,8 +12,22 @@ import unicodedata
 from typing import Any
 
 try:
+    from retrospective_history_attestation_v2 import (
+        PublisherAttestationError,
+        canonical_openpgp_detached_signature,
+    )
+    from retrospective_history_credentials_v2 import (
+        contains_high_confidence_credential,
+    )
     from retrospective_history_templates_v2 import validate_and_render_template
 except ModuleNotFoundError:  # Imported as scripts.retrospective_history_privacy_v2.
+    from scripts.retrospective_history_attestation_v2 import (
+        PublisherAttestationError,
+        canonical_openpgp_detached_signature,
+    )
+    from scripts.retrospective_history_credentials_v2 import (
+        contains_high_confidence_credential,
+    )
     from scripts.retrospective_history_templates_v2 import (
         validate_and_render_template,
     )
@@ -25,9 +39,10 @@ SCHEMA_PATH = (
     / "session-retrospective-v2.schema.json"
 )
 
-V2_COMMIT_IDENTITY = (
-    "Codex Session Retrospective Publisher "
-    "<12524680+JoeyTeng@users.noreply.github.com>"
+V2_COMMIT_IDENTITY_RE = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9 ._'()-]{0,99} "
+    r"<[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@"
+    r"[A-Za-z0-9.-]{1,189}>\Z"
 )
 V2_COMMIT_MESSAGE_RE = re.compile(
     r"\APublish session retrospective v2 "
@@ -144,6 +159,7 @@ RUN_ROUTE_COMPONENT_COUNT = 32
 RUN_ARTIFACT_PATH_COMPONENT_COUNT = 68
 WINDOW_ROUTE_DOMAIN = b"session-retrospective-retained-window-route-v2"
 ROUTE_COMPONENT_RE = re.compile(r"^[0-9a-f]{2}$")
+PUBLISHER_FINGERPRINT_RE = re.compile(r"^(?:[0-9A-F]{40}|[0-9A-F]{64})$")
 
 REPORT_HEADINGS = (
     "# Session Retrospective",
@@ -163,14 +179,7 @@ REPORT_HEADINGS = (
 
 UNSAFE_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 SENSITIVE_VALUE_PATTERNS = (
-    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", re.I),
-    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b", re.I),
     re.compile(r"\bBasic\s+[A-Za-z0-9+/=]{8,}\b", re.I),
-    re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
-    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", re.I),
-    re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
     re.compile(
         r"(?<![A-Za-z0-9_])[\"']?"
@@ -672,6 +681,20 @@ def _allowed_json_string(
     if field == "campaign_segment_root_v2":
         allowed = CAMPAIGN_SEGMENT_ROOT_RE.fullmatch(value) is not None
         return (allowed, allowed, False)
+    if field == "signer_fingerprint":
+        allowed = PUBLISHER_FINGERPRINT_RE.fullmatch(value) is not None
+        return (allowed, allowed, False)
+    if field == "signature":
+        fingerprint = (
+            parent.get("signer_fingerprint") if isinstance(parent, dict) else None
+        )
+        try:
+            allowed = isinstance(fingerprint, str) and bool(
+                canonical_openpgp_detached_signature(value, fingerprint)
+            )
+        except PublisherAttestationError:
+            allowed = False
+        return (allowed, allowed, False)
     if field in {"engine_commit", "locked_first_parent_object_id"}:
         allowed = GIT_OBJECT_RE.fullmatch(value) is not None
         return (allowed, allowed, False)
@@ -732,7 +755,9 @@ def _scan_text_risks(
         or any(character in BIDI_AND_INVISIBLE for character in value)
     ):
         issues.add(ISSUE_PROSE)
-    if _has_any(SENSITIVE_VALUE_PATTERNS, normalized):
+    if contains_high_confidence_credential(normalized.encode("utf-8")) or _has_any(
+        SENSITIVE_VALUE_PATTERNS, normalized
+    ):
         issues.add(ISSUE_SENSITIVE_MATERIAL)
     if _has_any(URL_PATTERNS, normalized) or _contains_ipv6_locator(normalized):
         issues.add(ISSUE_URL)
@@ -1047,11 +1072,11 @@ def validate_v2_privacy(relative: Path, payload: bytes) -> list[str]:
 
 
 def validate_v2_commit_metadata(author: str, committer: str, message: str) -> list[str]:
-    """Validate the fixed privacy-safe v2 commit identity and subject grammar."""
+    """Validate privacy-safe Git identities and the fixed v2 subject grammar."""
     issues: set[str] = set()
-    if author != V2_COMMIT_IDENTITY:
+    if V2_COMMIT_IDENTITY_RE.fullmatch(author) is None:
         issues.add(ISSUE_COMMIT_AUTHOR)
-    if committer != V2_COMMIT_IDENTITY:
+    if V2_COMMIT_IDENTITY_RE.fullmatch(committer) is None:
         issues.add(ISSUE_COMMIT_COMMITTER)
 
     match = V2_COMMIT_MESSAGE_RE.fullmatch(message)
@@ -1061,7 +1086,7 @@ def validate_v2_commit_metadata(author: str, committer: str, message: str) -> li
 
 
 __all__ = [
-    "V2_COMMIT_IDENTITY",
+    "V2_COMMIT_IDENTITY_RE",
     "V2_COMMIT_MESSAGE_RE",
     "validate_v2_commit_metadata",
     "validate_v2_privacy",

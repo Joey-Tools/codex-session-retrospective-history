@@ -37,6 +37,13 @@ PRODUCTION_CONFIGURATION_DOMAIN_TAG = (
 )
 CAMPAIGN_SEGMENT_DOMAIN_TAG = b"session-retrospective-campaign-segments-v2"
 WINDOW_ROUTE_DOMAIN = b"session-retrospective-retained-window-route-v2"
+FAKE_PUBLISHER_SIGNATURE = (
+    "-----BEGIN PGP SIGNATURE-----\n\n"
+    "wjQEAAEIAB0FAgAAAAEWIQRA+l0FrHo9XBgLA3/23Pegb/ycUgAKCRD23Pegb/yc\n"
+    "UgAAAAEB\n"
+    "=pLXK\n"
+    "-----END PGP SIGNATURE-----"
+)
 WINDOW = {
     "mode": "daily",
     "path_component": "2026-07-13",
@@ -352,6 +359,7 @@ def physical_bundle_directory(root: Path, mode: str, window: str, run_id: str) -
 def bundle_digest(payloads: dict[str, bytes], manifest: dict) -> str:
     projection = dict(manifest)
     projection.pop("retained_bundle_digest_v2")
+    projection.pop("publisher_attestation")
     hasher = hashlib.sha256()
     hasher.update(DOMAIN_TAG)
     for basename in ARTIFACTS:
@@ -423,6 +431,24 @@ def rewrite_digest(directory: Path, *, pretty_manifest: bool = False) -> None:
         )
     else:
         manifest_path.write_bytes(canonical_json(manifest))
+
+
+def remove_model_execution_provenance(refs: BundleRefs) -> None:
+    manifest_path = refs.directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["eras"]["model_eras"] = []
+    for field_name in (
+        "job_refs",
+        "provider_policy_refs",
+        "request_egress_receipt_refs",
+        "calibration_receipt_refs",
+    ):
+        manifest["provenance"][field_name] = []
+    manifest["production_configuration_root_v2"] = production_configuration_root(
+        manifest["provenance"]
+    )
+    manifest_path.write_bytes(canonical_json(manifest))
+    rewrite_digest(refs.directory)
 
 
 def set_trend_metric(
@@ -774,12 +800,17 @@ def write_bundle(
         },
         "artifact_inventory": INVENTORY,
         "retained_bundle_digest_v2": "retained_bundle_digest_v2:sha256:" + "0" * 64,
+        "publisher_attestation": {
+            "scheme": "openpgp-detached-v1",
+            "signer_fingerprint": "40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52",
+            "signature": FAKE_PUBLISHER_SIGNATURE,
+        },
         "bundle_digest_contract": {
             "algorithm": "sha-256",
             "domain_tag": DOMAIN_TAG.decode("ascii"),
             "ordering": "bytewise-basename",
             "framing": "typed-name-length-v2",
-            "manifest_projection": "omit-retained_bundle_digest_v2-only",
+            "manifest_projection": "omit-digest-and-publisher-attestation-v2",
         },
         "head_bindings": {
             "bound_quarantine_generation_ref": hex_ref(
@@ -1213,6 +1244,21 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             refs = write_bundle(root, 1)
+            payloads = {
+                artifact: (refs.directory / artifact).read_bytes()
+                for artifact in ARTIFACTS
+            }
+            manifest = json.loads(payloads["manifest.json"])
+            original_digest = bundle_digest(payloads, manifest)
+            changed_attestation = json.loads(json.dumps(manifest))
+            changed_attestation["publisher_attestation"]["signer_fingerprint"] = (
+                "B" * 40
+            )
+            self.assertEqual(
+                bundle_digest(payloads, changed_attestation),
+                original_digest,
+            )
+
             coverage_path = refs.directory / "coverage.json"
             original = coverage_path.read_bytes()
             coverage_path.write_bytes(original + b"\n")
@@ -1697,9 +1743,7 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
             )
 
     def test_root_and_standalone_cannot_succeed_segment_semantic_heads(self) -> None:
-        owned_families = tuple(
-            sorted(MODULE.CAMPAIGN_SEGMENT_REVISION_FAMILIES)
-        )
+        owned_families = tuple(sorted(MODULE.CAMPAIGN_SEGMENT_REVISION_FAMILIES))
         segment = MODULE.Bundle(
             label="runs/campaign-segment",
             mode="daily",
@@ -1769,9 +1813,7 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
             files={},
             manifest={
                 "publication_role": "campaign_segment",
-                "supersession": {
-                    "supersedes_topic_revision_refs": ["topic-prior"]
-                },
+                "supersession": {"supersedes_topic_revision_refs": ["topic-prior"]},
                 "head_bindings": {
                     "bound_quarantine_generation_ref": "quarantine",
                     "episode": {"proposed_head_ref": "head"},
@@ -1813,9 +1855,7 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
         )
         issues: list[str] = []
 
-        MODULE._validate_campaign_revision_ownership(
-            [segment, successor], issues
-        )
+        MODULE._validate_campaign_revision_ownership([segment, successor], issues)
 
         self.assertTrue(
             any(
@@ -2077,6 +2117,48 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
             )
 
             self.assertEqual(MODULE.validate_v2_runs(root), [])
+
+    def test_model_era_catalog_requirement_matches_execution_kind(self) -> None:
+        allowed_cases = (
+            ("bootstrap_v2", "complete"),
+            ("compliance_retraction", "complete_with_terminal_gaps"),
+        )
+        for execution_kind, status in allowed_cases:
+            with (
+                self.subTest(execution_kind=execution_kind),
+                tempfile.TemporaryDirectory() as temp,
+            ):
+                root = Path(temp)
+                predecessor = None
+                reason = "initial"
+                number = 1
+                if execution_kind == "compliance_retraction":
+                    predecessor = write_bundle(root, 1)
+                    reason = "compliance_retraction"
+                    number = 2
+                refs = write_bundle(
+                    root,
+                    number,
+                    status=status,
+                    reason=reason,
+                    predecessor=predecessor,
+                    execution_kind=execution_kind,
+                )
+                remove_model_execution_provenance(refs)
+
+                self.assertEqual(MODULE.validate_v2_runs(root), [])
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            refs = write_bundle(root, 1)
+            remove_model_execution_provenance(refs)
+
+            issues = MODULE.validate_v2_runs(root)
+
+        self.assertTrue(
+            any("model_eras must be a non-empty array" in issue for issue in issues),
+            issues,
+        )
 
     def test_campaign_segments_and_roots_are_complete_bundles_for_every_mode(
         self,
@@ -2979,12 +3061,13 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
         self.assertNotIn("latest", rendered)
 
     def test_v2_candidate_iterator_exceeding_discovery_cap_is_rejected(self) -> None:
-        candidate = physical_bundle_directory(
-            Path(), "daily", str(WINDOW["path_component"]), f"{1:064x}"
-        ) / "manifest.json"
-        visible_files = (
-            candidate for _ in range(MODULE.MAX_DISCOVERY_ENTRIES + 1)
+        candidate = (
+            physical_bundle_directory(
+                Path(), "daily", str(WINDOW["path_component"]), f"{1:064x}"
+            )
+            / "manifest.json"
         )
+        visible_files = (candidate for _ in range(MODULE.MAX_DISCOVERY_ENTRIES + 1))
 
         with (
             tempfile.TemporaryDirectory() as temp,

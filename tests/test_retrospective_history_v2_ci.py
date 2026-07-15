@@ -1,28 +1,76 @@
 from __future__ import annotations
 
-import ast
+import hashlib
+import importlib.util
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
-VALIDATOR = ROOT / "scripts" / "validate_retained_history.py"
-PUBLIC_KEY_NAME = "retrospective-history-v2-publisher.asc"
-VALIDATOR_NAME = "retrospective_history_git_v2.py"
-PUBLIC_KEY = ROOT / PUBLIC_KEY_NAME
-EXPECTED_FINGERPRINT = "40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52"
-EXPECTED_UID = (
-    "Codex Session Retrospective Publisher "
-    "<12524680+JoeyTeng@users.noreply.github.com>"
+README = ROOT / "README.md"
+GIT_VALIDATOR = ROOT / "scripts" / "retrospective_history_git_v2.py"
+REQUIREMENTS = ROOT / "requirements-v2.txt"
+MAINTAINER_FINGERPRINT = "EFBBC913F49A5F6E0AF0D248F70246143DC28F32"
+GITHUB_FINGERPRINT = "968479A1AFF927E37D1A566BB5690EEEBB952194"
+PUBLISHER_FINGERPRINT = "40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52"
+COMMIT_TIMESTAMP = 1_800_100_020
+
+SPEC = importlib.util.spec_from_file_location(
+    "retrospective_history_git_v2_ci_contract",
+    GIT_VALIDATOR,
 )
-MAX_BOOTSTRAP_KEY_BYTES = 65536
-MAX_BOOTSTRAP_VALIDATOR_BYTES = 1048576
+MODULE = importlib.util.module_from_spec(SPEC)
+assert SPEC is not None
+assert SPEC.loader is not None
+sys.modules[SPEC.name] = MODULE
+SPEC.loader.exec_module(MODULE)
+
+ADMIN_PATHS = tuple(path.decode("ascii") for path in sorted(MODULE.V2_ADMIN_PATHS))
+TRUSTED_PATHS = (
+    ".github/workflows/ci.yml",
+    "requirements-v2.in",
+    "requirements-v2.txt",
+    "retrospective-history-v2-admin.asc",
+    "retrospective-history-v2-publisher.asc",
+    "schemas/retained-manifest-v2.schema.json",
+    "schemas/session-retrospective-v2.schema.json",
+    "scripts/retrospective_history_attestation_v2.py",
+    "scripts/retrospective_history_credentials_v2.py",
+    "scripts/retrospective_history_git_v2.py",
+    "scripts/retrospective_history_merge_v2.py",
+    "scripts/retrospective_history_privacy_v2.py",
+    "scripts/retrospective_history_templates_v2.py",
+    "scripts/retrospective_history_v2.py",
+    "scripts/validate_retained_history.py",
+)
+
+
+def git(
+    root: Path,
+    *arguments: str,
+    env: dict[str, str] | None = None,
+    check: bool = True,
+) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    if check and result.returncode != 0:
+        raise AssertionError(result.stderr)
+    return result.stdout.strip()
 
 
 def workflow_step(name: str) -> str:
@@ -31,7 +79,9 @@ def workflow_step(name: str) -> str:
     start = lines.index(marker)
     end = len(lines)
     for index in range(start + 1, len(lines)):
-        if lines[index].startswith(("      - name: ", "      - uses: ")):
+        if lines[index].startswith(
+            ("      - name: ", "      - uses: ", "  post-validation-tests:")
+        ):
             end = index
             break
     return "\n".join(lines[start:end])
@@ -43,895 +93,829 @@ def workflow_run_script(name: str) -> str:
     return textwrap.dedent("\n".join(lines[run_index + 1 :]))
 
 
-def run_workflow_script(
-    name: str,
+def run_script(
+    script: str,
     root: Path,
+    environment: dict[str, str],
     *,
-    base_tip: str | None = None,
-    head_rev: str | None = None,
-    extra_environment: dict[str, str] | None = None,
+    timeout: float = 120,
 ) -> subprocess.CompletedProcess[str]:
-    environment = os.environ.copy()
-    if base_tip is not None:
-        environment["BASE_TIP"] = base_tip
-    if head_rev is not None:
-        environment["HEAD_REV"] = head_rev
-    if extra_environment is not None:
-        environment.update(extra_environment)
+    merged = os.environ.copy()
+    merged.pop("GH_TOKEN", None)
+    merged.pop("GITHUB_TOKEN", None)
+    merged.update(environment)
     return subprocess.run(
-        ["bash", "-e", "-u", "-o", "pipefail", "-c", workflow_run_script(name)],
+        ["bash", "-e", "-u", "-o", "pipefail", "-c", script],
         cwd=root,
         check=False,
         capture_output=True,
-        env=environment,
+        env=merged,
         text=True,
-        timeout=10,
+        timeout=timeout,
     )
 
 
-def git(root: Path, *arguments: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(root), *arguments],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return result.stdout.strip()
-
-
-def git_object(root: Path, object_type: str, payload: bytes) -> str:
-    result = subprocess.run(
+def gpg(home: Path, *arguments: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
         [
-            "git",
-            "-C",
-            str(root),
-            "hash-object",
-            "-w",
-            "-t",
-            object_type,
-            "--stdin",
+            shutil.which("gpg") or "gpg",
+            "--batch",
+            "--no-options",
+            "--homedir",
+            str(home),
+            *arguments,
         ],
-        check=True,
+        check=False,
         capture_output=True,
-        input=payload,
-        timeout=10,
+        timeout=60,
     )
-    return result.stdout.decode("ascii").strip()
 
 
-def git_tree(
-    root: Path, entries: list[tuple[str, str, str, str]]
-) -> str:
-    tree_input = "".join(
-        f"{mode} {object_type} {object_id}\t{name}\n"
-        for mode, object_type, object_id, name in sorted(
-            entries, key=lambda entry: entry[3].encode("utf-8")
-        )
+def generate_signing_key(home: Path, uid: str) -> tuple[str, bytes]:
+    home.mkdir(mode=0o700)
+    generated = gpg(
+        home,
+        "--pinentry-mode",
+        "loopback",
+        "--passphrase",
+        "",
+        "--quick-generate-key",
+        uid,
+        "rsa2048",
+        "sign",
+        "0",
     )
-    result = subprocess.run(
-        ["git", "-C", str(root), "mktree"],
-        check=True,
-        capture_output=True,
-        input=tree_input,
-        text=True,
-        timeout=10,
+    if generated.returncode != 0:
+        raise RuntimeError(generated.stderr.decode("utf-8", errors="replace"))
+    listing = gpg(home, "--with-colons", "--list-secret-keys")
+    if listing.returncode != 0:
+        raise RuntimeError(listing.stderr.decode("utf-8", errors="replace"))
+    fingerprint = next(
+        (
+            line.split(b":")[9].decode("ascii")
+            for line in listing.stdout.splitlines()
+            if line.startswith(b"fpr:")
+        ),
+        None,
     )
-    return result.stdout.strip()
+    if fingerprint is None:
+        raise RuntimeError("ephemeral signing key has no fingerprint")
+    exported = gpg(home, "--armor", "--export", fingerprint)
+    if exported.returncode != 0:
+        raise RuntimeError(exported.stderr.decode("utf-8", errors="replace"))
+    return fingerprint, exported.stdout
 
 
-def bootstrap_head_commit(
-    root: Path,
-    base: str,
-    *,
-    key_entries: list[tuple[str, str, str, str]] | None = None,
-    validator_entries: list[tuple[str, str, str, str]] | None = None,
-    extra_root_entries: list[tuple[str, str, str, str]] | None = None,
-    scripts_entry: tuple[str, str, str, str] | None = None,
-) -> str:
-    if validator_entries is not None and scripts_entry is not None:
-        raise AssertionError("scripts tree and override are mutually exclusive")
-    policy_blob = git_object(root, "blob", b"bootstrap policy\n")
-    root_entries = [("100644", "blob", policy_blob, "policy.txt")]
-    root_entries.extend(key_entries or [])
-    root_entries.extend(extra_root_entries or [])
-    if validator_entries is not None:
-        scripts_tree = git_tree(root, validator_entries)
-        root_entries.append(("040000", "tree", scripts_tree, "scripts"))
-    elif scripts_entry is not None:
-        root_entries.append(scripts_entry)
-    root_tree = git_tree(root, root_entries)
-    result = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(root),
-            "commit-tree",
-            root_tree,
-            "-p",
-            base,
-            "-m",
-            "Bootstrap validation infrastructure",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
+def parse_github_environment(path: Path) -> dict[str, str]:
+    return dict(
+        line.split("=", 1)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
     )
-    return result.stdout.strip()
-
-
-def initialize_git_repository(root: Path) -> str:
-    git(root, "init", "--quiet")
-    git(root, "config", "user.name", "CI Contract")
-    fixture_email = "ci-contract" + "@users.noreply.github.com"
-    git(root, "config", "user.email", fixture_email)
-    (root / "README.md").write_text("base\n", encoding="utf-8")
-    git(root, "add", "README.md")
-    git(root, "commit", "--quiet", "--no-gpg-sign", "-m", "Initialize fixture")
-    return git(root, "rev-parse", "HEAD")
-
-
-def commit_file(root: Path, relative: str, content: str, message: str) -> str:
-    path = root / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    git(root, "add", "--", relative)
-    git(root, "commit", "--quiet", "--no-gpg-sign", "-m", message)
-    return git(root, "rev-parse", "HEAD")
-
-
-def install_trusted_artifacts(
-    root: Path, *, include_key: bool = True, include_validator: bool = True
-) -> None:
-    if include_key:
-        shutil.copy2(PUBLIC_KEY, root / PUBLIC_KEY_NAME)
-    if include_validator:
-        validator = root / "scripts" / "retrospective_history_git_v2.py"
-        validator.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / "scripts" / validator.name, validator)
-
-
-def commit_all(root: Path, message: str) -> str:
-    git(root, "add", "--all")
-    git(root, "commit", "--quiet", "--no-gpg-sign", "-m", message)
-    return git(root, "rev-parse", "HEAD")
-
-
-def workflow_environment(path: Path) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        name, separator, value = line.partition("=")
-        if not separator or not name:
-            raise AssertionError("invalid workflow environment fixture")
-        result[name] = value
-    return result
-
-
-def frozen_string_collection(module_path: Path, name: str) -> frozenset[str]:
-    tree = ast.parse(module_path.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(
-            isinstance(target, ast.Name) and target.id == name
-            for target in node.targets
-        ):
-            continue
-        if not (
-            isinstance(node.value, ast.Call)
-            and isinstance(node.value.func, ast.Name)
-            and node.value.func.id == "frozenset"
-            and len(node.value.args) == 1
-        ):
-            break
-        return frozenset(ast.literal_eval(node.value.args[0]))
-    raise AssertionError(f"unable to read {name} from {module_path}")
-
-
-def primary_fingerprints(colon_output: str) -> list[str]:
-    fingerprints: list[str] = []
-    awaiting_fingerprint = False
-    for line in colon_output.splitlines():
-        fields = line.split(":")
-        if fields[0] == "pub":
-            awaiting_fingerprint = True
-        elif fields[0] == "fpr" and awaiting_fingerprint:
-            fingerprints.append(fields[9])
-            awaiting_fingerprint = False
-    return fingerprints
-
-
-def public_key_uids(colon_output: str) -> list[str]:
-    return [
-        fields[9]
-        for line in colon_output.splitlines()
-        if len(fields := line.split(":")) > 9 and fields[0] == "uid"
-    ]
 
 
 class RetrospectiveHistoryV2CITests(unittest.TestCase):
-    def test_workflow_checks_out_the_exact_event_head(self) -> None:
-        workflow = WORKFLOW.read_text(encoding="utf-8")
-
-        self.assertIn("fetch-depth: 0", workflow)
-        self.assertIn(
-            "ref: ${{ github.event_name == 'pull_request' && "
-            "github.event.pull_request.head.sha || github.sha }}",
-            workflow,
-        )
-
-    def test_push_range_uses_base_pinned_validator_and_key_first(self) -> None:
-        workflow = WORKFLOW.read_text(encoding="utf-8")
-        prepare = workflow_step("Prepare trusted push validator")
-        key_import = workflow_step("Import trusted push publisher key")
-        validation = workflow_step("Validate push range with trusted base")
-
-        self.assertIn("BASE_REV: ${{ github.event.before }}", prepare)
-        self.assertIn(
-            'git worktree add --quiet --detach "$TRUSTED_VALIDATOR_ROOT" "$BASE_REV"',
-            prepare,
-        )
-        self.assertIn(
-            '"$TRUSTED_VALIDATOR_ROOT/retrospective-history-v2-publisher.asc"',
-            key_import,
-        )
-        self.assertIn('cd "$TRUSTED_VALIDATOR_ROOT"', validation)
-        self.assertIn(
-            'PYTHONPATH="$TRUSTED_VALIDATOR_ROOT" PYTHONNOUSERSITE=1 python -P -',
-            validation,
-        )
-        self.assertIn(
-            "from scripts.retrospective_history_git_v2 import validate_append_only_range",
-            validation,
-        )
-        self.assertIn('Path(os.environ["GITHUB_WORKSPACE"])', validation)
-        self.assertNotIn("git diff", validation)
-        self.assertNotIn("--name-only", validation)
-
-        trusted_index = workflow.index(
-            "      - name: Validate push range with trusted base"
-        )
-        self.assertLess(
-            workflow.index("      - name: Prepare trusted push validator"),
-            trusted_index,
-        )
-        self.assertLess(
-            workflow.index("      - name: Import trusted push publisher key"),
-            trusted_index,
-        )
-        self.assertLess(
-            workflow.index("      - name: Validate first push bootstrap range"),
-            trusted_index,
-        )
-        self.assertLess(
-            trusted_index,
-            workflow.index("      - name: Import v2 publisher public key"),
-        )
-        self.assertLess(
-            trusted_index,
-            workflow.index("      - name: Install v2 validation dependencies"),
-        )
-        self.assertLess(
-            trusted_index,
-            workflow.index("      - name: Run tests"),
-        )
-
-    def test_first_push_bootstrap_accepts_infrastructure_only_range(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            temporary_root = Path(raw)
-            root = temporary_root / "repository"
-            root.mkdir()
-            base = initialize_git_repository(root)
-            install_trusted_artifacts(root)
-            head = commit_all(root, "Install retrospective validation infrastructure")
-            runner_temp = temporary_root / "runner"
-            runner_temp.mkdir()
-            github_environment = temporary_root / "github-environment"
-
-            prepare = run_workflow_script(
-                "Prepare trusted push validator",
-                root,
-                extra_environment={
-                    "BASE_REV": base,
-                    "GITHUB_ENV": str(github_environment),
-                    "RUNNER_TEMP": str(runner_temp),
-                },
-            )
-            prepared_environment = workflow_environment(github_environment)
-            validation = run_workflow_script(
-                "Validate first push bootstrap range",
-                root,
-                extra_environment={
-                    "BASE_REV": base,
-                    "EVENT_FORCED": "false",
-                    "HEAD_REV": head,
-                    "PUSH_VALIDATION_MODE": prepared_environment[
-                        "PUSH_VALIDATION_MODE"
-                    ],
-                },
-            )
-
-        self.assertEqual(prepare.returncode, 0, prepare.stderr)
-        self.assertEqual(prepared_environment["PUSH_VALIDATION_MODE"], "bootstrap")
-        self.assertEqual(validation.returncode, 0, validation.stderr)
-
-    def test_first_push_bootstrap_accepts_exact_pair_from_head_tree(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            base = initialize_git_repository(root)
-            key_blob = git_object(root, "blob", b"key fixture\n")
-            validator_blob = git_object(root, "blob", b"validator fixture\n")
-            head = bootstrap_head_commit(
-                root,
-                base,
-                key_entries=[("100644", "blob", key_blob, PUBLIC_KEY_NAME)],
-                validator_entries=[
-                    ("100644", "blob", validator_blob, VALIDATOR_NAME)
-                ],
-            )
-
-            validation = run_workflow_script(
-                "Validate first push bootstrap range",
-                root,
-                extra_environment={
-                    "BASE_REV": base,
-                    "EVENT_FORCED": "false",
-                    "HEAD_REV": head,
-                    "PUSH_VALIDATION_MODE": "bootstrap",
-                },
-            )
-
-        self.assertEqual(validation.returncode, 0, validation.stderr)
-
-    def test_first_push_bootstrap_reads_bounded_exact_head_tree_metadata(self) -> None:
-        bootstrap = workflow_run_script("Validate first push bootstrap range")
-
-        self.assertIn('git rev-parse --verify "$HEAD_REV^{tree}"', bootstrap)
-        self.assertIn('git ls-tree -z "$HEAD_TREE"', bootstrap)
-        self.assertIn('git cat-file -t "$object_id"', bootstrap)
-        self.assertIn('git cat-file -s "$object_id"', bootstrap)
-        self.assertIn("MAX_BOOTSTRAP_TREE_ENTRIES=65536", bootstrap)
-        self.assertIn("MAX_BOOTSTRAP_KEY_BYTES=65536", bootstrap)
-        self.assertIn("MAX_BOOTSTRAP_VALIDATOR_BYTES=1048576", bootstrap)
-        self.assertNotIn("python", bootstrap)
-
-    def test_first_push_bootstrap_requires_complete_pair_in_head_tree(self) -> None:
-        for name, include_key, include_validator in (
-            ("neither", False, False),
-            ("key-only", True, False),
-            ("validator-only", False, True),
-        ):
-            with self.subTest(case=name), tempfile.TemporaryDirectory() as raw:
-                root = Path(raw)
-                base = initialize_git_repository(root)
-                install_trusted_artifacts(root)
-                key_blob = git_object(root, "blob", b"key fixture\n")
-                validator_blob = git_object(root, "blob", b"validator fixture\n")
-                head = bootstrap_head_commit(
-                    root,
-                    base,
-                    key_entries=(
-                        [("100644", "blob", key_blob, PUBLIC_KEY_NAME)]
-                        if include_key
-                        else []
-                    ),
-                    validator_entries=(
-                        [("100644", "blob", validator_blob, VALIDATOR_NAME)]
-                        if include_validator
-                        else None
-                    ),
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._key_root = tempfile.TemporaryDirectory()
+        cls.key_root = Path(cls._key_root.name)
+        cls.gpg_error: str | None = None
+        try:
+            cls.maintainer_home = cls.key_root / "maintainer"
+            cls.maintainer_fingerprint, cls.maintainer_public_key = (
+                generate_signing_key(
+                    cls.maintainer_home,
+                    "History Maintainer Test <history-maintainer@example.invalid>",
                 )
-
-                validation = run_workflow_script(
-                    "Validate first push bootstrap range",
-                    root,
-                    extra_environment={
-                        "BASE_REV": base,
-                        "EVENT_FORCED": "false",
-                        "HEAD_REV": head,
-                        "PUSH_VALIDATION_MODE": "bootstrap",
-                    },
-                )
-
-            diagnostics = validation.stdout + validation.stderr
-            self.assertNotEqual(validation.returncode, 0)
-            self.assertIn("complete trusted validation pair", diagnostics)
-            self.assertNotIn(PUBLIC_KEY_NAME, diagnostics)
-            self.assertNotIn(VALIDATOR_NAME, diagnostics)
-
-    def test_first_push_bootstrap_rejects_unsafe_head_artifact_types(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            base = initialize_git_repository(root)
-            regular_blob = git_object(root, "blob", b"artifact fixture\n")
-            empty_tree = git_tree(root, [])
-            regular_key = [("100644", "blob", regular_blob, PUBLIC_KEY_NAME)]
-            regular_validator = [
-                ("100644", "blob", regular_blob, VALIDATOR_NAME)
-            ]
-            unsafe_cases = (
-                (
-                    "key-symlink",
-                    [("120000", "blob", regular_blob, PUBLIC_KEY_NAME)],
-                    regular_validator,
-                    None,
-                ),
-                (
-                    "key-gitlink",
-                    [("160000", "commit", base, PUBLIC_KEY_NAME)],
-                    regular_validator,
-                    None,
-                ),
-                (
-                    "key-tree",
-                    [("040000", "tree", empty_tree, PUBLIC_KEY_NAME)],
-                    regular_validator,
-                    None,
-                ),
-                (
-                    "validator-symlink",
-                    regular_key,
-                    [("120000", "blob", regular_blob, VALIDATOR_NAME)],
-                    None,
-                ),
-                (
-                    "validator-gitlink",
-                    regular_key,
-                    [("160000", "commit", base, VALIDATOR_NAME)],
-                    None,
-                ),
-                (
-                    "validator-tree",
-                    regular_key,
-                    [("040000", "tree", empty_tree, VALIDATOR_NAME)],
-                    None,
-                ),
-                (
-                    "scripts-parent-blob",
-                    regular_key,
-                    None,
-                    ("100644", "blob", regular_blob, "scripts"),
-                ),
             )
-            for name, key_entries, validator_entries, scripts_entry in unsafe_cases:
-                with self.subTest(case=name):
-                    head = bootstrap_head_commit(
-                        root,
-                        base,
-                        key_entries=list(key_entries),
-                        validator_entries=(
-                            list(validator_entries)
-                            if validator_entries is not None
-                            else None
-                        ),
-                        scripts_entry=scripts_entry,
-                    )
-                    validation = run_workflow_script(
-                        "Validate first push bootstrap range",
-                        root,
-                        extra_environment={
-                            "BASE_REV": base,
-                            "EVENT_FORCED": "false",
-                            "HEAD_REV": head,
-                            "PUSH_VALIDATION_MODE": "bootstrap",
-                        },
-                    )
-
-                diagnostics = validation.stdout + validation.stderr
-                self.assertNotEqual(validation.returncode, 0)
-                self.assertIn("complete trusted validation pair", diagnostics)
-                self.assertNotIn(PUBLIC_KEY_NAME, diagnostics)
-                self.assertNotIn(VALIDATOR_NAME, diagnostics)
-
-    def test_first_push_bootstrap_rejects_case_ambiguous_head_paths(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            base = initialize_git_repository(root)
-            regular_blob = git_object(root, "blob", b"artifact fixture\n")
-            regular_key = ("100644", "blob", regular_blob, PUBLIC_KEY_NAME)
-            regular_validator = (
-                "100644",
-                "blob",
-                regular_blob,
-                VALIDATOR_NAME,
+            cls.github_home = cls.key_root / "github"
+            cls.github_fingerprint, cls.github_public_key = generate_signing_key(
+                cls.github_home,
+                "History GitHub Test <history-github@example.invalid>",
             )
-            scripts_tree = git_tree(root, [regular_validator])
-            ambiguous_cases = (
-                (
-                    "key",
-                    [
-                        regular_key,
-                        ("100644", "blob", regular_blob, PUBLIC_KEY_NAME.upper()),
-                    ],
-                    [regular_validator],
-                    [],
-                ),
-                (
-                    "validator",
-                    [regular_key],
-                    [
-                        regular_validator,
-                        ("100644", "blob", regular_blob, VALIDATOR_NAME.upper()),
-                    ],
-                    [],
-                ),
-                (
-                    "scripts",
-                    [regular_key],
-                    [regular_validator],
-                    [("040000", "tree", scripts_tree, "Scripts")],
-                ),
+            cls.publisher_home = cls.key_root / "publisher"
+            cls.publisher_fingerprint, cls.publisher_public_key = generate_signing_key(
+                cls.publisher_home,
+                "History Publisher Test <history-publisher@example.invalid>",
             )
-            for name, key_entries, validator_entries, extra_root_entries in (
-                ambiguous_cases
-            ):
-                with self.subTest(case=name):
-                    head = bootstrap_head_commit(
-                        root,
-                        base,
-                        key_entries=list(key_entries),
-                        validator_entries=list(validator_entries),
-                        extra_root_entries=list(extra_root_entries),
-                    )
-                    validation = run_workflow_script(
-                        "Validate first push bootstrap range",
-                        root,
-                        extra_environment={
-                            "BASE_REV": base,
-                            "EVENT_FORCED": "false",
-                            "HEAD_REV": head,
-                            "PUSH_VALIDATION_MODE": "bootstrap",
-                        },
-                    )
+        except RuntimeError as exc:
+            cls.gpg_error = str(exc)
 
-                diagnostics = validation.stdout + validation.stderr
-                self.assertNotEqual(validation.returncode, 0)
-                self.assertIn("complete trusted validation pair", diagnostics)
-                self.assertNotIn(PUBLIC_KEY_NAME, diagnostics)
-                self.assertNotIn(VALIDATOR_NAME, diagnostics)
-
-    def test_first_push_bootstrap_rejects_oversized_head_artifacts(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            base = initialize_git_repository(root)
-            regular_blob = git_object(root, "blob", b"artifact fixture\n")
-            oversized_key = git_object(
-                root, "blob", b"k" * (MAX_BOOTSTRAP_KEY_BYTES + 1)
-            )
-            oversized_validator = git_object(
-                root, "blob", b"v" * (MAX_BOOTSTRAP_VALIDATOR_BYTES + 1)
-            )
-            cases = (
-                (
-                    "key",
-                    [("100644", "blob", oversized_key, PUBLIC_KEY_NAME)],
-                    [("100644", "blob", regular_blob, VALIDATOR_NAME)],
-                ),
-                (
-                    "validator",
-                    [("100644", "blob", regular_blob, PUBLIC_KEY_NAME)],
-                    [("100644", "blob", oversized_validator, VALIDATOR_NAME)],
-                ),
-            )
-            for name, key_entries, validator_entries in cases:
-                with self.subTest(artifact=name):
-                    head = bootstrap_head_commit(
-                        root,
-                        base,
-                        key_entries=key_entries,
-                        validator_entries=validator_entries,
-                    )
-                    validation = run_workflow_script(
-                        "Validate first push bootstrap range",
-                        root,
-                        extra_environment={
-                            "BASE_REV": base,
-                            "EVENT_FORCED": "false",
-                            "HEAD_REV": head,
-                            "PUSH_VALIDATION_MODE": "bootstrap",
-                        },
-                    )
-
-                diagnostics = validation.stdout + validation.stderr
-                self.assertNotEqual(validation.returncode, 0)
-                self.assertIn("complete trusted validation pair", diagnostics)
-                self.assertNotIn(PUBLIC_KEY_NAME, diagnostics)
-                self.assertNotIn(VALIDATOR_NAME, diagnostics)
-
-    def test_first_push_bootstrap_rejects_any_run_change_in_the_range(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            base = initialize_git_repository(root)
-            install_trusted_artifacts(root)
-            commit_all(root, "Install retrospective validation infrastructure")
-            private_component = "retained-" + "private.json"
-            publication = Path("runs", private_component)
-            commit_file(root, publication.as_posix(), "{}\n", "Add publication fixture")
-            (root / publication).unlink()
-            head = commit_all(root, "Delete publication fixture")
-
-            validation = run_workflow_script(
-                "Validate first push bootstrap range",
-                root,
-                extra_environment={
-                    "BASE_REV": base,
-                    "EVENT_FORCED": "false",
-                    "HEAD_REV": head,
-                    "PUSH_VALIDATION_MODE": "bootstrap",
-                },
-            )
-
-        diagnostics = validation.stdout + validation.stderr
-        self.assertNotEqual(validation.returncode, 0)
-        self.assertIn("must not change retained publications", diagnostics)
-        self.assertNotIn(private_component, diagnostics)
-
-    def test_partially_initialized_trusted_base_fails_closed(self) -> None:
-        for name, include_key, include_validator in (
-            ("key", True, False),
-            ("validator", False, True),
-        ):
-            with self.subTest(artifact=name), tempfile.TemporaryDirectory() as raw:
-                temporary_root = Path(raw)
-                root = temporary_root / "repository"
-                root.mkdir()
-                initialize_git_repository(root)
-                install_trusted_artifacts(
-                    root,
-                    include_key=include_key,
-                    include_validator=include_validator,
-                )
-                base = commit_all(root, "Install partial validation infrastructure")
-                commit_file(root, "policy.txt", "policy\n", "Advance infrastructure")
-                runner_temp = temporary_root / "runner"
-                runner_temp.mkdir()
-                github_environment = temporary_root / "github-environment"
-
-                prepare = run_workflow_script(
-                    "Prepare trusted push validator",
-                    root,
-                    extra_environment={
-                        "BASE_REV": base,
-                        "GITHUB_ENV": str(github_environment),
-                        "RUNNER_TEMP": str(runner_temp),
-                    },
-                )
-
-            self.assertNotEqual(prepare.returncode, 0)
-            self.assertIn("partially initialized", prepare.stderr)
-            self.assertNotIn(PUBLIC_KEY_NAME, prepare.stdout + prepare.stderr)
-            self.assertNotIn(
-                "retrospective_history_git_v2.py", prepare.stdout + prepare.stderr
-            )
-
-    def test_subsequent_push_uses_base_validator_for_mixed_publication(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            temporary_root = Path(raw)
-            root = temporary_root / "repository"
-            root.mkdir()
-            initialize_git_repository(root)
-            install_trusted_artifacts(root)
-            base = commit_all(root, "Install trusted validation infrastructure")
-            validator = root / "scripts" / "retrospective_history_git_v2.py"
-            validator.write_text(
-                "def validate_append_only_range(root, base_rev, head_rev):\n"
-                "    return []\n",
-                encoding="utf-8",
-            )
-            commit_all(root, "Replace head validation fixture")
-            private_component = "publication-" + "private.json"
-            publication = Path("runs", private_component)
-            head = commit_file(
-                root,
-                publication.as_posix(),
-                "{}\n",
-                "Add publication fixture",
-            )
-
-            runner_temp = temporary_root / "runner"
-            runner_temp.mkdir()
-            github_environment = temporary_root / "github-environment"
-            prepare = run_workflow_script(
-                "Prepare trusted push validator",
-                root,
-                extra_environment={
-                    "BASE_REV": base,
-                    "GITHUB_ENV": str(github_environment),
-                    "RUNNER_TEMP": str(runner_temp),
-                },
-            )
-            prepared_environment = workflow_environment(github_environment)
-            trusted_gnupg_home = runner_temp / "trusted-gnupg"
-            trusted_gnupg_home.mkdir(mode=0o700)
-            validation = run_workflow_script(
-                "Validate push range with trusted base",
-                root,
-                extra_environment={
-                    **prepared_environment,
-                    "BASE_REV": base,
-                    "EVENT_FORCED": "false",
-                    "GITHUB_WORKSPACE": str(root),
-                    "HEAD_REV": head,
-                    "TRUSTED_GNUPGHOME": str(trusted_gnupg_home),
-                },
-            )
-
-        diagnostics = validation.stdout + validation.stderr
-        self.assertEqual(prepare.returncode, 0, prepare.stderr)
-        self.assertEqual(prepared_environment["PUSH_VALIDATION_MODE"], "trusted")
-        self.assertNotEqual(validation.returncode, 0)
-        self.assertIn("must not include infrastructure", diagnostics)
-        self.assertNotIn(private_component, diagnostics)
-
-    def test_publisher_public_key_is_ascii_armored_and_allowlisted(self) -> None:
-        armor = PUBLIC_KEY.read_text(encoding="ascii")
-
-        self.assertTrue(armor.startswith("-----BEGIN PGP PUBLIC KEY BLOCK-----\n"))
-        self.assertTrue(armor.endswith("-----END PGP PUBLIC KEY BLOCK-----\n"))
-        self.assertNotIn("PRIVATE KEY", armor)
-        self.assertIn(
-            PUBLIC_KEY_NAME, frozen_string_collection(VALIDATOR, "ROOT_DOC_FILES")
-        )
-
-    def test_publisher_public_key_imports_with_expected_primary_fingerprint(
-        self,
-    ) -> None:
-        gpg = shutil.which("gpg")
-        if gpg is None:
-            self.skipTest("gpg is unavailable")
-        gpgconf = shutil.which("gpgconf")
-
-        with tempfile.TemporaryDirectory() as raw:
-            gnupg_home = Path(raw) / "gnupg"
-            gnupg_home.mkdir(mode=0o700)
-            environment = os.environ.copy()
-            environment["GNUPGHOME"] = str(gnupg_home)
-            try:
-                subprocess.run(
-                    [
-                        gpg,
-                        "--quiet",
-                        "--no-options",
-                        "--no-autostart",
-                        "--batch",
-                        "--import",
-                        str(PUBLIC_KEY),
-                    ],
-                    check=True,
-                    capture_output=True,
-                    env=environment,
-                    text=True,
-                    timeout=10,
-                )
-                result = subprocess.run(
-                    [
-                        gpg,
-                        "--quiet",
-                        "--no-options",
-                        "--no-autostart",
-                        "--batch",
-                        "--with-colons",
-                        "--fingerprint",
-                    ],
-                    check=True,
-                    capture_output=True,
-                    env=environment,
-                    text=True,
-                    timeout=10,
-                )
-                self.assertEqual(
-                    primary_fingerprints(result.stdout), [EXPECTED_FINGERPRINT]
-                )
-                self.assertEqual(public_key_uids(result.stdout), [EXPECTED_UID])
-            finally:
-                if gpgconf is not None:
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if shutil.which("gpgconf"):
+            for name in ("maintainer_home", "github_home", "publisher_home"):
+                home = getattr(cls, name, None)
+                if home is not None:
                     subprocess.run(
-                        [gpgconf, "--homedir", str(gnupg_home), "--kill", "gpg-agent"],
+                        ["gpgconf", "--homedir", str(home), "--kill", "gpg-agent"],
                         check=False,
                         capture_output=True,
-                        text=True,
-                        timeout=10,
+                        timeout=30,
                     )
+        cls._key_root.cleanup()
 
-    def test_workflow_imports_key_into_isolated_gnupg_home(self) -> None:
-        step = workflow_step("Import v2 publisher public key")
-        workflow = WORKFLOW.read_text(encoding="utf-8")
+    def require_gpg(self) -> None:
+        if self.gpg_error is not None:
+            self.skipTest(f"real GPG is unavailable: {self.gpg_error}")
 
-        self.assertIn(f"EXPECTED_FINGERPRINT: {EXPECTED_FINGERPRINT}", step)
-        self.assertIn(f"EXPECTED_UID: {EXPECTED_UID}", step)
-        self.assertIn(f"PUBLISHER_PUBLIC_KEY: {PUBLIC_KEY_NAME}", step)
-        self.assertIn('GNUPGHOME="$RUNNER_TEMP/retrospective-history-v2-gnupg"', step)
-        self.assertIn('install -d -m 700 "$GNUPGHOME"', step)
-        self.assertIn(
-            "gpg --quiet --no-options --no-autostart --batch \\",
-            step,
-        )
-        self.assertIn('--import "$PUBLISHER_PUBLIC_KEY" >/dev/null 2>&1', step)
-        self.assertIn('test "$PRIMARY_KEY_COUNT" = 1', step)
-        self.assertIn('test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT"', step)
-        self.assertIn('test "$UID_COUNT" = 1', step)
-        self.assertIn('test "$ACTUAL_UID" = "$EXPECTED_UID"', step)
-        self.assertIn('echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"', step)
-        self.assertLess(
-            workflow.index("      - name: Import v2 publisher public key"),
-            workflow.index("      - name: Validate append-only pull request range"),
-        )
+    def write_trusted_admin_tree(self, root: Path) -> None:
+        for relative in ADMIN_PATHS:
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if relative == "retrospective-history-v2-admin.asc":
+                target.write_bytes(self.maintainer_public_key + self.github_public_key)
+            elif relative == "retrospective-history-v2-publisher.asc":
+                target.write_bytes(self.publisher_public_key)
+            elif relative == "scripts/retrospective_history_git_v2.py":
+                source = GIT_VALIDATOR.read_text(encoding="utf-8")
+                source = (
+                    source.replace(
+                        MAINTAINER_FINGERPRINT,
+                        self.maintainer_fingerprint,
+                    )
+                    .replace(
+                        GITHUB_FINGERPRINT,
+                        self.github_fingerprint,
+                    )
+                    .replace(
+                        PUBLISHER_FINGERPRINT,
+                        self.publisher_fingerprint,
+                    )
+                )
+                target.write_text(source, encoding="utf-8")
+            else:
+                shutil.copy2(ROOT / relative, target)
 
-    def test_pull_request_tree_requires_exact_event_base_ancestry(self) -> None:
-        step = workflow_step("Require current pull request base")
-        workflow = WORKFLOW.read_text(encoding="utf-8")
+    def make_signed_admin_range(
+        self,
+        temporary: Path,
+        *,
+        tamper_validator: bool = False,
+        payload: bytes = b"Reviewed policy update.\n",
+        trust_root_upgrade: bool = False,
+        unauthorized_path: bool = False,
+    ) -> tuple[Path, Path, str, str]:
+        self.require_gpg()
+        source = temporary / "source"
+        source.mkdir()
+        git(source, "init", "--quiet")
+        git(source, "config", "user.name", "Fixture")
+        git(source, "config", "user.email", "fixture@example.invalid")
+        self.write_trusted_admin_tree(source)
+        git(source, "add", "--all")
+        git(source, "commit", "--quiet", "--no-gpg-sign", "-m", "Trusted base")
+        base = git(source, "rev-parse", "HEAD^{commit}")
 
-        self.assertIn("BASE_TIP: ${{ github.event.pull_request.base.sha }}", step)
-        self.assertIn('git merge-base --is-ancestor "$BASE_TIP" "$HEAD_REV"', step)
-        self.assertLess(
-            workflow.index("      - name: Require current pull request base"),
-            workflow.index("      - name: Validate retained history tree"),
-        )
-
-        range_step = workflow_step("Validate append-only pull request range")
-        self.assertIn("BASE_REV: ${{ github.event.pull_request.base.sha }}", range_step)
-        self.assertNotIn("git merge-base", range_step)
-        self.assertNotIn("BASE_TIP", range_step)
-        self.assertIn('--base-rev "$BASE_REV" --head-rev "$HEAD_REV"', range_step)
-
-    def test_stale_pull_request_base_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            common = initialize_git_repository(root)
-            head = commit_file(root, "infra.txt", "head\n", "Add infrastructure")
-            git(root, "switch", "--quiet", "--detach", common)
-            base_tip = commit_file(root, "base.txt", "base tip\n", "Advance base")
-
-            result = run_workflow_script(
-                "Require current pull request base",
-                root,
-                base_tip=base_tip,
-                head_rev=head,
+        if tamper_validator:
+            (source / "scripts" / "retrospective_history_git_v2.py").write_text(
+                "def validate_append_only_range(*_args):\n    return []\n",
+                encoding="utf-8",
             )
-            current = run_workflow_script(
-                "Require current pull request base",
-                root,
-                base_tip=common,
-                head_rev=head,
+        target = source / ("notes.txt" if unauthorized_path else "README.md")
+        target.write_bytes(payload)
+        git(source, "add", "--all")
+        git(source, "config", "gpg.program", shutil.which("gpg") or "gpg")
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "GNUPGHOME": str(self.maintainer_home),
+                "GIT_AUTHOR_NAME": "Joey Teng",
+                "GIT_AUTHOR_EMAIL": "joey.teng.dev@gmail.com",
+                "GIT_AUTHOR_DATE": f"@{COMMIT_TIMESTAMP} +0000",
+                "GIT_COMMITTER_NAME": "Joey Teng",
+                "GIT_COMMITTER_EMAIL": "joey.teng.dev@gmail.com",
+                "GIT_COMMITTER_DATE": f"@{COMMIT_TIMESTAMP} +0000",
+            }
+        )
+        git(
+            source,
+            "commit",
+            "--quiet",
+            f"-S{self.maintainer_fingerprint}",
+            "-m",
+            (
+                "Upgrade session retrospective history v2 trust root"
+                if trust_root_upgrade
+                else "Administer session retrospective history v2: update policy"
+            ),
+            env=environment,
+        )
+        head = git(source, "rev-parse", "HEAD^{commit}")
+
+        trusted = temporary / "trusted-base"
+        untrusted = temporary / "untrusted-head"
+        git(temporary, "clone", "--quiet", "--no-hardlinks", str(source), str(trusted))
+        git(trusted, "checkout", "--quiet", "--detach", base)
+        git(
+            temporary, "clone", "--quiet", "--no-hardlinks", str(source), str(untrusted)
+        )
+        git(untrusted, "checkout", "--quiet", "--detach", head)
+        return trusted, untrusted, base, head
+
+    def imported_fingerprint_script(self) -> str:
+        script = workflow_run_script("Import trusted signing keys")
+        for production, fixture in (
+            (MAINTAINER_FINGERPRINT, self.maintainer_fingerprint),
+            (GITHUB_FINGERPRINT, self.github_fingerprint),
+            (PUBLISHER_FINGERPRINT, self.publisher_fingerprint),
+        ):
+            if production not in script:
+                raise AssertionError("production fingerprint fixture is unavailable")
+            script = script.replace(production, fixture, 1)
+        return script.replace(">/dev/null 2>&1", "")
+
+    def run_production_trust_chain(
+        self,
+        temporary: Path,
+        trusted: Path,
+        untrusted: Path,
+        base: str,
+        head: str,
+    ) -> tuple[subprocess.CompletedProcess[str], Path]:
+        environment_file = temporary / "github-environment"
+        common = {
+            "BASE_OID": base,
+            "BASE_REF": "master",
+            "BASE_REPOSITORY": "Joey-Tools/history-fixture",
+            "DEFAULT_BRANCH": "master",
+            "EVENT_NAME": "pull_request_target",
+            "EVENT_REF": "refs/pull/1/merge",
+            "EVENT_REPOSITORY": "Joey-Tools/history-fixture",
+            "GITHUB_ENV": str(environment_file),
+            "HEAD_OID": head,
+            "MERGE_PLAN_PATH": str(temporary / "merge-plan.json"),
+            "PUSH_FORCED": "false",
+            "RUNNER_TEMP": str(temporary),
+            "TRUSTED_ROOT": str(trusted),
+            "UNTRUSTED_ROOT": str(untrusted),
+            "WORKFLOW_SOURCE_OID": base,
+        }
+        preflight = run_script(
+            workflow_run_script("Verify exact trusted and untrusted checkouts"),
+            temporary,
+            common,
+        )
+        self.assertEqual(preflight.returncode, 0, preflight.stdout + preflight.stderr)
+        imported = run_script(
+            self.imported_fingerprint_script(),
+            temporary,
+            common,
+        )
+        self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
+        propagated = parse_github_environment(environment_file)
+        validation = run_script(
+            workflow_run_script("Build immutable candidate merge plan"),
+            temporary,
+            {**common, **propagated, "TRUSTED_PYTHON": sys.executable},
+        )
+        return validation, Path(propagated["TRUSTED_GNUPGHOME"])
+
+    def run_default_branch_trust_chain(
+        self,
+        temporary: Path,
+        trusted: Path,
+        untrusted: Path,
+        base: str,
+        head: str,
+        *,
+        forced: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        environment_file = temporary / "push-github-environment"
+        common = {
+            "BASE_OID": base,
+            "BASE_REF": "",
+            "BASE_REPOSITORY": "",
+            "DEFAULT_BRANCH": "master",
+            "EVENT_FORCED": "true" if forced else "false",
+            "EVENT_NAME": "push",
+            "EVENT_REF": "refs/heads/master",
+            "EVENT_REPOSITORY": "Joey-Tools/history-fixture",
+            "GITHUB_ENV": str(environment_file),
+            "HEAD_OID": head,
+            "PUSH_FORCED": "true" if forced else "false",
+            "RUNNER_TEMP": str(temporary),
+            "TRUSTED_ROOT": str(trusted),
+            "UNTRUSTED_ROOT": str(untrusted),
+            "WORKFLOW_SOURCE_OID": head,
+        }
+        preflight = run_script(
+            workflow_run_script("Verify exact trusted and untrusted checkouts"),
+            temporary,
+            common,
+        )
+        self.assertEqual(preflight.returncode, 0, preflight.stdout + preflight.stderr)
+        imported = run_script(
+            self.imported_fingerprint_script(),
+            temporary,
+            common,
+        )
+        self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
+        propagated = parse_github_environment(environment_file)
+        return run_script(
+            workflow_run_script("Monitor default branch squash"),
+            temporary,
+            {**common, **propagated, "TRUSTED_PYTHON": sys.executable},
+        )
+
+    def test_workflow_distinguishes_pr_trust_from_after_controlled_push(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertRegex(workflow, r"(?m)^  pull_request_target:$")
+        self.assertIn("branches: [master]", workflow)
+        self.assertIn("BASE_REF", workflow)
+        self.assertIn("DEFAULT_BRANCH", workflow)
+        self.assertNotRegex(workflow, r"(?m)^  pull_request:$")
+        self.assertRegex(workflow, r"(?m)^  push:$")
+        self.assertIn("trusted-validation:", workflow)
+        self.assertNotIn("post-validation-tests:", workflow)
+        self.assertNotIn("pull_request.head.repo.full_name", workflow)
+        self.assertIn("steps.resolve-candidate.outputs.head_oid", workflow)
+        self.assertIn("github.event.before", workflow)
+        self.assertIn("github.event.after", workflow)
+        self.assertIn("Monitor default branch squash", workflow)
+        self.assertIn("github.workflow_sha", workflow)
+        self.assertIn(
+            "candidate-controlled post-merge workflow cannot authorize a trust-root upgrade",
+            GIT_VALIDATOR.read_text(encoding="utf-8"),
+        )
+        self.assertIn("permission-contents: write", workflow)
+        self.assertIn("permission-checks: write", workflow)
+        self.assertIn("permission-administration: read", workflow)
+        self.assertNotIn("id-token: write", workflow)
+
+    def test_documentation_preserves_external_deployment_contract(self) -> None:
+        readme = README.read_text(encoding="utf-8")
+        normalized_readme = re.sub(r"\s+", " ", readme)
+        for requirement in (
+            "publisher_attestation",
+            "do not prove publisher identity",
+            "pull_request_target",
+            "persist-credentials: false",
+            "never imported, sourced, or executed",
+            "dedicated GitHub App",
+            "secret-key packets",
+            "full base-plus-head history",
+            "immutable merge plan",
+            "push workflow definition is loaded from event `after`",
+            "trust-root upgrade",
+            "strict required status checks",
+            "App-only",
+            "squash subject",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized_readme)
+
+    def test_actions_are_commit_pinned(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        uses = re.findall(r"(?m)^\s+uses: ([^\s#]+)", workflow)
+        self.assertGreaterEqual(len(uses), 4)
+        for action in uses:
+            with self.subTest(action=action):
+                self.assertRegex(action, r"^[^@]+@[0-9a-f]{40}$")
+
+    def test_embedded_bash_steps_parse(self) -> None:
+        for name in (
+            "Verify exact trusted and untrusted checkouts",
+            "Install trusted validation dependencies",
+            "Import trusted signing keys",
+            "Build immutable candidate merge plan",
+            "Monitor default branch squash",
+            "Resolve immutable candidate",
+            "Execute trusted App squash transaction",
+        ):
+            with self.subTest(name=name):
+                result = subprocess.run(
+                    ["bash", "-n"],
+                    input=workflow_run_script(name),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(
+                    result.returncode,
+                    0,
+                    result.stdout + result.stderr,
+                )
+
+    def test_every_checkout_disables_persisted_credentials(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        checkout_steps = re.findall(
+            r"(?ms)^      - name: Checkout .*?(?=^      - name: |^  [a-z])",
+            workflow,
+        )
+        self.assertEqual(len(checkout_steps), 2)
+        for step in checkout_steps:
+            with self.subTest(step=step.splitlines()[0]):
+                self.assertIn("persist-credentials: false", step)
+
+    def test_trusted_job_treats_head_as_data_until_role_validation(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("Checkout candidate head as data", workflow)
+        self.assertIn("Build immutable candidate merge plan", workflow)
+        self.assertIn("build_pull_request_candidate_plan", workflow)
+        self.assertIn("sys.path.insert(0, str(trusted_root))", workflow)
+        self.assertNotIn("untrusted-head/scripts/", workflow)
+        self.assertNotIn("Run tests", workflow)
+        self.assertNotIn("working-directory:", workflow)
+        self.assertNotIn("authenticated-head", workflow)
+
+        ordered_steps = (
+            "Checkout trusted base",
+            "Set up trusted Python",
+            "Create trusted merge token",
+            "Resolve immutable candidate",
+            "Checkout candidate head as data",
+            "Verify exact trusted and untrusted checkouts",
+            "Install trusted validation dependencies",
+            "Import trusted signing keys",
+            "Build immutable candidate merge plan",
+            "Monitor default branch squash",
+            "Execute trusted App squash transaction",
+        )
+        offsets = [workflow.index(f"- name: {name}") for name in ordered_steps]
+        self.assertEqual(offsets, sorted(offsets))
+
+    def test_oid_and_trust_root_preflight_is_case_exact(self) -> None:
+        script = workflow_run_script("Verify exact trusted and untrusted checkouts")
+        self.assertIn('case "$1" in', script)
+        self.assertIn("*[!0-9a-f]*", script)
+        self.assertIn('":(literal)$relative"', script)
+        self.assertIn('[ "$tree_path" != "$relative" ]', script)
+        for relative in TRUSTED_PATHS:
+            self.assertIn(relative, script)
+
+    def test_safe_python_and_hash_enforcement_are_structural(self) -> None:
+        validation = workflow_run_script("Build immutable candidate merge plan")
+        installation = workflow_run_script("Install trusted validation dependencies")
+        self.assertIn(
+            "env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH", validation
+        )
+        self.assertIn('"$TRUSTED_PYTHON" -I -', validation)
+        self.assertIn('cd "$TRUSTED_ROOT"', installation)
+        self.assertIn("python -I -m venv", installation)
+        self.assertIn('"$TRUSTED_VENV/bin/python" -I -m pip install', installation)
+        self.assertIn("--require-hashes", installation)
+        self.assertIn("--only-binary=:all:", installation)
+        self.assertNotRegex(
+            WORKFLOW.read_text(encoding="utf-8"), r"(?<!-I )python -m pip"
+        )
+
+    def test_malicious_local_pip_module_is_not_executed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            trusted = temporary / "trusted"
+            untrusted = temporary / "untrusted"
+            trusted.mkdir()
+            (untrusted / "pip").mkdir(parents=True)
+            marker = temporary / "malicious-pip-executed"
+            (untrusted / "pip" / "__main__.py").write_text(
+                "from pathlib import Path\n"
+                f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            (trusted / "requirements-v2.txt").write_text("", encoding="utf-8")
+            result = run_script(
+                workflow_run_script("Install trusted validation dependencies"),
+                untrusted,
+                {
+                    "GITHUB_ENV": str(temporary / "environment"),
+                    "RUNNER_TEMP": str(temporary),
+                    "TRUSTED_ROOT": str(trusted),
+                    "UNTRUSTED_ROOT": str(untrusted),
+                },
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_requirement_lock_is_complete_and_hashed(self) -> None:
+        lock = REQUIREMENTS.read_text(encoding="utf-8")
+        self.assertIn("--universal --generate-hashes --no-sources", lock)
+        headers = list(re.finditer(r"(?m)^([a-z0-9-]+)==([^ \\;]+).*$", lock))
+        self.assertEqual(
+            {match.group(1) for match in headers},
+            {
+                "attrs",
+                "jsonschema",
+                "jsonschema-specifications",
+                "referencing",
+                "rpds-py",
+                "typing-extensions",
+            },
+        )
+        for index, header in enumerate(headers):
+            end = headers[index + 1].start() if index + 1 < len(headers) else len(lock)
+            block = lock[header.start() : end]
+            self.assertRegex(block, r"--hash=sha256:[0-9a-f]{64}")
+        rpds_start = next(
+            match.start() for match in headers if match.group(1) == "rpds-py"
+        )
+        typing_start = next(
+            match.start() for match in headers if match.group(1) == "typing-extensions"
+        )
+        self.assertGreaterEqual(
+            lock[rpds_start:typing_start].count("--hash=sha256:"),
+            100,
+        )
+
+    def test_pip_hash_enforcement_rejects_unhashed_local_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            wheel = temporary / "fixture_pkg-1.0-py3-none-any.whl"
+            dist_info = "fixture_pkg-1.0.dist-info"
+            with zipfile.ZipFile(wheel, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("fixture_pkg/__init__.py", "VALUE = 1\n")
+                archive.writestr(
+                    f"{dist_info}/METADATA",
+                    "Metadata-Version: 2.1\nName: fixture-pkg\nVersion: 1.0\n\n",
+                )
+                archive.writestr(
+                    f"{dist_info}/WHEEL",
+                    "Wheel-Version: 1.0\n"
+                    "Generator: retained-history-test\n"
+                    "Root-Is-Purelib: true\n"
+                    "Tag: py3-none-any\n\n",
+                )
+                archive.writestr(
+                    f"{dist_info}/RECORD",
+                    "fixture_pkg/__init__.py,,\n"
+                    f"{dist_info}/METADATA,,\n"
+                    f"{dist_info}/WHEEL,,\n"
+                    f"{dist_info}/RECORD,,\n",
+                )
+
+            requirements = temporary / "requirements.txt"
+            requirements.write_text(
+                f"fixture-pkg @ {wheel.as_uri()}\n",
+                encoding="utf-8",
+            )
+
+            def install(target: Path) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-m",
+                        "pip",
+                        "install",
+                        "--disable-pip-version-check",
+                        "--no-input",
+                        "--no-index",
+                        "--no-deps",
+                        "--require-hashes",
+                        "--target",
+                        str(target),
+                        "--requirement",
+                        str(requirements),
+                    ],
+                    cwd=temporary,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+
+            rejected = install(temporary / "rejected")
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn(
+                "Hashes are required",
+                rejected.stdout + rejected.stderr,
+            )
+
+            digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+            requirements.write_text(
+                f"fixture-pkg @ {wheel.as_uri()} --hash=sha256:{digest}\n",
+                encoding="utf-8",
+            )
+            accepted = install(temporary / "accepted")
+
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+
+    def test_app_transaction_replaces_mutable_metadata_check_lifecycle(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        resolved = workflow_run_script("Resolve immutable candidate")
+        transaction = workflow_run_script("Execute trusted App squash transaction")
+        self.assertIn("actions/create-github-app-token@", workflow)
+        self.assertIn("RETROSPECTIVE_HISTORY_MERGE_APP_ID", workflow)
+        self.assertIn("RETROSPECTIVE_HISTORY_MERGE_APP_PRIVATE_KEY", workflow)
+        self.assertIn("permission-checks: write", workflow)
+        self.assertIn("permission-contents: write", workflow)
+        self.assertIn("permission-administration: read", workflow)
+        self.assertIn("permission-pull-requests: read", workflow)
+        self.assertIn("retrospective_history_merge_v2", resolved)
+        self.assertIn("transact", transaction)
+        self.assertIn("--app-id", transaction)
+        self.assertIn("--app-slug", transaction)
+        self.assertNotIn("title", workflow)
+        self.assertNotIn("draft", workflow)
+        self.assertNotIn("status=in_progress", workflow)
+        self.assertNotIn("post-completion-pull-request", workflow)
+        self.assertNotIn("github.token", workflow)
+
+    def test_key_import_proves_public_only_material_before_and_after_import(
+        self,
+    ) -> None:
+        script = workflow_run_script("Import trusted signing keys")
+        self.assertIn("--import-options show-only --dry-run --import", script)
+        self.assertIn('$1 == "sec" || $1 == "ssb"', script)
+        self.assertIn("--list-secret-keys", script)
+        self.assertIn('[ -n "$SECRET_RECORDS" ]', script)
+
+    def test_empty_gnupg_import_and_production_validation_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            trusted, untrusted, base, head = self.make_signed_admin_range(temporary)
+            validation, imported_home = self.run_production_trust_chain(
+                temporary,
+                trusted,
+                untrusted,
+                base,
+                head,
+            )
+            listing = gpg(imported_home, "--with-colons", "--list-keys")
+            secret_listing = gpg(
+                imported_home,
+                "--with-colons",
+                "--list-secret-keys",
+            )
+
+        self.assertEqual(
+            validation.returncode, 0, validation.stdout + validation.stderr
+        )
+        self.assertEqual(listing.returncode, 0, listing.stderr.decode(errors="replace"))
+        self.assertEqual(
+            secret_listing.returncode,
+            0,
+            secret_listing.stderr.decode(errors="replace"),
+        )
+        self.assertEqual(secret_listing.stdout, b"")
+        self.assertEqual(imported_home.name, "rh2-gpg")
+
+    def test_default_branch_monitor_validates_unchanged_trust_root_update(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            trusted, untrusted, base, head = self.make_signed_admin_range(temporary)
+            accepted = self.run_default_branch_trust_chain(
+                temporary,
+                trusted,
+                untrusted,
+                base,
+                head,
+            )
+            rejected = self.run_default_branch_trust_chain(
+                temporary,
+                trusted,
+                untrusted,
+                base,
+                head,
+                forced=True,
+            )
+
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("force-push event is not append-only", rejected.stdout)
+
+    def test_real_signed_trust_root_upgrade_uses_pr_protocol_not_push_monitor(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            trusted, untrusted, base, head = self.make_signed_admin_range(
+                temporary,
+                tamper_validator=True,
+                trust_root_upgrade=True,
+            )
+            validation, _imported_home = self.run_production_trust_chain(
+                temporary,
+                trusted,
+                untrusted,
+                base,
+                head,
+            )
+            monitor = self.run_default_branch_trust_chain(
+                temporary,
+                trusted,
+                untrusted,
+                base,
+                head,
+            )
+
+        self.assertEqual(
+            validation.returncode, 0, validation.stdout + validation.stderr
+        )
+        self.assertNotEqual(monitor.returncode, 0)
+        self.assertIn(
+            "candidate-controlled post-merge workflow cannot authorize a trust-root upgrade",
+            monitor.stdout,
+        )
+
+    def test_binary_secret_key_packet_is_rejected_before_import(self) -> None:
+        self.require_gpg()
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            trusted, _untrusted, _base, _head = self.make_signed_admin_range(temporary)
+            public_binary = gpg(
+                self.publisher_home,
+                "--export",
+                self.publisher_fingerprint,
+            )
+            self.assertEqual(
+                public_binary.returncode,
+                0,
+                public_binary.stderr.decode(errors="replace"),
+            )
+            synthetic_secret_packet = b"\xc5\x01\x04"
+            (trusted / "retrospective-history-v2-publisher.asc").write_bytes(
+                public_binary.stdout + synthetic_secret_packet
+            )
+            result = run_script(
+                self.imported_fingerprint_script(),
+                temporary,
+                {
+                    "GITHUB_ENV": str(temporary / "github-environment"),
+                    "RUNNER_TEMP": str(temporary),
+                    "TRUSTED_ROOT": str(trusted),
+                },
             )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("does not contain the current event base", result.stderr)
-        self.assertEqual(current.returncode, 0, current.stderr)
+        self.assertIn(
+            "not a valid public-key export",
+            result.stdout + result.stderr,
+        )
 
-    def test_pull_requests_reject_runs_but_allow_infrastructure(self) -> None:
+    def test_binary_secret_key_packet_is_rejected_in_candidate_admin_change(
+        self,
+    ) -> None:
+        self.require_gpg()
+        exported = gpg(
+            self.maintainer_home,
+            "--export-secret-keys",
+            self.maintainer_fingerprint,
+        )
+        self.assertEqual(
+            exported.returncode,
+            0,
+            exported.stderr.decode("utf-8", errors="replace"),
+        )
         with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            base = initialize_git_repository(root)
-            infrastructure_head = commit_file(
-                root, ".github/policy.txt", "policy\n", "Add policy"
+            temporary = Path(raw)
+            trusted, untrusted, base, head = self.make_signed_admin_range(
+                temporary,
+                payload=exported.stdout,
             )
-            infrastructure = run_workflow_script(
-                "Reject pull request publication changes",
-                root,
-                base_tip=base,
-                head_rev=infrastructure_head,
-            )
-
-            git(root, "switch", "--quiet", "--detach", base)
-            publication_head = commit_file(
-                root, "runs/private-name.json", "{}\n", "Add publication"
-            )
-            publication = run_workflow_script(
-                "Reject pull request publication changes",
-                root,
-                base_tip=base,
-                head_rev=publication_head,
+            validation, _imported_home = self.run_production_trust_chain(
+                temporary,
+                trusted,
+                untrusted,
+                base,
+                head,
             )
 
-        step = workflow_step("Reject pull request publication changes")
-        self.assertIn('git diff --quiet "$BASE_TIP" "$HEAD_REV" -- runs', step)
-        self.assertNotIn("--name-only", step)
-        self.assertEqual(infrastructure.returncode, 0, infrastructure.stderr)
-        self.assertNotEqual(publication.returncode, 0)
-        self.assertIn("must not modify formal retained-history publications", publication.stderr)
-        self.assertNotIn("private-name", publication.stdout + publication.stderr)
+        self.assertNotEqual(validation.returncode, 0)
+        self.assertIn(
+            "admin infrastructure contains a high-confidence secret",
+            validation.stdout,
+        )
+
+    def test_tampered_head_validator_cannot_bypass_paths_or_secrets(self) -> None:
+        self.require_gpg()
+        cases = (
+            (
+                True,
+                b"Reviewed policy update.\n",
+                "unexpected retained artifact location",
+            ),
+            (
+                False,
+                b"Authorization: " + b"Bearer " + b"0123456789abcdef\n",
+                "admin infrastructure contains a high-confidence secret",
+            ),
+        )
+        for unauthorized_path, payload, expected in cases:
+            with (
+                self.subTest(unauthorized_path=unauthorized_path),
+                tempfile.TemporaryDirectory() as raw,
+            ):
+                temporary = Path(raw)
+                trusted, untrusted, base, head = self.make_signed_admin_range(
+                    temporary,
+                    tamper_validator=True,
+                    payload=payload,
+                    unauthorized_path=unauthorized_path,
+                )
+                validation, _imported_home = self.run_production_trust_chain(
+                    temporary,
+                    trusted,
+                    untrusted,
+                    base,
+                    head,
+                )
+
+                self.assertNotEqual(validation.returncode, 0)
+                self.assertIn(expected, validation.stdout)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "The history validator must additionally enforce cross-artifact cardinality and canonical ordering, re-render every template instance and report byte-for-byte, and recompute retained_bundle_digest_v2 from the seven sibling artifacts plus the canonical manifest projection with only that member omitted.",
+  "$comment": "The history validator must additionally enforce cross-artifact cardinality and canonical ordering, re-render every template instance and report byte-for-byte, recompute retained_bundle_digest_v2 from the seven sibling artifacts plus the canonical manifest projection with the digest and publisher attestation omitted, and verify the detached publisher attestation over the resulting digest and run_ref.",
   "$defs": {
     "aggregate_input_ref": {
       "description": "Opaque reference to deterministic terminal-ledger inputs for a retained aggregate.",
@@ -258,7 +258,7 @@
           "const": "typed-name-length-v2"
         },
         "manifest_projection": {
-          "const": "omit-retained_bundle_digest_v2-only"
+          "const": "omit-digest-and-publisher-attestation-v2"
         },
         "ordering": {
           "const": "bytewise-basename"
@@ -2595,6 +2595,9 @@
         "production_configuration_root_v2": {
           "$ref": "#/$defs/production_configuration_root_v2"
         },
+        "publisher_attestation": {
+          "$ref": "#/$defs/publisher_attestation"
+        },
         "publication_role": {
           "$ref": "#/$defs/publication_role"
         },
@@ -2652,6 +2655,7 @@
         "eras",
         "provenance",
         "production_configuration_root_v2",
+        "publisher_attestation",
         "retention_contract"
       ],
       "type": "object"
@@ -2993,6 +2997,31 @@
       "maxLength": 50,
       "pattern": "^policy_era_ref_v2:[0-9a-f]{32}$",
       "type": "string"
+    },
+    "publisher_attestation": {
+      "$comment": "Runtime validation requires header-free canonical ASCII armor, verified CRC24, exactly one v4 OpenPGP signature packet, a hashed issuer fingerprint matching signer_fingerprint, the matching unhashed issuer key ID, and no unknown or trailing packet bytes.",
+      "additionalProperties": false,
+      "properties": {
+        "scheme": {
+          "const": "openpgp-detached-v1"
+        },
+        "signature": {
+          "maxLength": 16384,
+          "minLength": 100,
+          "pattern": "^-----BEGIN PGP SIGNATURE-----\\n\\n(?:[A-Za-z0-9+/]{1,64}={0,2}\\n)+=[A-Za-z0-9+/]{4}\\n-----END PGP SIGNATURE-----$",
+          "type": "string"
+        },
+        "signer_fingerprint": {
+          "pattern": "^(?:[0-9A-F]{40}|[0-9A-F]{64})$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scheme",
+        "signer_fingerprint",
+        "signature"
+      ],
+      "type": "object"
     },
     "policy_versions": {
       "additionalProperties": false,
