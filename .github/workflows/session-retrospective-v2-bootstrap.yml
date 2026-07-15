@@ -82,6 +82,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install hash-pinned candidate dependencies
+        if: github.event_name == 'pull_request_target'
         shell: bash
         run: |
           set -euo pipefail

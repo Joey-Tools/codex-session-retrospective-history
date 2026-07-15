@@ -66,6 +66,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
             workflow,
         )
+        self.assertIn("if: github.event_name == 'pull_request_target'", workflow)
         self.assertIn("python -m pip --isolated install --require-hashes", workflow)
 
 
