@@ -2627,21 +2627,25 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertTrue(issues)
         verifier.assert_not_called()
 
-    def test_publisher_attestation_budget_is_checked_before_verifier_launches(
-        self,
-    ) -> None:
-        admitted = tuple(
-            Path("runs") / f"bundle-{index:03d}" / "manifest.json"
-            for index in range(MODULE.MAX_BUNDLES + 1)
-        )
+    def test_publisher_attestations_continue_across_page_boundaries(self) -> None:
+        manifest_count = MODULE.MAX_ATTESTATION_PAGE_SIZE + 1
         with tempfile.TemporaryDirectory() as raw:
-            with mock.patch.object(MODULE, "_verify_publisher_attestation") as verifier:
-                issues = MODULE.validate_v2_publisher_attestations(Path(raw), admitted)
+            root = Path(raw)
+            admitted = tuple(
+                Path("runs") / f"bundle-{index:03d}" / "manifest.json"
+                for index in range(manifest_count)
+            )
+            for relative in admitted:
+                path = root / relative
+                path.parent.mkdir(parents=True)
+                path.write_text("{}\n", encoding="ascii")
+            with mock.patch.object(
+                MODULE, "_verify_publisher_attestation", return_value=True
+            ) as verifier:
+                issues = MODULE.validate_v2_publisher_attestations(root, admitted)
 
-        self.assertEqual(
-            issues, ["v2 publisher attestation verification budget exceeded"]
-        )
-        verifier.assert_not_called()
+        self.assertEqual(issues, [])
+        self.assertEqual(verifier.call_count, manifest_count)
 
     def test_validate_root_rejects_each_invalid_publisher_attestation(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

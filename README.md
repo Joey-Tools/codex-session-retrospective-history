@@ -217,6 +217,16 @@ authorization input. A ready-for-review event may retry the same immutable
 candidate after GitHub has refused to merge a draft, but it cannot authorize a
 different tree, subject, base, or head.
 
+Before any App token is created, a separate read-only job binds the event's
+exact candidate SHA, removes checkout credentials, and copies only that tracked
+tree into a Git-metadata-free validation root. With no repository secret or
+GitHub credential in the executed environment, it installs the candidate's
+hash-locked dependencies, compiles and tests the candidate Python, checks both
+JSON schemas, runs checksum-pinned `actionlint`, and dry-runs both OpenPGP
+exports while rejecting secret-key packets. The trusted job depends on this
+gate and rejects the transaction if its fresh API resolution no longer equals
+the validated SHA.
+
 The transaction performs these operations in order:
 
 1. Check out `github.workflow_sha` as the trusted base with
@@ -225,8 +235,9 @@ The transaction performs these operations in order:
    requests: read` for this repository only.
 2. Read the current PR route through the API and bind only the repository, PR
    number, base repository/ref/OID, and head OID. Require the workflow source to
-   equal that base. A rerun after a lost merge response recovers the original
-   base from the one parent of the recorded squash commit.
+   equal that base and the resolved head to equal the no-secrets gate output. A
+   rerun after a lost merge response recovers the original base from the one
+   parent of the recorded squash commit.
 3. Check out the exact bound head as data into a separate directory. Require
    the base to be its ancestor and verify every trust-root path as a case-exact
    regular blob in the base tree.
@@ -416,6 +427,16 @@ Run the full test suite and validate the current retained-history tree:
 .venv-v2/bin/python -m unittest discover -s tests
 .venv-v2/bin/python scripts/validate_retained_history.py --root .
 ```
+
+Whole-history v2 validation stores discovered paths and normalized cross-bundle
+facts in a task-local SQLite index. Discovery commits at most 4096 new artifact
+paths per transaction, bundle parsing admits at most 512 bundles per page, and
+global supersession, campaign, revision-graph, trend, and publisher-attestation
+checks consume indexed pages. Those values are page sizes, not repository
+lifetime ceilings: every bundle admitted by the validated snapshot inventory is
+classified while single-page memory and query work stay bounded. Per-directory
+fanout, path, artifact, JSON, per-bundle row/byte, snapshot-transport, and
+diagnostic limits still fail closed.
 
 For a proposed append-only change, execute the validator script and dependencies
 from a separate trusted base checkout, point `--root` at the candidate checkout,

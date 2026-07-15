@@ -80,8 +80,8 @@ def workflow_step(name: str) -> str:
     end = len(lines)
     for index in range(start + 1, len(lines)):
         if lines[index].startswith(
-            ("      - name: ", "      - uses: ", "  post-validation-tests:")
-        ):
+            ("      - name: ", "      - uses: ")
+        ) or re.fullmatch(r"  [a-z0-9-]+:", lines[index]):
             end = index
             break
     return "\n".join(lines[start:end])
@@ -349,6 +349,7 @@ class RetrospectiveHistoryV2CITests(unittest.TestCase):
             "RUNNER_TEMP": str(temporary),
             "TRUSTED_ROOT": str(trusted),
             "UNTRUSTED_ROOT": str(untrusted),
+            "VALIDATED_CANDIDATE_OID": head,
             "WORKFLOW_SOURCE_OID": base,
         }
         preflight = run_script(
@@ -397,6 +398,7 @@ class RetrospectiveHistoryV2CITests(unittest.TestCase):
             "RUNNER_TEMP": str(temporary),
             "TRUSTED_ROOT": str(trusted),
             "UNTRUSTED_ROOT": str(untrusted),
+            "VALIDATED_CANDIDATE_OID": head,
             "WORKFLOW_SOURCE_OID": head,
         }
         preflight = run_script(
@@ -426,9 +428,12 @@ class RetrospectiveHistoryV2CITests(unittest.TestCase):
         self.assertIn("DEFAULT_BRANCH", workflow)
         self.assertNotRegex(workflow, r"(?m)^  pull_request:$")
         self.assertRegex(workflow, r"(?m)^  push:$")
+        self.assertIn("candidate-validation:", workflow)
         self.assertIn("trusted-validation:", workflow)
         self.assertNotIn("post-validation-tests:", workflow)
-        self.assertNotIn("pull_request.head.repo.full_name", workflow)
+        self.assertIn("pull_request.head.repo.full_name", workflow)
+        self.assertIn("needs: candidate-validation", workflow)
+        self.assertIn("needs.candidate-validation.outputs.candidate_oid", workflow)
         self.assertIn("steps.resolve-candidate.outputs.head_oid", workflow)
         self.assertIn("github.event.before", workflow)
         self.assertIn("github.event.after", workflow)
@@ -475,6 +480,11 @@ class RetrospectiveHistoryV2CITests(unittest.TestCase):
 
     def test_embedded_bash_steps_parse(self) -> None:
         for name in (
+            "Bind credential-free candidate tree",
+            "Install hash-pinned candidate dependencies",
+            "Install checksum-pinned actionlint",
+            "Validate candidate workflow schemas and public keys",
+            "Compile and test immutable candidate",
             "Verify exact trusted and untrusted checkouts",
             "Install trusted validation dependencies",
             "Import trusted signing keys",
@@ -503,21 +513,22 @@ class RetrospectiveHistoryV2CITests(unittest.TestCase):
             r"(?ms)^      - name: Checkout .*?(?=^      - name: |^  [a-z])",
             workflow,
         )
-        self.assertEqual(len(checkout_steps), 2)
+        self.assertEqual(len(checkout_steps), 3)
         for step in checkout_steps:
             with self.subTest(step=step.splitlines()[0]):
                 self.assertIn("persist-credentials: false", step)
 
     def test_trusted_job_treats_head_as_data_until_role_validation(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
+        trusted_workflow = workflow.split("  trusted-validation:\n", 1)[1]
         self.assertIn("Checkout candidate head as data", workflow)
         self.assertIn("Build immutable candidate merge plan", workflow)
         self.assertIn("build_pull_request_candidate_plan", workflow)
         self.assertIn("sys.path.insert(0, str(trusted_root))", workflow)
-        self.assertNotIn("untrusted-head/scripts/", workflow)
-        self.assertNotIn("Run tests", workflow)
-        self.assertNotIn("working-directory:", workflow)
-        self.assertNotIn("authenticated-head", workflow)
+        self.assertNotIn("untrusted-head/scripts/", trusted_workflow)
+        self.assertNotIn("Compile and test immutable candidate", trusted_workflow)
+        self.assertNotIn("working-directory:", trusted_workflow)
+        self.assertNotIn("authenticated-head", trusted_workflow)
 
         ordered_steps = (
             "Checkout trusted base",
@@ -534,6 +545,51 @@ class RetrospectiveHistoryV2CITests(unittest.TestCase):
         )
         offsets = [workflow.index(f"- name: {name}") for name in ordered_steps]
         self.assertEqual(offsets, sorted(offsets))
+
+    def test_candidate_gate_precedes_credentials_and_binds_the_resolved_head(
+        self,
+    ) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        candidate_workflow, trusted_workflow = workflow.split(
+            "  trusted-validation:\n", 1
+        )
+        self.assertIn("permissions:\n      contents: read", candidate_workflow)
+        self.assertNotIn("secrets.", candidate_workflow)
+        self.assertNotIn("actions/create-github-app-token", candidate_workflow)
+        self.assertIn("persist-credentials: false", candidate_workflow)
+        self.assertIn('tar -C "$CANDIDATE_ROOT" --exclude=.git', candidate_workflow)
+        self.assertIn("env -i", candidate_workflow)
+        self.assertIn("needs: candidate-validation", trusted_workflow)
+        self.assertLess(
+            workflow.index("candidate-validation:"),
+            workflow.index("Create trusted merge token"),
+        )
+        preflight = workflow_run_script("Verify exact trusted and untrusted checkouts")
+        self.assertIn('require_oid "$VALIDATED_CANDIDATE_OID"', preflight)
+        self.assertIn('[ "$HEAD_OID" != "$VALIDATED_CANDIDATE_OID" ]', preflight)
+
+    def test_candidate_gate_covers_static_runtime_and_public_key_checks(self) -> None:
+        installation = workflow_run_script("Install hash-pinned candidate dependencies")
+        actionlint = workflow_run_script("Install checksum-pinned actionlint")
+        static = workflow_run_script(
+            "Validate candidate workflow schemas and public keys"
+        )
+        runtime = workflow_run_script("Compile and test immutable candidate")
+
+        self.assertIn("--require-hashes", installation)
+        self.assertIn("--only-binary=:all:", installation)
+        self.assertRegex(actionlint, r"ACTIONLINT_SHA256=[0-9a-f]{64}")
+        self.assertIn("sha256sum --check --strict", actionlint)
+        self.assertIn('"$ACTIONLINT" -color=false', static)
+        self.assertIn("validator_for(schema).check_schema(schema)", static)
+        self.assertIn("--import-options show-only --dry-run --import", static)
+        self.assertIn('$1 == "sec" || $1 == "ssb"', static)
+        self.assertIn("-m compileall", runtime)
+        self.assertIn("unittest.defaultTestLoader.discover", runtime)
+        self.assertIn("sys.path.insert(0, str(root))", runtime)
+        self.assertNotIn("GH_TOKEN", runtime)
+        self.assertNotIn("GITHUB_TOKEN", runtime)
+        self.assertIn("env -i", runtime)
 
     def test_oid_and_trust_root_preflight_is_case_exact(self) -> None:
         script = workflow_run_script("Verify exact trusted and untrusted checkouts")

@@ -14,8 +14,10 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import stat
-from typing import Any, Callable, Iterable
+import tempfile
+from typing import Any, Callable, Iterable, Iterator
 
 try:
     from retrospective_history_templates_v2 import (
@@ -168,15 +170,14 @@ MAX_ARTIFACT_BYTES = {
     "turn_findings.jsonl": 16 * 1024 * 1024,
 }
 MAX_BUNDLE_ARTIFACT_BYTES = 64 * 1024 * 1024
-MAX_DISCOVERY_ENTRIES = 65536
-MAX_VISIBLE_FILE_ENTRIES = 262144
-MAX_DISCOVERY_FILES = 4096
-MAX_BUNDLES = 512
+MAX_DIRECTORY_ENTRIES = 512
+MAX_DISCOVERY_PAGE_FILES = 4096
+MAX_BUNDLE_PAGE_SIZE = 512
+MAX_INDEX_QUERY_ROWS = 512
 MAX_DISCOVERY_PATH_BYTES = 256
 MAX_VISIBLE_PATH_BYTES = 4096
 MAX_JSONL_ROWS = 100_000
 MAX_BUNDLE_JSONL_ROWS = 200_000
-MAX_HISTORY_REVISIONS = 1_000_000
 MAX_JSON_DEPTH = 64
 MAX_JSON_NODES = 200_000
 MAX_JSON_CONTAINER_ITEMS = 100_000
@@ -558,6 +559,481 @@ class _TrendSnapshot:
     rates: dict[tuple[str, str, str], Decimal]
     comparisons: tuple[_TrendComparison, ...]
     summary: _SummaryComparison | None
+
+
+class _ValidationIndex:
+    """Disk-backed index for bounded discovery and cross-bundle validation."""
+
+    def __init__(self, path: Path) -> None:
+        self.connection = sqlite3.connect(path)
+        self.connection.execute("PRAGMA foreign_keys = ON")
+        self.connection.execute("PRAGMA journal_mode = OFF")
+        self.connection.execute("PRAGMA synchronous = OFF")
+        self.connection.execute("PRAGMA temp_store = FILE")
+        self.connection.execute("PRAGMA trusted_schema = OFF")
+        self.connection.executescript(
+            """
+            CREATE TABLE discovered_bundles (
+                id INTEGER PRIMARY KEY,
+                mode TEXT NOT NULL,
+                window_component TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                UNIQUE (mode, window_component, run_id)
+            );
+            CREATE TABLE artifacts (
+                bundle_id INTEGER NOT NULL REFERENCES discovered_bundles(id),
+                basename TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                PRIMARY KEY (bundle_id, basename)
+            ) WITHOUT ROWID;
+            CREATE TABLE route_owners (
+                route_digest TEXT PRIMARY KEY,
+                mode TEXT NOT NULL,
+                window_component TEXT NOT NULL
+            ) WITHOUT ROWID;
+            CREATE TABLE run_owners (
+                run_id TEXT PRIMARY KEY,
+                mode TEXT NOT NULL,
+                window_component TEXT NOT NULL
+            ) WITHOUT ROWID;
+            CREATE TABLE bundle_facts (
+                bundle_id INTEGER PRIMARY KEY REFERENCES discovered_bundles(id),
+                label TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                window_component TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                manifest_path TEXT,
+                run_revision_ref TEXT,
+                run_ref TEXT,
+                bundle_digest TEXT,
+                status TEXT,
+                supersession_reason TEXT,
+                publication_role TEXT,
+                campaign_ref TEXT,
+                campaign_reason TEXT,
+                campaign_segment_count INTEGER,
+                segment_ordinal INTEGER,
+                campaign_segment_root TEXT,
+                generation_ref TEXT,
+                segment_has_head_successor INTEGER NOT NULL
+            );
+            CREATE TABLE revisions (
+                id INTEGER PRIMARY KEY,
+                bundle_id INTEGER NOT NULL REFERENCES discovered_bundles(id),
+                family TEXT NOT NULL,
+                current_ref TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                entity_ref TEXT,
+                transaction_ref TEXT NOT NULL,
+                label TEXT NOT NULL
+            );
+            CREATE TABLE revision_predecessors (
+                revision_id INTEGER NOT NULL REFERENCES revisions(id),
+                family TEXT NOT NULL,
+                predecessor_ref TEXT NOT NULL
+            );
+            CREATE TABLE run_supersession (
+                bundle_id INTEGER NOT NULL REFERENCES discovered_bundles(id),
+                target_ref TEXT NOT NULL
+            );
+            CREATE TABLE manifest_supersession (
+                bundle_id INTEGER NOT NULL REFERENCES discovered_bundles(id),
+                family TEXT NOT NULL,
+                target_ref TEXT NOT NULL
+            );
+            CREATE TABLE campaign_tree_refs (
+                bundle_id INTEGER NOT NULL REFERENCES discovered_bundles(id),
+                ref_kind TEXT NOT NULL,
+                tree_ref TEXT NOT NULL
+            );
+            CREATE TABLE head_binding_refs (
+                bundle_id INTEGER NOT NULL REFERENCES discovered_bundles(id),
+                binding_ref TEXT NOT NULL
+            );
+            CREATE TABLE trend_snapshots (
+                id INTEGER PRIMARY KEY,
+                bundle_id INTEGER NOT NULL REFERENCES discovered_bundles(id),
+                run_revision_ref TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
+            CREATE TABLE trend_supersession (
+                snapshot_id INTEGER NOT NULL REFERENCES trend_snapshots(id),
+                predecessor_ref TEXT NOT NULL
+            );
+            CREATE INDEX artifacts_bundle ON artifacts(bundle_id, basename);
+            CREATE INDEX facts_run_revision ON bundle_facts(run_revision_ref);
+            CREATE INDEX facts_campaign ON bundle_facts(campaign_ref, publication_role);
+            CREATE INDEX revisions_identity ON revisions(family, current_ref);
+            CREATE INDEX revisions_bundle_family ON revisions(bundle_id, family);
+            CREATE INDEX predecessors_target ON revision_predecessors(family, predecessor_ref);
+            CREATE INDEX predecessors_revision ON revision_predecessors(revision_id);
+            CREATE INDEX run_supersession_target ON run_supersession(target_ref);
+            CREATE INDEX manifest_supersession_target
+                ON manifest_supersession(family, target_ref);
+            CREATE INDEX campaign_tree_ref_identity
+                ON campaign_tree_refs(ref_kind, tree_ref);
+            CREATE INDEX head_binding_ref_identity ON head_binding_refs(binding_ref);
+            CREATE INDEX trend_snapshot_revision ON trend_snapshots(run_revision_ref);
+            CREATE INDEX trend_supersession_target ON trend_supersession(predecessor_ref);
+            """
+        )
+        self._pending_artifacts = 0
+
+    def close(self) -> None:
+        self.connection.close()
+
+    def flush_discovery_page(self) -> None:
+        self.connection.commit()
+        self._pending_artifacts = 0
+
+    def add_artifact(self, parsed: _PhysicalArtifactPath) -> bool:
+        """Index one path and return whether a route collision was found."""
+
+        route_digest = "".join(parsed.window_route)
+        route_owner = self.connection.execute(
+            "SELECT mode, window_component FROM route_owners WHERE route_digest = ?",
+            (route_digest,),
+        ).fetchone()
+        collision = route_owner is not None and tuple(route_owner) != (
+            parsed.mode,
+            parsed.window_component,
+        )
+        if route_owner is None:
+            self.connection.execute(
+                "INSERT INTO route_owners VALUES (?, ?, ?)",
+                (route_digest, parsed.mode, parsed.window_component),
+            )
+
+        run_owner = self.connection.execute(
+            "SELECT mode, window_component FROM run_owners WHERE run_id = ?",
+            (parsed.run_id,),
+        ).fetchone()
+        collision = collision or (
+            run_owner is not None
+            and tuple(run_owner) != (parsed.mode, parsed.window_component)
+        )
+        if run_owner is None:
+            self.connection.execute(
+                "INSERT INTO run_owners VALUES (?, ?, ?)",
+                (parsed.run_id, parsed.mode, parsed.window_component),
+            )
+
+        self.connection.execute(
+            """
+            INSERT OR IGNORE INTO discovered_bundles(mode, window_component, run_id)
+            VALUES (?, ?, ?)
+            """,
+            (parsed.mode, parsed.window_component, parsed.run_id),
+        )
+        bundle_id = self.connection.execute(
+            """
+            SELECT id FROM discovered_bundles
+            WHERE mode = ? AND window_component = ? AND run_id = ?
+            """,
+            (parsed.mode, parsed.window_component, parsed.run_id),
+        ).fetchone()[0]
+        cursor = self.connection.execute(
+            """
+            INSERT OR IGNORE INTO artifacts(bundle_id, basename, relative_path)
+            VALUES (?, ?, ?)
+            """,
+            (bundle_id, parsed.basename, parsed.relative.as_posix()),
+        )
+        if cursor.rowcount:
+            self._pending_artifacts += 1
+            if self._pending_artifacts >= MAX_DISCOVERY_PAGE_FILES:
+                self.flush_discovery_page()
+        return collision
+
+    def iter_bundle_pages(self) -> Iterator[list[tuple[int, Bundle]]]:
+        cursor_key: tuple[str, str, str] | None = None
+        while True:
+            if cursor_key is None:
+                rows = self.connection.execute(
+                    """
+                    SELECT id, mode, window_component, run_id
+                    FROM discovered_bundles
+                    ORDER BY mode, window_component, run_id
+                    LIMIT ?
+                    """,
+                    (MAX_BUNDLE_PAGE_SIZE,),
+                ).fetchall()
+            else:
+                rows = self.connection.execute(
+                    """
+                    SELECT id, mode, window_component, run_id
+                    FROM discovered_bundles
+                    WHERE (mode, window_component, run_id) > (?, ?, ?)
+                    ORDER BY mode, window_component, run_id
+                    LIMIT ?
+                    """,
+                    (*cursor_key, MAX_BUNDLE_PAGE_SIZE),
+                ).fetchall()
+            if not rows:
+                return
+            page: list[tuple[int, Bundle]] = []
+            for bundle_id, mode, window_component, run_id in rows:
+                files = {
+                    basename: Path(relative_path)
+                    for basename, relative_path in self.connection.execute(
+                        """
+                        SELECT basename, relative_path FROM artifacts
+                        WHERE bundle_id = ? ORDER BY basename
+                        """,
+                        (bundle_id,),
+                    )
+                }
+                parts = _bundle_directory_parts(mode, window_component, run_id)
+                page.append(
+                    (
+                        bundle_id,
+                        Bundle(
+                            "/".join(parts),
+                            mode,
+                            window_component,
+                            run_id,
+                            files,
+                            physical_parts=parts,
+                        ),
+                    )
+                )
+            cursor_key = (rows[-1][1], rows[-1][2], rows[-1][3])
+            yield page
+
+    def record_bundle(self, bundle_id: int, bundle: Bundle) -> None:
+        manifest = bundle.manifest if isinstance(bundle.manifest, dict) else {}
+        supersession = manifest.get("supersession")
+        if not isinstance(supersession, dict):
+            supersession = {}
+        segment_metadata = manifest.get("campaign_segment_metadata")
+        if not isinstance(segment_metadata, dict):
+            segment_metadata = {}
+        head_bindings = manifest.get("head_bindings")
+        if not isinstance(head_bindings, dict):
+            head_bindings = {}
+
+        def text_value(value: Any) -> str | None:
+            return value if isinstance(value, str) else None
+
+        def integer_value(value: Any) -> int | None:
+            return value if _is_int(value) else None
+
+        has_head_successor = False
+        for field_name, value in head_bindings.items():
+            if field_name == "bound_quarantine_generation_ref":
+                continue
+            if field_name == "cursor_heads":
+                has_head_successor = value not in (None, [])
+            else:
+                has_head_successor = value is not None
+            if has_head_successor:
+                break
+
+        self.connection.execute(
+            """
+            INSERT INTO bundle_facts VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            (
+                bundle_id,
+                bundle.label,
+                bundle.mode,
+                bundle.window_component,
+                bundle.run_id,
+                bundle.files.get("manifest.json", None).as_posix()
+                if "manifest.json" in bundle.files
+                else None,
+                text_value(manifest.get("run_revision_ref")),
+                text_value(manifest.get("run_ref")),
+                text_value(manifest.get("retained_bundle_digest_v2")),
+                text_value(manifest.get("status")),
+                text_value(supersession.get("reason")),
+                text_value(manifest.get("publication_role")),
+                text_value(manifest.get("campaign_ref")),
+                text_value(manifest.get("publication_campaign_reason")),
+                integer_value(manifest.get("campaign_segment_count")),
+                integer_value(segment_metadata.get("segment_ordinal")),
+                text_value(manifest.get("campaign_segment_root_v2")),
+                text_value(head_bindings.get("bound_quarantine_generation_ref")),
+                int(has_head_successor),
+            ),
+        )
+
+        for node in bundle.revisions:
+            revision_cursor = self.connection.execute(
+                """
+                INSERT INTO revisions(
+                    bundle_id, family, current_ref, kind, entity_ref,
+                    transaction_ref, label
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    bundle_id,
+                    node.family,
+                    node.current,
+                    node.kind,
+                    node.entity_ref,
+                    node.transaction_ref,
+                    node.label,
+                ),
+            )
+            revision_id = revision_cursor.lastrowid
+            self.connection.executemany(
+                """
+                INSERT INTO revision_predecessors(
+                    revision_id, family, predecessor_ref
+                ) VALUES (?, ?, ?)
+                """,
+                (
+                    (revision_id, node.family, predecessor)
+                    for predecessor in node.predecessors
+                ),
+            )
+
+        run_targets = supersession.get("supersedes_run_revision_refs")
+        if isinstance(run_targets, list):
+            self.connection.executemany(
+                "INSERT INTO run_supersession VALUES (?, ?)",
+                (
+                    (bundle_id, target)
+                    for target in run_targets
+                    if isinstance(target, str)
+                ),
+            )
+        for family, field_name in CAMPAIGN_SEGMENT_MANIFEST_SUPERSESSION_FIELDS.items():
+            targets = supersession.get(field_name)
+            if not isinstance(targets, list):
+                continue
+            self.connection.executemany(
+                "INSERT INTO manifest_supersession VALUES (?, ?, ?)",
+                (
+                    (bundle_id, family, target)
+                    for target in targets
+                    if isinstance(target, str)
+                ),
+            )
+
+        for ref_kind, field_name in (
+            ("leaf", "leaf_root_refs"),
+            ("page", "page_root_refs"),
+        ):
+            values = segment_metadata.get(field_name)
+            if isinstance(values, list):
+                self.connection.executemany(
+                    "INSERT INTO campaign_tree_refs VALUES (?, ?, ?)",
+                    (
+                        (bundle_id, ref_kind, value)
+                        for value in values
+                        if isinstance(value, str)
+                    ),
+                )
+
+        stack: list[Any] = [head_bindings]
+        visited = 0
+        binding_refs: list[tuple[int, str]] = []
+        while stack and visited <= MAX_JSON_NODES:
+            current = stack.pop()
+            visited += 1
+            if isinstance(current, dict):
+                stack.extend(current.values())
+            elif isinstance(current, list):
+                stack.extend(current)
+            elif isinstance(current, str):
+                binding_refs.append((bundle_id, current))
+        self.connection.executemany(
+            "INSERT INTO head_binding_refs VALUES (?, ?)", binding_refs
+        )
+
+    def record_trend_snapshot(self, bundle_id: int, snapshot: _TrendSnapshot) -> None:
+        payload = json.dumps(
+            {
+                "label": snapshot.label,
+                "run_revision_ref": snapshot.run_revision_ref,
+                "mode": snapshot.mode,
+                "publication_time": snapshot.publication_time.isoformat(),
+                "window_start": snapshot.window_start.isoformat(),
+                "window_end": snapshot.window_end.isoformat(),
+                "supersedes_run_revision_refs": list(
+                    snapshot.supersedes_run_revision_refs
+                ),
+                "rates": [
+                    [*key, str(value)] for key, value in sorted(snapshot.rates.items())
+                ],
+                "comparisons": [
+                    {
+                        "metric_ref": comparison.metric_ref,
+                        "key": list(comparison.key),
+                        "prior_run_revision_ref": comparison.prior_run_revision_ref,
+                        "claimed_delta": str(comparison.claimed_delta),
+                    }
+                    for comparison in snapshot.comparisons
+                ],
+                "summary": None
+                if snapshot.summary is None
+                else {
+                    "prior_run_revision_ref": snapshot.summary.prior_run_revision_ref,
+                    "direction": snapshot.summary.direction,
+                    "metric_refs": list(snapshot.summary.metric_refs),
+                },
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        cursor = self.connection.execute(
+            """
+            INSERT INTO trend_snapshots(bundle_id, run_revision_ref, payload)
+            VALUES (?, ?, ?)
+            """,
+            (bundle_id, snapshot.run_revision_ref, payload),
+        )
+        snapshot_id = cursor.lastrowid
+        self.connection.executemany(
+            "INSERT INTO trend_supersession VALUES (?, ?)",
+            (
+                (snapshot_id, predecessor)
+                for predecessor in snapshot.supersedes_run_revision_refs
+            ),
+        )
+
+    def iter_manifest_paths(self) -> Iterator[Path]:
+        cursor = self.connection.execute(
+            """
+            SELECT manifest_path FROM bundle_facts
+            WHERE manifest_path IS NOT NULL
+            ORDER BY mode, window_component, run_id
+            """
+        )
+        while True:
+            rows = cursor.fetchmany(MAX_INDEX_QUERY_ROWS)
+            if not rows:
+                return
+            for (manifest_path,) in rows:
+                yield Path(manifest_path)
+
+
+class _ManifestInventory:
+    """Re-iterable disk spool for admitted manifests with bounded memory."""
+
+    def __init__(self, paths: Iterable[Path]) -> None:
+        self._stream = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
+        self._count = 0
+        for path in paths:
+            self._stream.write(path.as_posix())
+            self._stream.write("\n")
+            self._count += 1
+        self._stream.flush()
+
+    def __iter__(self) -> Iterator[Path]:
+        self._stream.seek(0)
+        for line in self._stream:
+            yield Path(line.removesuffix("\n"))
+
+    def __len__(self) -> int:
+        return self._count
+
+    def close(self) -> None:
+        self._stream.close()
 
 
 @dataclass(frozen=True)
@@ -1440,7 +1916,11 @@ def _valid_physical_path_prefix(parts: tuple[str, ...]) -> bool:
     return True
 
 
-def _scan_run_files_no_follow(root_descriptor: int, issues: list[str]) -> list[Path]:
+def _index_run_files_no_follow(
+    root_descriptor: int,
+    index: _ValidationIndex,
+    issues: list[str],
+) -> None:
     flags = (
         os.O_RDONLY
         | os.O_CLOEXEC
@@ -1451,19 +1931,17 @@ def _scan_run_files_no_follow(root_descriptor: int, issues: list[str]) -> list[P
     try:
         runs_descriptor = os.open("runs", flags, dir_fd=root_descriptor)
     except FileNotFoundError:
-        return []
+        return
     except OSError:
         issues.append("runs/[invalid]: invalid v2 retained-run path")
-        return []
+        return
 
-    by_relative: dict[str, Path] = {}
-    entry_count = 1
-    file_count = 0
     invalid_layout = False
     stopped = False
+    collision = False
 
     def walk(directory_descriptor: int, parent_parts: tuple[str, ...]) -> None:
-        nonlocal entry_count, file_count, invalid_layout, stopped
+        nonlocal collision, invalid_layout, stopped
         if stopped or _issues_full(issues):
             return
         try:
@@ -1472,11 +1950,12 @@ def _scan_run_files_no_follow(root_descriptor: int, issues: list[str]) -> list[P
             invalid_layout = True
             return
         with iterator:
+            directory_entries = 0
             for entry in iterator:
                 if stopped or _issues_full(issues):
                     break
-                entry_count += 1
-                if entry_count > MAX_DISCOVERY_ENTRIES:
+                directory_entries += 1
+                if directory_entries > MAX_DIRECTORY_ENTRIES:
                     issues.append(DISCOVERY_LIMIT_ISSUE)
                     stopped = True
                     break
@@ -1503,12 +1982,11 @@ def _scan_run_files_no_follow(root_descriptor: int, issues: list[str]) -> list[P
                     if len(child_parts) != RUN_ARTIFACT_PATH_COMPONENT_COUNT:
                         invalid_layout = True
                         continue
-                    file_count += 1
-                    if file_count > MAX_DISCOVERY_FILES:
-                        issues.append(DISCOVERY_LIMIT_ISSUE)
-                        stopped = True
-                        break
-                    by_relative.setdefault(relative.as_posix(), relative)
+                    parsed = _parse_physical_artifact_path(relative)
+                    if parsed is None:
+                        invalid_layout = True
+                        continue
+                    collision = index.add_artifact(parsed) or collision
                     continue
 
                 if not stat.S_ISDIR(
@@ -1534,33 +2012,27 @@ def _scan_run_files_no_follow(root_descriptor: int, issues: list[str]) -> list[P
         walk(runs_descriptor, ("runs",))
     finally:
         os.close(runs_descriptor)
+    index.flush_discovery_page()
     if invalid_layout:
         issues.append("runs/[invalid]: invalid v2 retained-run path")
-    if stopped:
-        return []
-    return [by_relative[key] for key in sorted(by_relative)]
+    if collision:
+        issues.append(PATH_COLLISION_ISSUE)
 
 
-def _visible_run_files(
+def _index_visible_run_files(
     root: Path,
-    root_descriptor: int,
     visible_files: Iterable[Path] | None,
+    index: _ValidationIndex,
     issues: list[str],
-) -> list[Path]:
-    if visible_files is None:
-        return _scan_run_files_no_follow(root_descriptor, issues)
-
-    by_relative: dict[str, Path] = {}
+) -> None:
+    assert visible_files is not None
     outside_root = False
     invalid_path = False
     invalid_run_path = False
-    candidate_entry_count = 0
-    for visible_entry_count, supplied in enumerate(visible_files, start=1):
+    collision = False
+    for supplied in visible_files:
         if _issues_full(issues):
             break
-        if visible_entry_count > MAX_VISIBLE_FILE_ENTRIES:
-            issues.append(DISCOVERY_LIMIT_ISSUE)
-            return []
         try:
             supplied_value = os.fspath(supplied)
             if len(os.fsencode(supplied_value)) > MAX_VISIBLE_PATH_BYTES:
@@ -1591,24 +2063,33 @@ def _visible_run_files(
         if len(encoded_relative) > MAX_DISCOVERY_PATH_BYTES:
             invalid_run_path = True
             continue
-        candidate_entry_count += 1
-        if candidate_entry_count > MAX_DISCOVERY_ENTRIES:
-            issues.append(DISCOVERY_LIMIT_ISSUE)
-            return []
-        key = relative.as_posix()
-        if key in by_relative:
+        parsed = _parse_physical_artifact_path(relative)
+        if parsed is None:
+            invalid_run_path = True
             continue
-        if len(by_relative) >= MAX_DISCOVERY_FILES:
-            issues.append(DISCOVERY_LIMIT_ISSUE)
-            return []
-        by_relative[key] = relative
+        collision = index.add_artifact(parsed) or collision
+    index.flush_discovery_page()
     if outside_root:
         issues.append("visible file list contains a path outside the validation root")
     if invalid_path:
         issues.append("visible file list contains an invalid or oversized path")
     if invalid_run_path:
         issues.append("runs/[invalid]: invalid v2 retained-run path")
-    return [by_relative[key] for key in sorted(by_relative)]
+    if collision:
+        issues.append(PATH_COLLISION_ISSUE)
+
+
+def _populate_validation_index(
+    root: Path,
+    root_descriptor: int,
+    visible_files: Iterable[Path] | None,
+    index: _ValidationIndex,
+    issues: list[str],
+) -> None:
+    if visible_files is None:
+        _index_run_files_no_follow(root_descriptor, index, issues)
+    else:
+        _index_visible_run_files(root, visible_files, index, issues)
 
 
 def _discover_bundles(
@@ -1617,65 +2098,30 @@ def _discover_bundles(
     visible_files: Iterable[Path] | None,
     issues: list[str],
 ) -> list[Bundle]:
-    grouped: dict[tuple[str, str, str], dict[str, Path]] = defaultdict(dict)
-    physical_parts: dict[tuple[str, str, str], tuple[str, ...]] = {}
-    route_owners: dict[str, tuple[str, str, tuple[str, str, str]]] = {}
-    run_owners: dict[str, tuple[str, str, str]] = {}
-    invalid_layout = False
-    collision = False
-    for relative in _visible_run_files(root, root_descriptor, visible_files, issues):
-        if _issues_full(issues):
-            break
-        parsed = _parse_physical_artifact_path(relative)
-        if parsed is None:
-            invalid_layout = True
-            continue
-        key = (parsed.mode, parsed.window_component, parsed.run_id)
-        route_digest = "".join(parsed.window_route)
-        route_owner = route_owners.setdefault(
-            route_digest,
-            (parsed.mode, parsed.window_component, key),
-        )
-        if route_owner[:2] != (parsed.mode, parsed.window_component):
-            collision = True
-        run_owner = run_owners.setdefault(parsed.run_id, key)
-        if run_owner != key:
-            collision = True
-        if key not in grouped and len(grouped) >= MAX_BUNDLES:
-            issues.append(DISCOVERY_LIMIT_ISSUE)
-            return []
-        grouped[key][parsed.basename] = relative
-        physical_parts[key] = parsed.directory_parts
-
-    if invalid_layout:
-        issues.append("runs/[invalid]: invalid v2 retained-run path")
-    if collision:
-        issues.append(PATH_COLLISION_ISSUE)
-        return []
-    if DISCOVERY_LIMIT_ISSUE in issues:
-        return []
-
-    bundles: list[Bundle] = []
-    for (mode, window_component, run_id), files in sorted(grouped.items()):
-        if _issues_full(issues):
-            break
-        parts = physical_parts[(mode, window_component, run_id)]
-        label = "/".join(parts)
-        if frozenset(files) != ARTIFACT_BASENAME_SET:
-            issues.append(
-                f"{label}: run directory must contain exactly the eight required artifacts"
+    # The compatibility helper is used only for one-bundle publication commits.
+    # Whole-history validation consumes iter_bundle_pages() directly.
+    with tempfile.TemporaryDirectory(
+        prefix="retrospective-history-v2-discovery-"
+    ) as temporary:
+        index = _ValidationIndex(Path(temporary) / "index.sqlite3")
+        try:
+            _populate_validation_index(
+                root, root_descriptor, visible_files, index, issues
             )
-        bundles.append(
-            Bundle(
-                label,
-                mode,
-                window_component,
-                run_id,
-                files,
-                physical_parts=parts,
-            )
-        )
-    return bundles
+            pages = index.iter_bundle_pages()
+            first_page = next(pages, [])
+            if next(pages, None) is not None:
+                issues.append(VALIDATION_WORK_LIMIT_ISSUE)
+                return []
+            bundles = [bundle for _, bundle in first_page]
+            for bundle in bundles:
+                if frozenset(bundle.files) != ARTIFACT_BASENAME_SET:
+                    issues.append(
+                        f"{bundle.label}: run directory must contain exactly the eight required artifacts"
+                    )
+            return bundles
+        finally:
+            index.close()
 
 
 def _close_opened_artifacts(opened: dict[str, _OpenedArtifact]) -> None:
@@ -4083,10 +4529,7 @@ def _validate_revision_graph(bundles: list[Bundle], issues: list[str]) -> None:
             issues.append(f"runs: {family} revision graph contains a cycle")
 
 
-def _collect_trend_comparison_state(
-    bundle: Bundle,
-    snapshots: dict[str, _TrendSnapshot],
-) -> None:
+def _build_trend_snapshot(bundle: Bundle) -> _TrendSnapshot | None:
     manifest = bundle.documents.get("manifest.json")
     summary = bundle.documents.get("summary.json")
     trend = bundle.documents.get("trend_report.json")
@@ -4096,7 +4539,7 @@ def _collect_trend_comparison_state(
         or not isinstance(trend, dict)
         or manifest.get("publication_role") == "campaign_segment"
     ):
-        return
+        return None
     run_revision_ref = manifest.get("run_revision_ref")
     mode = manifest.get("mode")
     publication_time = _parse_coarse_timestamp(manifest.get("prepared_at"))
@@ -4114,7 +4557,7 @@ def _collect_trend_comparison_state(
         or not isinstance(strata, list)
         or len(strata) > 128
     ):
-        return
+        return None
     supersedes_run_revision_refs = supersession.get("supersedes_run_revision_refs")
     if (
         not isinstance(supersedes_run_revision_refs, list)
@@ -4125,11 +4568,11 @@ def _collect_trend_comparison_state(
             for reference in supersedes_run_revision_refs
         )
     ):
-        return
+        return None
     window_start = _parse_coarse_timestamp(window.get("start"))
     window_end = _parse_coarse_timestamp(window.get("end"))
     if window_start is None or window_end is None or window_start >= window_end:
-        return
+        return None
     rates: dict[tuple[str, str, str], Decimal] = {}
     comparisons: list[_TrendComparison] = []
     for stratum in strata:
@@ -4203,7 +4646,7 @@ def _collect_trend_comparison_state(
                 metric_refs=tuple(metric_refs),
             )
 
-    snapshots[run_revision_ref] = _TrendSnapshot(
+    return _TrendSnapshot(
         label=bundle.label,
         run_revision_ref=run_revision_ref,
         mode=mode,
@@ -4215,6 +4658,15 @@ def _collect_trend_comparison_state(
         comparisons=tuple(comparisons),
         summary=summary_comparison,
     )
+
+
+def _collect_trend_comparison_state(
+    bundle: Bundle,
+    snapshots: dict[str, _TrendSnapshot],
+) -> None:
+    snapshot = _build_trend_snapshot(bundle)
+    if snapshot is not None:
+        snapshots[snapshot.run_revision_ref] = snapshot
 
 
 def _resolve_compatible_prior(
@@ -4373,9 +4825,923 @@ def _validate_trend_comparisons(
             )
 
 
+def _validate_indexed_run_supersession(
+    index: _ValidationIndex, issues: list[str]
+) -> None:
+    connection = index.connection
+    bundles = connection.execute(
+        """
+        SELECT bundle_id, label, mode, window_component, status,
+               supersession_reason
+        FROM bundle_facts
+        WHERE run_revision_ref IS NOT NULL
+        ORDER BY bundle_id
+        """
+    )
+    aggregate_families = {
+        "coverage": "coverage.json",
+        "summary": "summary.json",
+        "trend": "trend_report.json",
+    }
+    for bundle_id, label, mode, window_component, status, reason in bundles:
+        if _issues_full(issues):
+            return
+        target_refs = [
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT target_ref FROM run_supersession
+                WHERE bundle_id = ? ORDER BY target_ref
+                """,
+                (bundle_id,),
+            )
+        ]
+        resolved_targets: list[tuple[int, str, str, str | None]] = []
+        for target_ref in target_refs:
+            target_rows = connection.execute(
+                """
+                SELECT bundle_id, mode, window_component, status
+                FROM bundle_facts
+                WHERE run_revision_ref = ?
+                ORDER BY bundle_id LIMIT 2
+                """,
+                (target_ref,),
+            ).fetchall()
+            if len(target_rows) == 1:
+                resolved_targets.append(tuple(target_rows[0]))
+
+        for _target_id, target_mode, target_window, target_status in resolved_targets:
+            if (target_mode, target_window) != (mode, window_component):
+                issues.append(
+                    f"{label}/manifest.json: superseded run must share mode and window"
+                )
+            if reason == "backfill" and target_status != "partial":
+                issues.append(
+                    f"{label}/manifest.json: backfill predecessor must be partial"
+                )
+            if status == "partial" and target_status in FULL_PUBLICATION_STATUSES:
+                issues.append(
+                    f"{label}/manifest.json: partial revision must not supersede a full run"
+                )
+
+        if not resolved_targets or len(resolved_targets) != len(target_refs):
+            continue
+        for family, basename in aggregate_families.items():
+            current_predecessors = {
+                row[0]
+                for row in connection.execute(
+                    """
+                    SELECT DISTINCT p.predecessor_ref
+                    FROM revisions AS r
+                    JOIN revision_predecessors AS p ON p.revision_id = r.id
+                    WHERE r.bundle_id = ? AND r.family = ?
+                    """,
+                    (bundle_id, family),
+                )
+            }
+            expected = {
+                row[0]
+                for target_id, *_ in resolved_targets
+                for row in connection.execute(
+                    """
+                    SELECT current_ref FROM revisions
+                    WHERE bundle_id = ? AND family = ?
+                    """,
+                    (target_id, family),
+                )
+            }
+            if current_predecessors != expected:
+                issues.append(
+                    f"{label}/{basename}: aggregate predecessor revisions must match manifest run supersession"
+                )
+            has_initial = connection.execute(
+                """
+                SELECT 1 FROM revisions
+                WHERE bundle_id = ? AND family = ? AND kind = 'initial'
+                LIMIT 1
+                """,
+                (bundle_id, family),
+            ).fetchone()
+            if target_refs and has_initial is not None:
+                issues.append(
+                    f"{label}/{basename}: superseding aggregate revision must not be initial"
+                )
+
+
+def _compute_indexed_campaign_segment_root(
+    campaign_ref: str,
+    segment_count: int,
+    segments: Iterable[tuple[int, str, str]],
+) -> str:
+    if not isinstance(campaign_ref, str) or not _is_int(segment_count):
+        raise TypeError("campaign root inputs are invalid")
+    hasher = hashlib.sha256()
+    hasher.update(CAMPAIGN_SEGMENT_DOMAIN_TAG)
+    _update_typed_frame(hasher, b"C", campaign_ref.encode("ascii"))
+    _update_typed_frame(hasher, b"N", segment_count.to_bytes(8, "big"))
+    observed = 0
+    for observed, (ordinal, run_ref, bundle_digest) in enumerate(segments, start=1):
+        if (
+            ordinal != observed
+            or not isinstance(run_ref, str)
+            or not isinstance(bundle_digest, str)
+        ):
+            raise ValueError("campaign segment coordinates are invalid")
+        _update_typed_frame(hasher, b"O", ordinal.to_bytes(8, "big"))
+        _update_typed_frame(hasher, b"R", run_ref.encode("ascii"))
+        _update_typed_frame(hasher, b"D", bundle_digest.encode("ascii"))
+    if observed != segment_count:
+        raise ValueError("campaign segment cardinality is invalid")
+    return f"campaign_segment_root_v2:sha256:{hasher.hexdigest()}"
+
+
+def _validate_one_indexed_campaign(
+    index: _ValidationIndex,
+    campaign_ref: str,
+    issues: list[str],
+) -> None:
+    connection = index.connection
+    coordinates = connection.execute(
+        """
+        SELECT COUNT(*) FROM (
+            SELECT DISTINCT mode, window_component, campaign_reason
+            FROM bundle_facts WHERE campaign_ref = ?
+        )
+        """,
+        (campaign_ref,),
+    ).fetchone()[0]
+    if coordinates != 1:
+        issues.append(
+            "runs: campaign bundles must share mode, window, and campaign reason"
+        )
+
+    root_count = connection.execute(
+        """
+        SELECT COUNT(*) FROM bundle_facts
+        WHERE campaign_ref = ? AND publication_role = 'campaign_root'
+        """,
+        (campaign_ref,),
+    ).fetchone()[0]
+    segment_count_actual = connection.execute(
+        """
+        SELECT COUNT(*) FROM bundle_facts
+        WHERE campaign_ref = ? AND publication_role = 'campaign_segment'
+        """,
+        (campaign_ref,),
+    ).fetchone()[0]
+    if root_count > 1:
+        issues.append("runs: campaign must contain at most one campaign root")
+    if root_count and not segment_count_actual:
+        issues.append("runs: campaign root must not exist without campaign segments")
+        return
+    if not segment_count_actual:
+        return
+
+    segment_counts = [
+        row[0]
+        for row in connection.execute(
+            """
+            SELECT DISTINCT campaign_segment_count FROM bundle_facts
+            WHERE campaign_ref = ?
+              AND publication_role = 'campaign_segment'
+              AND campaign_segment_count IS NOT NULL
+            ORDER BY campaign_segment_count
+            """,
+            (campaign_ref,),
+        )
+    ]
+    root_counts = [
+        row[0]
+        for row in connection.execute(
+            """
+            SELECT DISTINCT campaign_segment_count FROM bundle_facts
+            WHERE campaign_ref = ?
+              AND publication_role = 'campaign_root'
+              AND campaign_segment_count IS NOT NULL
+            ORDER BY campaign_segment_count
+            """,
+            (campaign_ref,),
+        )
+    ]
+    if len(segment_counts) != 1 or (root_count and root_counts != segment_counts):
+        issues.append("runs: campaign segment counts must agree with the campaign root")
+        return
+    segment_count = segment_counts[0]
+
+    ordinal_count, ordinal_distinct, minimum, maximum = connection.execute(
+        """
+        SELECT COUNT(segment_ordinal), COUNT(DISTINCT segment_ordinal),
+               MIN(segment_ordinal), MAX(segment_ordinal)
+        FROM bundle_facts
+        WHERE campaign_ref = ? AND publication_role = 'campaign_segment'
+        """,
+        (campaign_ref,),
+    ).fetchone()
+    required_count = segment_count if root_count else segment_count_actual
+    invalid_ordinals = (
+        ordinal_count != segment_count_actual
+        or ordinal_distinct != segment_count_actual
+        or minimum != 1
+        or maximum != required_count
+        or segment_count_actual != required_count
+    )
+    if invalid_ordinals:
+        issues.append("runs: campaign segments must cover every unique bounded ordinal")
+
+    duplicate_tree_ref = connection.execute(
+        """
+        SELECT 1
+        FROM campaign_tree_refs AS refs
+        JOIN bundle_facts AS facts ON facts.bundle_id = refs.bundle_id
+        WHERE facts.campaign_ref = ?
+          AND facts.publication_role = 'campaign_segment'
+        GROUP BY refs.ref_kind, refs.tree_ref
+        HAVING COUNT(*) > 1
+        LIMIT 1
+        """,
+        (campaign_ref,),
+    ).fetchone()
+    if duplicate_tree_ref is not None:
+        issues.append("runs: campaign tree roots must be unique across segments")
+
+    generations = connection.execute(
+        """
+        SELECT COUNT(DISTINCT generation_ref)
+        FROM bundle_facts
+        WHERE campaign_ref = ? AND generation_ref IS NOT NULL
+        """,
+        (campaign_ref,),
+    ).fetchone()[0]
+    missing_generation = connection.execute(
+        """
+        SELECT 1 FROM bundle_facts
+        WHERE campaign_ref = ? AND generation_ref IS NULL
+        LIMIT 1
+        """,
+        (campaign_ref,),
+    ).fetchone()
+    if generations != 1 or missing_generation is not None:
+        issues.append("runs: campaign bundles must bind one quarantine generation")
+
+    if root_count == 1 and not invalid_ordinals:
+        declared_root = connection.execute(
+            """
+            SELECT campaign_segment_root FROM bundle_facts
+            WHERE campaign_ref = ? AND publication_role = 'campaign_root'
+            LIMIT 1
+            """,
+            (campaign_ref,),
+        ).fetchone()[0]
+        if (
+            not isinstance(declared_root, str)
+            or CAMPAIGN_SEGMENT_ROOT_RE.fullmatch(declared_root) is None
+        ):
+            issues.append(
+                "runs: campaign_segment_root_v2 is invalid on the campaign root"
+            )
+            return
+        segment_rows = connection.execute(
+            """
+            SELECT segment_ordinal, run_ref, bundle_digest
+            FROM bundle_facts
+            WHERE campaign_ref = ? AND publication_role = 'campaign_segment'
+            ORDER BY segment_ordinal
+            """,
+            (campaign_ref,),
+        )
+        try:
+            expected_root = _compute_indexed_campaign_segment_root(
+                campaign_ref, segment_count, segment_rows
+            )
+        except (TypeError, ValueError, UnicodeEncodeError, OverflowError):
+            issues.append("runs: campaign segment commitments cannot be canonicalized")
+        else:
+            if declared_root != expected_root:
+                issues.append(
+                    "runs: campaign_segment_root_v2 does not bind the ordered segment run refs and bundle digests"
+                )
+
+
+def _validate_indexed_campaign_consistency(
+    index: _ValidationIndex, issues: list[str]
+) -> None:
+    cursor_ref: str | None = None
+    while not _issues_full(issues):
+        if cursor_ref is None:
+            rows = index.connection.execute(
+                """
+                SELECT DISTINCT campaign_ref FROM bundle_facts
+                WHERE campaign_ref IS NOT NULL
+                ORDER BY campaign_ref LIMIT ?
+                """,
+                (MAX_INDEX_QUERY_ROWS,),
+            ).fetchall()
+        else:
+            rows = index.connection.execute(
+                """
+                SELECT DISTINCT campaign_ref FROM bundle_facts
+                WHERE campaign_ref > ?
+                ORDER BY campaign_ref LIMIT ?
+                """,
+                (cursor_ref, MAX_INDEX_QUERY_ROWS),
+            ).fetchall()
+        if not rows:
+            return
+        for (campaign_ref,) in rows:
+            _validate_one_indexed_campaign(index, campaign_ref, issues)
+            if _issues_full(issues):
+                return
+        cursor_ref = rows[-1][0]
+
+
+def _validate_indexed_campaign_revision_ownership(
+    index: _ValidationIndex, issues: list[str]
+) -> None:
+    connection = index.connection
+
+    invalid_segment_revisions = connection.execute(
+        """
+        SELECT DISTINCT facts.label, revisions.family
+        FROM bundle_facts AS facts
+        JOIN revisions ON revisions.bundle_id = facts.bundle_id
+        LEFT JOIN revision_predecessors AS predecessors
+          ON predecessors.revision_id = revisions.id
+        WHERE facts.publication_role = 'campaign_segment'
+          AND (revisions.kind != 'initial' OR predecessors.revision_id IS NOT NULL)
+        ORDER BY facts.label, revisions.family
+        """
+    )
+    for label, family in invalid_segment_revisions:
+        if _issues_full(issues):
+            return
+        if family in CAMPAIGN_SEGMENT_REVISION_FAMILIES:
+            issues.append(
+                f"{label}: campaign segment {family} revision must be initial and predecessor-free"
+            )
+
+    invalid_segment_manifest_targets = connection.execute(
+        """
+        SELECT DISTINCT facts.label, targets.family
+        FROM bundle_facts AS facts
+        JOIN manifest_supersession AS targets
+          ON targets.bundle_id = facts.bundle_id
+        WHERE facts.publication_role = 'campaign_segment'
+        ORDER BY facts.label, targets.family
+        """
+    )
+    for label, family in invalid_segment_manifest_targets:
+        if _issues_full(issues):
+            return
+        issues.append(
+            f"{label}: campaign segment {family} revision must be initial and predecessor-free"
+        )
+
+    for (label,) in connection.execute(
+        """
+        SELECT label FROM bundle_facts
+        WHERE publication_role = 'campaign_segment'
+          AND segment_has_head_successor = 1
+        ORDER BY label
+        """
+    ):
+        if _issues_full(issues):
+            return
+        issues.append(
+            f"{label}/manifest.json: campaign segment must not propose retained state or head successors"
+        )
+
+    invalid_revision_targets = connection.execute(
+        """
+        SELECT DISTINCT current_facts.label, current_facts.publication_role,
+                        current_revision.family
+        FROM bundle_facts AS current_facts
+        JOIN revisions AS current_revision
+          ON current_revision.bundle_id = current_facts.bundle_id
+        JOIN revision_predecessors AS predecessor
+          ON predecessor.revision_id = current_revision.id
+        JOIN revisions AS segment_revision
+          ON segment_revision.family = current_revision.family
+         AND segment_revision.current_ref = predecessor.predecessor_ref
+        JOIN bundle_facts AS segment_facts
+          ON segment_facts.bundle_id = segment_revision.bundle_id
+        WHERE current_facts.publication_role IN ('standalone', 'campaign_root')
+          AND segment_facts.publication_role = 'campaign_segment'
+        ORDER BY current_facts.label, current_revision.family
+        """
+    )
+    for label, role, family in invalid_revision_targets:
+        if _issues_full(issues):
+            return
+        if family in CAMPAIGN_SEGMENT_REVISION_FAMILIES:
+            issues.append(
+                f"{label}: {role} {family} revision must not target a campaign-segment-owned predecessor"
+            )
+
+    invalid_manifest_targets = connection.execute(
+        """
+        SELECT DISTINCT current_facts.label, current_facts.publication_role,
+                        target.family
+        FROM bundle_facts AS current_facts
+        JOIN manifest_supersession AS target
+          ON target.bundle_id = current_facts.bundle_id
+        JOIN revisions AS segment_revision
+          ON segment_revision.family = target.family
+         AND segment_revision.current_ref = target.target_ref
+        JOIN bundle_facts AS segment_facts
+          ON segment_facts.bundle_id = segment_revision.bundle_id
+        WHERE current_facts.publication_role IN ('standalone', 'campaign_root')
+          AND segment_facts.publication_role = 'campaign_segment'
+        ORDER BY current_facts.label, target.family
+        """
+    )
+    for label, role, family in invalid_manifest_targets:
+        if _issues_full(issues):
+            return
+        issues.append(
+            f"{label}: {role} {family} revision must not target a campaign-segment-owned predecessor"
+        )
+
+    invalid_head_targets = connection.execute(
+        """
+        SELECT DISTINCT current_facts.label, current_facts.publication_role,
+                        segment_revision.family
+        FROM bundle_facts AS current_facts
+        JOIN head_binding_refs AS binding
+          ON binding.bundle_id = current_facts.bundle_id
+        JOIN revisions AS segment_revision
+          ON segment_revision.current_ref = binding.binding_ref
+        JOIN bundle_facts AS segment_facts
+          ON segment_facts.bundle_id = segment_revision.bundle_id
+        WHERE current_facts.publication_role IN ('standalone', 'campaign_root')
+          AND segment_facts.publication_role = 'campaign_segment'
+        ORDER BY current_facts.label, segment_revision.family
+        """
+    )
+    for label, role, family in invalid_head_targets:
+        if _issues_full(issues):
+            return
+        if family in CAMPAIGN_SEGMENT_REVISION_FAMILIES:
+            issues.append(
+                f"{label}: {role} {family} revision must not target a campaign-segment-owned predecessor"
+            )
+
+
+def _validate_indexed_revision_relationships(
+    index: _ValidationIndex, issues: list[str]
+) -> bool:
+    """Validate cross-run edges and return whether revision IDs are unique."""
+
+    connection = index.connection
+    duplicate_groups = connection.execute(
+        """
+        SELECT family, current_ref FROM revisions
+        GROUP BY family, current_ref HAVING COUNT(*) > 1
+        ORDER BY family, current_ref
+        """
+    )
+    unique = True
+    for family, current_ref in duplicate_groups:
+        unique = False
+        for (label,) in connection.execute(
+            """
+            SELECT label FROM revisions
+            WHERE family = ? AND current_ref = ? ORDER BY label
+            """,
+            (family, current_ref),
+        ):
+            if _issues_full(issues):
+                return False
+            issues.append(
+                f"{label}: {family} revision reference is not globally unique"
+            )
+
+    missing_predecessors = connection.execute(
+        """
+        SELECT revision.label, revision.family
+        FROM revision_predecessors AS predecessor
+        JOIN revisions AS revision ON revision.id = predecessor.revision_id
+        LEFT JOIN revisions AS target
+          ON target.family = predecessor.family
+         AND target.current_ref = predecessor.predecessor_ref
+        WHERE target.id IS NULL
+        ORDER BY revision.label, predecessor.predecessor_ref
+        """
+    )
+    for label, family in missing_predecessors:
+        if _issues_full(issues):
+            return unique
+        issues.append(
+            f"{label}: {family} predecessor revision is not present in retained v2 history"
+        )
+
+    invalid_edges = connection.execute(
+        """
+        SELECT revision.label, revision.family,
+               revision.transaction_ref = target.transaction_ref AS same_transaction,
+               revision.entity_ref, target.entity_ref, revision.kind
+        FROM revision_predecessors AS predecessor
+        JOIN revisions AS revision ON revision.id = predecessor.revision_id
+        JOIN revisions AS target
+          ON target.family = predecessor.family
+         AND target.current_ref = predecessor.predecessor_ref
+        ORDER BY revision.label, predecessor.predecessor_ref
+        """
+    )
+    for (
+        label,
+        family,
+        same_transaction,
+        entity_ref,
+        target_entity_ref,
+        kind,
+    ) in invalid_edges:
+        if _issues_full(issues):
+            return unique
+        if same_transaction:
+            issues.append(
+                f"{label}: {family} predecessor must come from an earlier run"
+            )
+        if (
+            entity_ref is not None
+            and target_entity_ref is not None
+            and kind not in {"split", "merge", "identity_reconciliation"}
+            and entity_ref != target_entity_ref
+        ):
+            issues.append(
+                f"{label}: ordinary revision must preserve its entity reference"
+            )
+
+    closure_groups = connection.execute(
+        """
+        SELECT predecessor.family, predecessor.predecessor_ref,
+               COUNT(*) AS closer_count,
+               COUNT(DISTINCT revision.transaction_ref) AS transaction_count,
+               MIN(revision.kind = 'split') AS all_split
+        FROM revision_predecessors AS predecessor
+        JOIN revisions AS revision ON revision.id = predecessor.revision_id
+        GROUP BY predecessor.family, predecessor.predecessor_ref
+        HAVING transaction_count > 1 OR (closer_count > 1 AND all_split = 0)
+        ORDER BY predecessor.family, predecessor.predecessor_ref
+        """
+    )
+    for family, predecessor_ref, _count, transaction_count, all_split in closure_groups:
+        if _issues_full(issues):
+            return unique
+        for (label,) in connection.execute(
+            """
+            SELECT revision.label
+            FROM revision_predecessors AS predecessor
+            JOIN revisions AS revision ON revision.id = predecessor.revision_id
+            WHERE predecessor.family = ? AND predecessor.predecessor_ref = ?
+            ORDER BY revision.label
+            """,
+            (family, predecessor_ref),
+        ):
+            if _issues_full(issues):
+                return unique
+            if transaction_count > 1:
+                issues.append(
+                    f"{label}: {family} predecessor revision was already closed by another run"
+                )
+            elif not all_split:
+                issues.append(
+                    f"{label}: {family} predecessor may have multiple successors only in one split"
+                )
+    return unique
+
+
+def _validate_indexed_revision_cycles(
+    index: _ValidationIndex, issues: list[str]
+) -> None:
+    connection = index.connection
+    families = [
+        row[0]
+        for row in connection.execute(
+            "SELECT DISTINCT family FROM revisions ORDER BY family"
+        )
+    ]
+    for family in families:
+        if _issues_full(issues):
+            return
+        connection.executescript(
+            """
+            DROP TABLE IF EXISTS temp.graph_work;
+            DROP TABLE IF EXISTS temp.graph_ready;
+            CREATE TEMP TABLE graph_work (
+                revision_id INTEGER PRIMARY KEY,
+                current_ref TEXT NOT NULL,
+                remaining INTEGER NOT NULL,
+                processed INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TEMP TABLE graph_ready (
+                revision_id INTEGER PRIMARY KEY
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO graph_work(revision_id, current_ref, remaining)
+            SELECT revision.id, revision.current_ref,
+                   COUNT(target.id)
+            FROM revisions AS revision
+            LEFT JOIN revision_predecessors AS predecessor
+              ON predecessor.revision_id = revision.id
+            LEFT JOIN revisions AS target
+              ON target.family = predecessor.family
+             AND target.current_ref = predecessor.predecessor_ref
+            WHERE revision.family = ?
+            GROUP BY revision.id, revision.current_ref
+            """,
+            (family,),
+        )
+        connection.execute(
+            "INSERT INTO graph_ready SELECT revision_id FROM graph_work WHERE remaining = 0"
+        )
+        total = connection.execute("SELECT COUNT(*) FROM graph_work").fetchone()[0]
+        processed = 0
+        while True:
+            ready = connection.execute(
+                """
+                SELECT revision_id, current_ref FROM graph_work
+                WHERE revision_id IN (SELECT revision_id FROM graph_ready)
+                ORDER BY revision_id LIMIT ?
+                """,
+                (MAX_INDEX_QUERY_ROWS,),
+            ).fetchall()
+            if not ready:
+                break
+            for revision_id, current_ref in ready:
+                connection.execute(
+                    "DELETE FROM graph_ready WHERE revision_id = ?", (revision_id,)
+                )
+                connection.execute(
+                    "UPDATE graph_work SET processed = 1 WHERE revision_id = ?",
+                    (revision_id,),
+                )
+                processed += 1
+                successors = connection.execute(
+                    """
+                    SELECT DISTINCT successor.id
+                    FROM revision_predecessors AS predecessor
+                    JOIN revisions AS successor
+                      ON successor.id = predecessor.revision_id
+                    JOIN graph_work AS work ON work.revision_id = successor.id
+                    WHERE predecessor.family = ?
+                      AND predecessor.predecessor_ref = ?
+                      AND work.processed = 0
+                    ORDER BY successor.id
+                    """,
+                    (family, current_ref),
+                )
+                while True:
+                    successor_page = successors.fetchmany(MAX_INDEX_QUERY_ROWS)
+                    if not successor_page:
+                        break
+                    for (successor_id,) in successor_page:
+                        connection.execute(
+                            """
+                            UPDATE graph_work SET remaining = remaining - 1
+                            WHERE revision_id = ?
+                            """,
+                            (successor_id,),
+                        )
+                        remaining = connection.execute(
+                            """
+                            SELECT remaining FROM graph_work WHERE revision_id = ?
+                            """,
+                            (successor_id,),
+                        ).fetchone()[0]
+                        if remaining == 0:
+                            connection.execute(
+                                "INSERT OR IGNORE INTO graph_ready VALUES (?)",
+                                (successor_id,),
+                            )
+        if processed != total:
+            issues.append(f"runs: {family} revision graph contains a cycle")
+
+
+def _validate_indexed_revision_graph(
+    index: _ValidationIndex, issues: list[str]
+) -> None:
+    unique = _validate_indexed_revision_relationships(index, issues)
+    if unique and not _issues_full(issues):
+        _validate_indexed_revision_cycles(index, issues)
+
+
+def _decode_indexed_trend_snapshot(payload: str) -> _TrendSnapshot:
+    value = json.loads(payload)
+    summary_value = value["summary"]
+    summary = (
+        None
+        if summary_value is None
+        else _SummaryComparison(
+            prior_run_revision_ref=summary_value["prior_run_revision_ref"],
+            direction=summary_value["direction"],
+            metric_refs=tuple(summary_value["metric_refs"]),
+        )
+    )
+    return _TrendSnapshot(
+        label=value["label"],
+        run_revision_ref=value["run_revision_ref"],
+        mode=value["mode"],
+        publication_time=dt.datetime.fromisoformat(value["publication_time"]),
+        window_start=dt.datetime.fromisoformat(value["window_start"]),
+        window_end=dt.datetime.fromisoformat(value["window_end"]),
+        supersedes_run_revision_refs=tuple(value["supersedes_run_revision_refs"]),
+        rates={
+            (policy_ref, model_ref, metric_id): Decimal(rate)
+            for policy_ref, model_ref, metric_id, rate in value["rates"]
+        },
+        comparisons=tuple(
+            _TrendComparison(
+                metric_ref=comparison["metric_ref"],
+                key=tuple(comparison["key"]),
+                prior_run_revision_ref=comparison["prior_run_revision_ref"],
+                claimed_delta=Decimal(comparison["claimed_delta"]),
+            )
+            for comparison in value["comparisons"]
+        ),
+        summary=summary,
+    )
+
+
+def _resolve_indexed_compatible_prior(
+    index: _ValidationIndex,
+    current: _TrendSnapshot,
+    prior_ref: str,
+    artifact: str,
+    issues: list[str],
+) -> _TrendSnapshot | None:
+    rows = index.connection.execute(
+        """
+        SELECT payload FROM trend_snapshots
+        WHERE run_revision_ref = ? ORDER BY id LIMIT 2
+        """,
+        (prior_ref,),
+    ).fetchall()
+    if len(rows) != 1 or prior_ref == current.run_revision_ref:
+        issues.append(
+            f"{current.label}/{artifact}: prior run revision is not present as an eligible trend observation"
+        )
+        return None
+    prior = _decode_indexed_trend_snapshot(rows[0][0])
+    if prior.publication_time > current.publication_time:
+        issues.append(
+            f"{current.label}/{artifact}: prior run was not published by the current publication point"
+        )
+        return None
+    if (
+        prior.mode != current.mode
+        or prior.window_start >= current.window_start
+        or prior.window_end > current.window_start
+    ):
+        issues.append(
+            f"{current.label}/{artifact}: prior run must share mode and use a strictly earlier non-overlapping window"
+        )
+        return None
+    superseders = index.connection.execute(
+        """
+        SELECT snapshot.payload
+        FROM trend_supersession AS supersession
+        JOIN trend_snapshots AS snapshot
+          ON snapshot.id = supersession.snapshot_id
+        WHERE supersession.predecessor_ref = ?
+        ORDER BY snapshot.id
+        """,
+        (prior_ref,),
+    )
+    for (payload,) in superseders:
+        replacement = _decode_indexed_trend_snapshot(payload)
+        if replacement.publication_time <= current.publication_time:
+            issues.append(
+                f"{current.label}/{artifact}: prior run revision was not active at the current publication point"
+            )
+            return None
+    return prior
+
+
+def _validate_indexed_trend_snapshot(
+    index: _ValidationIndex,
+    current: _TrendSnapshot,
+    issues: list[str],
+) -> None:
+    for comparison in current.comparisons:
+        if _issues_full(issues):
+            return
+        prior = _resolve_indexed_compatible_prior(
+            index,
+            current,
+            comparison.prior_run_revision_ref,
+            "trend_report.json",
+            issues,
+        )
+        if prior is None:
+            continue
+        exact_delta = _exact_comparison_delta(current, prior, comparison)
+        if exact_delta is None:
+            issues.append(
+                f"{current.label}/trend_report.json: normalized change requires an available compatible prior metric"
+            )
+            continue
+        if comparison.claimed_delta != exact_delta:
+            issues.append(
+                f"{current.label}/trend_report.json: normalized change delta must exactly match the compatible prior metric"
+            )
+
+    summary = current.summary
+    if summary is None or _issues_full(issues):
+        return
+    prior = _resolve_indexed_compatible_prior(
+        index,
+        current,
+        summary.prior_run_revision_ref,
+        "summary.json",
+        issues,
+    )
+    comparisons_by_ref: dict[str, list[_TrendComparison]] = defaultdict(list)
+    for comparison in current.comparisons:
+        comparisons_by_ref[comparison.metric_ref].append(comparison)
+
+    exact_directions: list[str] = []
+    complete = prior is not None
+    for metric_ref in summary.metric_refs:
+        matches = comparisons_by_ref.get(metric_ref, [])
+        if len(matches) != 1:
+            issues.append(
+                f"{current.label}/summary.json: metric_refs must resolve uniquely to available normalized trend comparisons"
+            )
+            complete = False
+            continue
+        comparison = matches[0]
+        if comparison.prior_run_revision_ref != summary.prior_run_revision_ref:
+            issues.append(
+                f"{current.label}/summary.json: change_from_prior must bind to the same prior comparison as trend_report.json"
+            )
+            complete = False
+            continue
+        if prior is None:
+            complete = False
+            continue
+        exact_delta = _exact_comparison_delta(current, prior, comparison)
+        if exact_delta is None:
+            issues.append(
+                f"{current.label}/summary.json: referenced trend comparison lacks a compatible prior metric"
+            )
+            complete = False
+            continue
+        exact_directions.append(_trend_direction(comparison.key[2], exact_delta))
+
+    if not complete or not exact_directions:
+        return
+    direction_set = set(exact_directions)
+    if {"improved", "regressed"}.issubset(direction_set):
+        issues.append(
+            f"{current.label}/summary.json: change_from_prior cannot collapse mixed exact normalized deltas"
+        )
+        return
+    if "improved" in direction_set:
+        expected_direction = "improved"
+    elif "regressed" in direction_set:
+        expected_direction = "regressed"
+    else:
+        expected_direction = "unchanged"
+    if summary.direction != expected_direction:
+        issues.append(
+            f"{current.label}/summary.json: change_from_prior direction must match exact normalized trend deltas"
+        )
+
+
+def _validate_indexed_trend_comparisons(
+    index: _ValidationIndex, issues: list[str]
+) -> None:
+    cursor = index.connection.execute("SELECT payload FROM trend_snapshots ORDER BY id")
+    while not _issues_full(issues):
+        rows = cursor.fetchmany(MAX_INDEX_QUERY_ROWS)
+        if not rows:
+            return
+        for (payload,) in rows:
+            _validate_indexed_trend_snapshot(
+                index, _decode_indexed_trend_snapshot(payload), issues
+            )
+            if _issues_full(issues):
+                return
+
+
+def _validate_indexed_history(index: _ValidationIndex, issues: list[str]) -> None:
+    _validate_indexed_run_supersession(index, issues)
+    if not _issues_full(issues):
+        _validate_indexed_campaign_consistency(index, issues)
+    if not _issues_full(issues):
+        _validate_indexed_campaign_revision_ownership(index, issues)
+    if not _issues_full(issues):
+        _validate_indexed_trend_comparisons(index, issues)
+    if not _issues_full(issues):
+        _validate_indexed_revision_graph(index, issues)
+
+
 def validate_v2_runs_with_inventory(
     root: Path, visible_files: Iterable[Path] | None = None
-) -> tuple[list[str], tuple[Path, ...]]:
+) -> tuple[list[str], _ManifestInventory | tuple[Path, ...]]:
     """Validate immutable Session Retrospective v2 retained-run bundles.
 
     Diagnostics intentionally avoid JSON values and unvalidated path components.
@@ -4401,50 +5767,57 @@ def validate_v2_runs_with_inventory(
             issues.append(PRIVACY_UNAVAILABLE_ISSUE)
             return sorted(issues), ()
 
-        bundles = _discover_bundles(root, root_descriptor, visible_files, issues)
-        revision_count = 0
-        work_limit_reached = False
-        trend_snapshots: dict[str, _TrendSnapshot] = {}
-        for bundle in bundles:
-            if _issues_full(issues):
-                break
-            budget = _ReadBudget(MAX_BUNDLE_ARTIFACT_BYTES)
-            _validate_bundle(
-                bundle,
-                root_descriptor,
-                issues,
-                validators,
-                privacy_validator,
-                budget,
-            )
-            revision_count += len(bundle.revisions)
-            _collect_trend_comparison_state(bundle, trend_snapshots)
-            bundle.raw.clear()
-            bundle.documents.clear()
-            bundle.rows.clear()
-            if revision_count > MAX_HISTORY_REVISIONS:
+        with tempfile.TemporaryDirectory(
+            prefix="retrospective-history-v2-index-"
+        ) as temporary:
+            index: _ValidationIndex | None = None
+            try:
+                index = _ValidationIndex(Path(temporary) / "history.sqlite3")
+                _populate_validation_index(
+                    root, root_descriptor, visible_files, index, issues
+                )
+                if PATH_COLLISION_ISSUE in issues or DISCOVERY_LIMIT_ISSUE in issues:
+                    return sorted(issues), ()
+                for page in index.iter_bundle_pages():
+                    if _issues_full(issues):
+                        break
+                    for bundle_id, bundle in page:
+                        if frozenset(bundle.files) != ARTIFACT_BASENAME_SET:
+                            issues.append(
+                                f"{bundle.label}: run directory must contain exactly the eight required artifacts"
+                            )
+                        budget = _ReadBudget(MAX_BUNDLE_ARTIFACT_BYTES)
+                        _validate_bundle(
+                            bundle,
+                            root_descriptor,
+                            issues,
+                            validators,
+                            privacy_validator,
+                            budget,
+                        )
+                        snapshot = _build_trend_snapshot(bundle)
+                        index.record_bundle(bundle_id, bundle)
+                        if snapshot is not None:
+                            index.record_trend_snapshot(bundle_id, snapshot)
+                        bundle.raw.clear()
+                        bundle.documents.clear()
+                        bundle.rows.clear()
+                        bundle.revisions.clear()
+                        if _issues_full(issues):
+                            break
+                    index.connection.commit()
+                if not _issues_full(issues):
+                    _validate_indexed_history(index, issues)
+                sorted_issues = sorted(issues)
+                if sorted_issues:
+                    return sorted_issues, ()
+                return [], _ManifestInventory(index.iter_manifest_paths())
+            except (OSError, sqlite3.Error):
                 issues.append(VALIDATION_WORK_LIMIT_ISSUE)
-                work_limit_reached = True
-                break
-        if not _issues_full(issues) and not work_limit_reached:
-            _validate_run_supersession(bundles, issues)
-        if not _issues_full(issues) and not work_limit_reached:
-            _validate_campaign_consistency(bundles, issues)
-        if not _issues_full(issues) and not work_limit_reached:
-            _validate_campaign_revision_ownership(bundles, issues)
-        if not _issues_full(issues) and not work_limit_reached:
-            _validate_trend_comparisons(trend_snapshots, issues)
-        if not _issues_full(issues) and not work_limit_reached:
-            _validate_revision_graph(bundles, issues)
-        sorted_issues = sorted(issues)
-        if sorted_issues:
-            return sorted_issues, ()
-        manifest_paths = tuple(
-            bundle.files["manifest.json"]
-            for bundle in bundles
-            if frozenset(bundle.files) == ARTIFACT_BASENAME_SET
-        )
-        return [], manifest_paths
+                return sorted(issues), ()
+            finally:
+                if index is not None:
+                    index.close()
     finally:
         os.close(root_descriptor)
 
@@ -4454,7 +5827,10 @@ def validate_v2_runs(
 ) -> list[str]:
     """Validate v2 runs without exposing the admitted manifest inventory."""
 
-    issues, _ = validate_v2_runs_with_inventory(root, visible_files)
+    issues, inventory = validate_v2_runs_with_inventory(root, visible_files)
+    close_inventory = getattr(inventory, "close", None)
+    if callable(close_inventory):
+        close_inventory()
     return issues
 
 

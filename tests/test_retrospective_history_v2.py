@@ -3021,7 +3021,7 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
                 self.assertEqual(MODULE.validate_v2_runs(root), [])
 
     def test_unrelated_visible_files_do_not_consume_v2_discovery_cap(self) -> None:
-        unrelated_count = MODULE.MAX_DISCOVERY_ENTRIES + 1
+        unrelated_count = MODULE.MAX_DISCOVERY_PAGE_FILES * 2 + 1
         visible_files = (
             Path("reports", f"infrastructure-{index:06x}.json")
             for index in range(unrelated_count)
@@ -3060,73 +3060,88 @@ class RetrospectiveHistoryV2Tests(unittest.TestCase):
         self.assertNotIn("short.json", rendered)
         self.assertNotIn("latest", rendered)
 
-    def test_v2_candidate_iterator_exceeding_discovery_cap_is_rejected(self) -> None:
-        candidate = (
-            physical_bundle_directory(
-                Path(), "daily", str(WINDOW["path_component"]), f"{1:064x}"
+    def test_duplicate_visible_candidates_do_not_expand_the_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            refs = write_bundle(root, 1)
+            candidates = tuple(sorted(refs.directory.iterdir()))
+            visible_files = (
+                candidate
+                for _ in range(MODULE.MAX_DISCOVERY_PAGE_FILES + 1)
+                for candidate in candidates
             )
-            / "manifest.json"
-        )
-        visible_files = (candidate for _ in range(MODULE.MAX_DISCOVERY_ENTRIES + 1))
 
-        with (
-            tempfile.TemporaryDirectory() as temp,
-            mock.patch.object(MODULE, "_load_schema_validators", return_value={}),
-            mock.patch.object(
-                MODULE, "_load_privacy_validator", return_value=lambda *_: []
-            ),
-        ):
-            issues = MODULE.validate_v2_runs(Path(temp), visible_files)
+            self.assertEqual(MODULE.validate_v2_runs(root, visible_files), [])
 
-        self.assertIn(MODULE.DISCOVERY_LIMIT_ISSUE, issues)
-
-    def test_visible_file_iterator_has_an_independent_overall_cap(self) -> None:
-        visible_files = (Path("reports", str(index)) for index in range(4))
-        with (
-            tempfile.TemporaryDirectory() as temp,
-            mock.patch.object(MODULE, "MAX_VISIBLE_FILE_ENTRIES", 3),
-            mock.patch.object(MODULE, "_load_schema_validators", return_value={}),
-            mock.patch.object(
-                MODULE, "_load_privacy_validator", return_value=lambda *_: []
-            ),
-        ):
-            issues = MODULE.validate_v2_runs(Path(temp), visible_files)
-
-        self.assertIn(MODULE.DISCOVERY_LIMIT_ISSUE, issues)
-
-    def test_discovery_file_and_bundle_work_is_bounded(self) -> None:
-        with self.subTest(limit="entries"):
+    def test_discovery_and_validation_pages_are_bounded_not_lifetime_caps(
+        self,
+    ) -> None:
+        with self.subTest(limit="directory"):
             with tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 write_bundle(root, 1)
-                with mock.patch.object(MODULE, "MAX_DISCOVERY_ENTRIES", 3):
+                with mock.patch.object(MODULE, "MAX_DIRECTORY_ENTRIES", 3):
                     issues = MODULE.validate_v2_runs(root)
                 self.assertIn(MODULE.DISCOVERY_LIMIT_ISSUE, issues)
 
-        with self.subTest(limit="files"):
+        with self.subTest(page="files"):
             with tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 write_bundle(root, 1)
+                write_bundle(root, 2)
                 with (
-                    mock.patch.object(MODULE, "MAX_DISCOVERY_FILES", 7),
+                    mock.patch.object(MODULE, "MAX_DISCOVERY_PAGE_FILES", 3),
                     mock.patch.object(
                         MODULE,
                         "_read_fd_bounded",
                         wraps=MODULE._read_fd_bounded,
                     ) as read,
                 ):
-                    issues = MODULE.validate_v2_runs(root)
-                self.assertIn(MODULE.DISCOVERY_LIMIT_ISSUE, issues)
-                read.assert_not_called()
+                    self.assertEqual(MODULE.validate_v2_runs(root), [])
+                self.assertGreater(read.call_count, 0)
 
-        with self.subTest(limit="bundles"):
+        with self.subTest(page="bundles"):
             with tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 write_bundle(root, 1)
                 write_bundle(root, 2)
-                with mock.patch.object(MODULE, "MAX_BUNDLES", 1):
-                    issues = MODULE.validate_v2_runs(root)
-                self.assertIn(MODULE.DISCOVERY_LIMIT_ISSUE, issues)
+                with mock.patch.object(MODULE, "MAX_BUNDLE_PAGE_SIZE", 1):
+                    self.assertEqual(MODULE.validate_v2_runs(root), [])
+
+    def test_more_than_512_valid_bundles_are_admitted_in_bounded_pages(self) -> None:
+        bundle_count = 513
+        page_size = 37
+        observed_page_sizes: list[int] = []
+        original_iter_pages = MODULE._ValidationIndex.iter_bundle_pages
+
+        def record_pages(index: object) -> object:
+            for page in original_iter_pages(index):
+                observed_page_sizes.append(len(page))
+                yield page
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for number in range(1, bundle_count + 1):
+                write_bundle(root, number)
+            with (
+                mock.patch.object(MODULE, "MAX_BUNDLE_PAGE_SIZE", page_size),
+                mock.patch.object(
+                    MODULE._ValidationIndex,
+                    "iter_bundle_pages",
+                    record_pages,
+                ),
+            ):
+                issues, manifests = MODULE.validate_v2_runs_with_inventory(root)
+
+        try:
+            self.assertEqual(issues, [])
+            self.assertEqual(len(manifests), bundle_count)
+            self.assertGreater(len(observed_page_sizes), 1)
+            self.assertLessEqual(max(observed_page_sizes), page_size)
+        finally:
+            close_inventory = getattr(manifests, "close", None)
+            if callable(close_inventory):
+                close_inventory()
 
     def test_diagnostic_count_is_strictly_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

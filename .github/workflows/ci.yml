@@ -15,8 +15,200 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  candidate-validation:
+    name: Immutable candidate validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      candidate_oid: ${{ steps.bind-candidate.outputs.candidate_oid }}
+    env:
+      CANDIDATE_OID: ${{ github.event.pull_request.head.sha || github.event.after }}
+      CANDIDATE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      CANDIDATE_ROOT: ${{ github.workspace }}/candidate-source
+      IMMUTABLE_CANDIDATE_ROOT: ${{ github.workspace }}/immutable-candidate
+    steps:
+      - name: Checkout immutable candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ${{ env.CANDIDATE_REPOSITORY }}
+          ref: ${{ env.CANDIDATE_OID }}
+          path: candidate-source
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Bind credential-free candidate tree
+        id: bind-candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$CANDIDATE_OID" in
+            ""|*[!0-9a-f]*)
+              echo "Candidate OID must be lowercase hexadecimal." >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#CANDIDATE_OID}" -ne 40 ] && [ "${#CANDIDATE_OID}" -ne 64 ]; then
+            echo "Candidate OID must be canonical." >&2
+            exit 1
+          fi
+          actual_oid="$(
+            git -C "$CANDIDATE_ROOT" rev-parse --verify --end-of-options \
+              "${CANDIDATE_OID}^{commit}"
+          )"
+          if [ "$actual_oid" != "$CANDIDATE_OID" ]; then
+            echo "Candidate checkout does not match the event OID." >&2
+            exit 1
+          fi
+          if git -C "$CANDIDATE_ROOT" config --local --get-regexp \
+            '^(http\..*\.extraheader|credential\.helper)$' >/dev/null 2>&1; then
+            echo "Candidate checkout retained Git credentials." >&2
+            exit 1
+          fi
+
+          install -d -m 700 "$IMMUTABLE_CANDIDATE_ROOT"
+          tar -C "$CANDIDATE_ROOT" --exclude=.git -cf - . |
+            tar -xf - -C "$IMMUTABLE_CANDIDATE_ROOT"
+          if [ -e "$IMMUTABLE_CANDIDATE_ROOT/.git" ]; then
+            echo "Immutable candidate export unexpectedly contains Git metadata." >&2
+            exit 1
+          fi
+          printf 'candidate_oid=%s\n' "$CANDIDATE_OID" >> "$GITHUB_OUTPUT"
+      - name: Set up candidate Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Install hash-pinned candidate dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          CANDIDATE_VENV="$RUNNER_TEMP/retrospective-history-v2-candidate-venv"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            python -I -m venv "$CANDIDATE_VENV"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            "$CANDIDATE_VENV/bin/python" -I -m pip install \
+              --disable-pip-version-check \
+              --no-input \
+              --only-binary=:all: \
+              --require-hashes \
+              --requirement "$IMMUTABLE_CANDIDATE_ROOT/requirements-v2.txt"
+          echo "CANDIDATE_PYTHON=$CANDIDATE_VENV/bin/python" >> "$GITHUB_ENV"
+      - name: Install checksum-pinned actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIONLINT_VERSION=1.7.12
+          ACTIONLINT_ARCHIVE="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          ACTIONLINT_SHA256=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT_ROOT="$RUNNER_TEMP/actionlint"
+          install -d -m 700 "$ACTIONLINT_ROOT"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$ACTIONLINT_ROOT/$ACTIONLINT_ARCHIVE" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${ACTIONLINT_ARCHIVE}"
+          printf '%s  %s\n' \
+            "$ACTIONLINT_SHA256" "$ACTIONLINT_ROOT/$ACTIONLINT_ARCHIVE" |
+            sha256sum --check --strict
+          tar -xzf "$ACTIONLINT_ROOT/$ACTIONLINT_ARCHIVE" -C "$ACTIONLINT_ROOT"
+          echo "ACTIONLINT=$ACTIONLINT_ROOT/actionlint" >> "$GITHUB_ENV"
+      - name: Validate candidate workflow schemas and public keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ACTIONLINT" -color=false "$IMMUTABLE_CANDIDATE_ROOT/.github/workflows/ci.yml"
+
+          env -i \
+            HOME="$RUNNER_TEMP/candidate-static-home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            ROOT="$IMMUTABLE_CANDIDATE_ROOT" \
+            "$CANDIDATE_PYTHON" -I - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          from pathlib import Path
+
+          from jsonschema.validators import validator_for
+
+
+          root = Path(os.environ["ROOT"])
+          for relative in (
+              "schemas/retained-manifest-v2.schema.json",
+              "schemas/session-retrospective-v2.schema.json",
+          ):
+              schema = json.loads((root / relative).read_text(encoding="utf-8"))
+              validator_for(schema).check_schema(schema)
+          PY
+
+          CANDIDATE_GNUPGHOME="$RUNNER_TEMP/candidate-key-dry-run"
+          install -d -m 700 "$CANDIDATE_GNUPGHOME"
+          for relative in \
+            retrospective-history-v2-admin-public.asc \
+            retrospective-history-v2-publisher.asc; do
+            key_file="$IMMUTABLE_CANDIDATE_ROOT/$relative"
+            if ! records="$(
+              env -i \
+                GNUPGHOME="$CANDIDATE_GNUPGHOME" \
+                HOME="$RUNNER_TEMP/candidate-static-home" \
+                LANG=C.UTF-8 \
+                PATH="$PATH" \
+                gpg --quiet --no-options --no-autostart --batch --with-colons \
+                  --import-options show-only --dry-run --import "$key_file"
+            )"; then
+              echo "Candidate signing key material is not a valid public-key export." >&2
+              exit 1
+            fi
+            if ! printf '%s\n' "$records" |
+              awk -F: '$1 == "pub" { found = 1 } END { exit !found }'; then
+              echo "Candidate signing key material contains no public primary key." >&2
+              exit 1
+            fi
+            if printf '%s\n' "$records" |
+              awk -F: '$1 == "sec" || $1 == "ssb" { found = 1 } END { exit !found }'; then
+              echo "Candidate signing key material contains secret-key packets." >&2
+              exit 1
+            fi
+          done
+      - name: Compile and test immutable candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$RUNNER_TEMP/candidate-test-home"
+          cd "$IMMUTABLE_CANDIDATE_ROOT"
+          env -i \
+            HOME="$RUNNER_TEMP/candidate-test-home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            TMPDIR="$RUNNER_TEMP" \
+            "$CANDIDATE_PYTHON" -I -m compileall -q -f scripts tests
+          env -i \
+            HOME="$RUNNER_TEMP/candidate-test-home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            ROOT="$IMMUTABLE_CANDIDATE_ROOT" \
+            TMPDIR="$RUNNER_TEMP" \
+            "$CANDIDATE_PYTHON" -I - <<'PY'
+          from __future__ import annotations
+
+          import os
+          from pathlib import Path
+          import sys
+          import unittest
+
+
+          root = Path(os.environ["ROOT"])
+          sys.path.insert(0, str(root))
+          suite = unittest.defaultTestLoader.discover(
+              start_dir=str(root / "tests"),
+              pattern="test_*.py",
+          )
+          result = unittest.TextTestRunner(verbosity=1).run(suite)
+          raise SystemExit(not result.wasSuccessful())
+          PY
+
   trusted-validation:
     name: Trusted history validation
+    needs: candidate-validation
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,6 +218,7 @@ jobs:
       MERGE_RECEIPT_PATH: ${{ github.workspace }}/.trusted-merge-state/merge-receipt.json
       TRUSTED_ROOT: ${{ github.workspace }}/trusted-base
       UNTRUSTED_ROOT: ${{ github.workspace }}/untrusted-head
+      VALIDATED_CANDIDATE_OID: ${{ needs.candidate-validation.outputs.candidate_oid }}
     steps:
       - name: Checkout trusted base
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -125,7 +318,12 @@ jobs:
 
           require_oid "$BASE_OID" "Pull request base"
           require_oid "$HEAD_OID" "Pull request head"
+          require_oid "$VALIDATED_CANDIDATE_OID" "Validated candidate"
           require_oid "$WORKFLOW_SOURCE_OID" "Workflow source"
+          if [ "$HEAD_OID" != "$VALIDATED_CANDIDATE_OID" ]; then
+            echo "Resolved candidate no longer matches the no-secrets validation gate." >&2
+            exit 1
+          fi
           case "$EVENT_NAME" in
             pull_request_target)
               if [ "$BASE_REPOSITORY" != "$EVENT_REPOSITORY" ]; then

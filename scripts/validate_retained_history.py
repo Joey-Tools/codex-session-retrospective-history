@@ -5,6 +5,7 @@ import argparse
 from collections import Counter
 import datetime as dt
 import hashlib
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 try:
     from scripts.retrospective_history_git_v2 import (
@@ -34,7 +35,6 @@ try:
         contains_high_confidence_credential,
     )
     from scripts.retrospective_history_v2 import (
-        MAX_BUNDLES,
         validate_v2_runs_with_inventory,
     )
 except ModuleNotFoundError as exc:
@@ -56,7 +56,6 @@ except ModuleNotFoundError as exc:
         contains_high_confidence_credential,
     )
     from retrospective_history_v2 import (
-        MAX_BUNDLES,
         validate_v2_runs_with_inventory,
     )
 
@@ -353,6 +352,7 @@ MAX_GIT_VISIBLE_FILE_ENTRIES = 262_144
 MAX_GIT_VISIBLE_PATH_BYTES = 4096
 MAX_RETAINED_FILE_BYTES = 64 * 1024 * 1024
 MAX_FIXED_SNAPSHOT_BYTES = 512 * 1024 * 1024
+MAX_ATTESTATION_PAGE_SIZE = 512
 GIT_VISIBLE_INVENTORY_ISSUE = "git-visible file inventory could not be validated safely"
 FIXED_SNAPSHOT_ISSUE = "range: fixed head snapshot could not be validated safely"
 PUBLISHER_ATTESTATION_ISSUE = "publisher attestation is invalid"
@@ -1713,26 +1713,25 @@ def validate_retained_export_consistency(
 
 
 def validate_v2_publisher_attestations(
-    root: Path, admitted_manifest_paths: tuple[Path, ...]
+    root: Path, admitted_manifest_paths: Iterable[Path]
 ) -> list[str]:
-    if len(admitted_manifest_paths) > MAX_BUNDLES:
-        return ["v2 publisher attestation verification budget exceeded"]
-
     issues: list[str] = []
-    for relative in admitted_manifest_paths:
-        path = root / relative
-        try:
-            manifest = read_file_bytes_stable(
-                path,
-                byte_limit=MAX_ARTIFACT_BYTES["manifest.json"],
-            )
-            valid = _verify_publisher_attestation({"manifest.json": manifest})
-        except (OSError, ValueError):
-            valid = False
-        if not valid:
-            issues.append(
-                f"{display_relative_path(relative)}: {PUBLISHER_ATTESTATION_ISSUE}"
-            )
+    manifest_iterator = iter(admitted_manifest_paths)
+    while page := tuple(islice(manifest_iterator, MAX_ATTESTATION_PAGE_SIZE)):
+        for relative in page:
+            path = root / relative
+            try:
+                manifest = read_file_bytes_stable(
+                    path,
+                    byte_limit=MAX_ARTIFACT_BYTES["manifest.json"],
+                )
+                valid = _verify_publisher_attestation({"manifest.json": manifest})
+            except (OSError, ValueError):
+                valid = False
+            if not valid:
+                issues.append(
+                    f"{display_relative_path(relative)}: {PUBLISHER_ATTESTATION_ISSUE}"
+                )
     return issues
 
 
@@ -1749,8 +1748,15 @@ def validate_root(root: Path) -> list[str]:
         root, visible_files
     )
     issues.extend(v2_issues)
-    if not v2_issues:
-        issues.extend(validate_v2_publisher_attestations(root, admitted_manifest_paths))
+    try:
+        if not v2_issues:
+            issues.extend(
+                validate_v2_publisher_attestations(root, admitted_manifest_paths)
+            )
+    finally:
+        close_inventory = getattr(admitted_manifest_paths, "close", None)
+        if callable(close_inventory):
+            close_inventory()
     retained_export_files: dict[tuple[str, str], set[str]] = {}
     retained_export_modes: dict[tuple[str, str], dict[str, str]] = {}
     retained_export_windows: dict[
