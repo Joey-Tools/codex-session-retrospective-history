@@ -46,14 +46,44 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertIn(
             "CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}", workflow
         )
+        self.assertIn(
+            "CANDIDATE_REPOSITORY: "
+            "${{ github.event.pull_request.head.repo.full_name }}",
+            workflow,
+        )
+        self.assertNotIn(
+            "CANDIDATE_REPOSITORY: ${{ github.repository }}", workflow
+        )
+        self.assertIn(
+            'if [ "$CANDIDATE_REPOSITORY" != "${GITHUB_REPOSITORY}" ]; then',
+            workflow,
+        )
         self.assertIn('actual="$(git -C candidate rev-parse --verify HEAD)"', workflow)
         self.assertIn('if [ "$actual" != "$CANDIDATE_SHA" ]', workflow)
-        self.assertIn('"persist-\\u0063redentials": false', workflow)
+        plain_checkout_input = "persist-creden" "tials: false"
+        self.assertEqual(workflow.count(plain_checkout_input), 1)
+        self.assertNotIn('"persist-\\u0063redentials": false', workflow)
         self.assertIn("credential\\.helper", workflow)
         self.assertEqual(workflow.count("env -i \\"), 4)
         self.assertIn("GIT_CONFIG_GLOBAL=/dev/null", workflow)
         self.assertIn("GIT_CONFIG_NOSYSTEM=1", workflow)
         self.assertIn("PIP_CONFIG_FILE=/dev/null", workflow)
+
+        create_home = workflow.index("      - name: Create isolated home")
+        install_dependencies = workflow.index(
+            "      - name: Install hash-pinned candidate dependencies"
+        )
+        run_validation = workflow.index(
+            "      - name: Run candidate validation without credentials"
+        )
+        create_home_step = workflow[create_home:install_dependencies]
+        self.assertIn(
+            'install -d -m 700 "$RUNNER_TEMP/retrospective-v2-bootstrap-home"',
+            create_home_step,
+        )
+        self.assertNotIn("\n        if:", create_home_step)
+        self.assertLess(create_home, install_dependencies)
+        self.assertLess(create_home, run_validation)
 
     def test_bootstrap_pins_actions_and_dependency_hashes(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")

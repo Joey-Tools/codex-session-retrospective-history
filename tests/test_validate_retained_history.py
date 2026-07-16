@@ -1887,6 +1887,82 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
                     self.assertIn("infrastructure text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
 
+    def test_bootstrap_workflow_allows_only_exact_safe_checkout_input(self) -> None:
+        relative_path = ".github/workflows/session-retrospective-v2-bootstrap.yml"
+        safe_checkout_input = "          persist-creden" "tials: false\n"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            workflow = root / relative_path
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(safe_checkout_input, encoding="utf-8")
+
+            self.assertEqual(MODULE.validate_root(root), [])
+
+    def test_bootstrap_workflow_checkout_input_exemption_fails_closed(self) -> None:
+        bootstrap_path = ".github/workflows/session-retrospective-v2-bootstrap.yml"
+        safe_checkout_input = "          persist-creden" "tials: false\n"
+        cases = (
+            (
+                "true value",
+                bootstrap_path,
+                "          persist-creden" "tials: true\n",
+            ),
+            (
+                "other workflow path",
+                ".github/workflows/ci.yml",
+                safe_checkout_input,
+            ),
+            (
+                "other infrastructure path",
+                "scripts/probe.py",
+                safe_checkout_input,
+            ),
+            (
+                "extra token content",
+                bootstrap_path,
+                safe_checkout_input + "          to" "ken: abcdefghijklmnop\n",
+            ),
+            (
+                "extra secret content",
+                bootstrap_path,
+                safe_checkout_input + "          sec" "ret: abcdefghijklmnop\n",
+            ),
+            (
+                "indentation drift",
+                bootstrap_path,
+                "        persist-creden" "tials: false\n",
+            ),
+            (
+                "quoted key drift",
+                bootstrap_path,
+                '          "persist-creden' 'tials": false\n',
+            ),
+            (
+                "spacing drift",
+                bootstrap_path,
+                "          persist-creden" "tials : false\n",
+            ),
+            (
+                "ordinary credential finding",
+                bootstrap_path,
+                "          creden" "tial-helper: plaintext\n",
+            ),
+        )
+        for label, relative_path, text in cases:
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    artifact = root / relative_path
+                    artifact.parent.mkdir(parents=True)
+                    artifact.write_text(text, encoding="utf-8")
+
+                    issues = "\n".join(MODULE.validate_root(root))
+
+                self.assertIn(
+                    "infrastructure text contains raw/sensitive evidence",
+                    issues,
+                )
+
     def test_retained_text_rejects_bare_private_ip_addresses(self) -> None:
         for report_sample, row_sample in (
             (risky_bare_private_ip(), risky_bare_private_lan_ip()),
