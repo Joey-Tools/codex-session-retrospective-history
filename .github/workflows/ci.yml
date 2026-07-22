@@ -1,23 +1,655 @@
 name: CI
 
 on:
-  pull_request:
+  pull_request_target:
+    branches: [master]
+    types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [master]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: trusted-history-${{ github.repository }}-master
+  cancel-in-progress: false
+
 jobs:
-  test:
+  candidate-validation:
+    name: Immutable candidate validation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      candidate_oid: ${{ steps.bind-candidate.outputs.candidate_oid }}
+    env:
+      CANDIDATE_OID: ${{ github.event.pull_request.head.sha || github.event.after }}
+      CANDIDATE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      CANDIDATE_ROOT: ${{ github.workspace }}/candidate-source
+      IMMUTABLE_CANDIDATE_ROOT: ${{ github.workspace }}/immutable-candidate
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout immutable candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ${{ env.CANDIDATE_REPOSITORY }}
+          ref: ${{ env.CANDIDATE_OID }}
+          path: candidate-source
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Bind credential-free candidate tree
+        id: bind-candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$CANDIDATE_OID" in
+            ""|*[!0-9a-f]*)
+              echo "Candidate OID must be lowercase hexadecimal." >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#CANDIDATE_OID}" -ne 40 ] && [ "${#CANDIDATE_OID}" -ne 64 ]; then
+            echo "Candidate OID must be canonical." >&2
+            exit 1
+          fi
+          actual_oid="$(
+            git -C "$CANDIDATE_ROOT" rev-parse --verify --end-of-options \
+              "${CANDIDATE_OID}^{commit}"
+          )"
+          if [ "$actual_oid" != "$CANDIDATE_OID" ]; then
+            echo "Candidate checkout does not match the event OID." >&2
+            exit 1
+          fi
+          if git -C "$CANDIDATE_ROOT" config --local --get-regexp \
+            '^(http\..*\.extraheader|credential\.helper)$' >/dev/null 2>&1; then
+            echo "Candidate checkout retained Git credentials." >&2
+            exit 1
+          fi
+
+          install -d -m 700 "$IMMUTABLE_CANDIDATE_ROOT"
+          tar -C "$CANDIDATE_ROOT" --exclude=.git -cf - . |
+            tar -xf - -C "$IMMUTABLE_CANDIDATE_ROOT"
+          if [ -e "$IMMUTABLE_CANDIDATE_ROOT/.git" ]; then
+            echo "Immutable candidate export unexpectedly contains Git metadata." >&2
+            exit 1
+          fi
+          printf 'candidate_oid=%s\n' "$CANDIDATE_OID" >> "$GITHUB_OUTPUT"
+      - name: Set up candidate Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - name: Validate JSON syntax
+      - name: Install hash-pinned candidate dependencies
+        shell: bash
         run: |
-          python -m json.tool schemas/session-retrospective-v1.schema.json >/dev/null
-          python -m json.tool schemas/retained-manifest-v1.schema.json >/dev/null
-      - name: Run tests
-        run: python -m unittest discover -s tests
-      - name: Validate retained history tree
-        run: python scripts/validate_retained_history.py --root .
+          set -euo pipefail
+          CANDIDATE_VENV="$RUNNER_TEMP/retrospective-history-v2-candidate-venv"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            python -I -m venv "$CANDIDATE_VENV"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            "$CANDIDATE_VENV/bin/python" -I -m pip install \
+              --disable-pip-version-check \
+              --no-input \
+              --only-binary=:all: \
+              --require-hashes \
+              --requirement "$IMMUTABLE_CANDIDATE_ROOT/requirements-v2.txt"
+          echo "CANDIDATE_PYTHON=$CANDIDATE_VENV/bin/python" >> "$GITHUB_ENV"
+      - name: Install checksum-pinned actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIONLINT_VERSION=1.7.12
+          ACTIONLINT_ARCHIVE="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          ACTIONLINT_SHA256=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT_ROOT="$RUNNER_TEMP/actionlint"
+          install -d -m 700 "$ACTIONLINT_ROOT"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$ACTIONLINT_ROOT/$ACTIONLINT_ARCHIVE" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${ACTIONLINT_ARCHIVE}"
+          printf '%s  %s\n' \
+            "$ACTIONLINT_SHA256" "$ACTIONLINT_ROOT/$ACTIONLINT_ARCHIVE" |
+            sha256sum --check --strict
+          tar -xzf "$ACTIONLINT_ROOT/$ACTIONLINT_ARCHIVE" -C "$ACTIONLINT_ROOT"
+          echo "ACTIONLINT=$ACTIONLINT_ROOT/actionlint" >> "$GITHUB_ENV"
+      - name: Validate candidate workflow schemas and public keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ACTIONLINT" -color=false "$IMMUTABLE_CANDIDATE_ROOT/.github/workflows/ci.yml"
+
+          env -i \
+            HOME="$RUNNER_TEMP/candidate-static-home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            ROOT="$IMMUTABLE_CANDIDATE_ROOT" \
+            "$CANDIDATE_PYTHON" -I - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          from pathlib import Path
+
+          from jsonschema.validators import validator_for
+
+
+          root = Path(os.environ["ROOT"])
+          for relative in (
+              "schemas/retained-manifest-v2.schema.json",
+              "schemas/session-retrospective-v2.schema.json",
+          ):
+              schema = json.loads((root / relative).read_text(encoding="utf-8"))
+              validator_for(schema).check_schema(schema)
+          PY
+
+          CANDIDATE_GNUPGHOME="$RUNNER_TEMP/candidate-key-dry-run"
+          install -d -m 700 "$CANDIDATE_GNUPGHOME"
+          for relative in \
+            retrospective-history-v2-admin-public.asc \
+            retrospective-history-v2-publisher.asc; do
+            key_file="$IMMUTABLE_CANDIDATE_ROOT/$relative"
+            if ! records="$(
+              env -i \
+                GNUPGHOME="$CANDIDATE_GNUPGHOME" \
+                HOME="$RUNNER_TEMP/candidate-static-home" \
+                LANG=C.UTF-8 \
+                PATH="$PATH" \
+                gpg --quiet --no-options --no-autostart --batch --with-colons \
+                  --import-options show-only --dry-run --import "$key_file"
+            )"; then
+              echo "Candidate signing key material is not a valid public-key export." >&2
+              exit 1
+            fi
+            if ! printf '%s\n' "$records" |
+              awk -F: '$1 == "pub" { found = 1 } END { exit !found }'; then
+              echo "Candidate signing key material contains no public primary key." >&2
+              exit 1
+            fi
+            if printf '%s\n' "$records" |
+              awk -F: '$1 == "sec" || $1 == "ssb" { found = 1 } END { exit !found }'; then
+              echo "Candidate signing key material contains secret-key packets." >&2
+              exit 1
+            fi
+          done
+      - name: Compile and test immutable candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$RUNNER_TEMP/candidate-test-home"
+          cd "$IMMUTABLE_CANDIDATE_ROOT"
+          env -i \
+            HOME="$RUNNER_TEMP/candidate-test-home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            TMPDIR="$RUNNER_TEMP" \
+            "$CANDIDATE_PYTHON" -I -m compileall -q -f scripts tests
+          env -i \
+            HOME="$RUNNER_TEMP/candidate-test-home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            ROOT="$IMMUTABLE_CANDIDATE_ROOT" \
+            TMPDIR="$RUNNER_TEMP" \
+            "$CANDIDATE_PYTHON" -I - <<'PY'
+          from __future__ import annotations
+
+          import os
+          from pathlib import Path
+          import sys
+          import unittest
+
+
+          root = Path(os.environ["ROOT"])
+          sys.path.insert(0, str(root))
+          suite = unittest.defaultTestLoader.discover(
+              start_dir=str(root / "tests"),
+              pattern="test_*.py",
+          )
+          result = unittest.TextTestRunner(verbosity=1).run(suite)
+          raise SystemExit(not result.wasSuccessful())
+          PY
+
+  trusted-validation:
+    name: Trusted history validation
+    needs: candidate-validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_BINDING_PATH: ${{ github.workspace }}/.trusted-merge-state/candidate-binding.json
+      MERGE_PLAN_PATH: ${{ github.workspace }}/.trusted-merge-state/merge-plan.json
+      MERGE_RECEIPT_PATH: ${{ github.workspace }}/.trusted-merge-state/merge-receipt.json
+      PUBLICATION_WAL_PATH: ${{ github.workspace }}/.trusted-merge-state/publication-wal
+      TRUSTED_ROOT: ${{ github.workspace }}/trusted-base
+      UNTRUSTED_ROOT: ${{ github.workspace }}/untrusted-head
+      VALIDATED_CANDIDATE_OID: ${{ needs.candidate-validation.outputs.candidate_oid }}
+    steps:
+      - name: Checkout trusted base
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.workflow_sha || github.event.before }}
+          path: trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up trusted Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Create trusted merge token
+        id: merge-token
+        if: ${{ github.event_name == 'pull_request_target' }}
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.RETROSPECTIVE_HISTORY_MERGE_APP_ID }}
+          private-key: ${{ secrets.RETROSPECTIVE_HISTORY_MERGE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: read
+          permission-checks: write
+          permission-contents: write
+          permission-pull-requests: read
+      - name: Resolve immutable candidate
+        id: resolve-candidate
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          EVENT_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.merge-token.outputs.token }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          WORKFLOW_SOURCE_OID: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          install -d -m 700 "$(dirname "$CANDIDATE_BINDING_PATH")"
+
+          if [ -z "$GH_TOKEN" ]; then
+            echo "The trusted merge GitHub App token is unavailable." >&2
+            exit 1
+          fi
+          python -I - resolve \
+            --repository "$EVENT_REPOSITORY" \
+            --pull-request "$PULL_REQUEST_NUMBER" \
+            --workflow-oid "$WORKFLOW_SOURCE_OID" \
+            --output "$CANDIDATE_BINDING_PATH" \
+            --github-output "$GITHUB_OUTPUT" <<'PY'
+          from pathlib import Path
+          import os
+          import sys
+
+          trusted_root = Path(os.environ["TRUSTED_ROOT"]).resolve(strict=True)
+          sys.path.insert(0, str(trusted_root))
+          from scripts.retrospective_history_merge_v2 import main
+
+          raise SystemExit(main(sys.argv[1:]))
+          PY
+      - name: Checkout candidate head as data
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.resolve-candidate.outputs.head_oid || github.event.after }}
+          path: untrusted-head
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact trusted and untrusted checkouts
+        env:
+          BASE_OID: ${{ steps.resolve-candidate.outputs.base_oid || github.event.before }}
+          BASE_REF: ${{ github.event_name == 'pull_request_target' && 'master' || '' }}
+          BASE_REPOSITORY: ${{ github.event_name == 'pull_request_target' && github.repository || '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          EVENT_REPOSITORY: ${{ github.repository }}
+          HEAD_OID: ${{ steps.resolve-candidate.outputs.head_oid || github.event.after }}
+          PUSH_FORCED: ${{ github.event.forced }}
+          WORKFLOW_SOURCE_OID: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_oid() {
+            case "$1" in
+              ""|*[!0-9a-f]*)
+                echo "$2 must be a lowercase hexadecimal commit OID." >&2
+                exit 1
+                ;;
+            esac
+            if [ "${#1}" -ne 40 ] && [ "${#1}" -ne 64 ]; then
+              echo "$2 must be a canonical commit OID." >&2
+              exit 1
+            fi
+          }
+
+          require_oid "$BASE_OID" "Pull request base"
+          require_oid "$HEAD_OID" "Pull request head"
+          require_oid "$VALIDATED_CANDIDATE_OID" "Validated candidate"
+          require_oid "$WORKFLOW_SOURCE_OID" "Workflow source"
+          if [ "$HEAD_OID" != "$VALIDATED_CANDIDATE_OID" ]; then
+            echo "Resolved candidate no longer matches the no-secrets validation gate." >&2
+            exit 1
+          fi
+          case "$EVENT_NAME" in
+            pull_request_target)
+              if [ "$BASE_REPOSITORY" != "$EVENT_REPOSITORY" ]; then
+                echo "Pull request base repository does not match the event repository." >&2
+                exit 1
+              fi
+              if [ "$BASE_REF" != "$DEFAULT_BRANCH" ] || [ "$BASE_REF" != master ]; then
+                echo "Pull request validation is restricted to the default master branch." >&2
+                exit 1
+              fi
+              if [ "$WORKFLOW_SOURCE_OID" != "$BASE_OID" ]; then
+                echo "Pull request validation must execute from its exact current base." >&2
+                exit 1
+              fi
+              ;;
+            push)
+              if [ "$EVENT_REF" != refs/heads/master ] || [ "$DEFAULT_BRANCH" != master ]; then
+                echo "Push validation is restricted to the default master branch." >&2
+                exit 1
+              fi
+              if [ "$PUSH_FORCED" != true ] && [ "$PUSH_FORCED" != false ]; then
+                echo "Push event force status is invalid." >&2
+                exit 1
+              fi
+              if [ "$WORKFLOW_SOURCE_OID" != "$HEAD_OID" ]; then
+                echo "Push monitoring must identify the candidate-controlled after workflow." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported trusted validation event." >&2
+              exit 1
+              ;;
+          esac
+
+          trusted_oid="$(
+            git -C "$TRUSTED_ROOT" rev-parse --verify --end-of-options \
+              "${BASE_OID}^{commit}"
+          )"
+          untrusted_oid="$(
+            git -C "$UNTRUSTED_ROOT" rev-parse --verify --end-of-options \
+              "${HEAD_OID}^{commit}"
+          )"
+          if [ "$trusted_oid" != "$BASE_OID" ] || [ "$untrusted_oid" != "$HEAD_OID" ]; then
+            echo "A checkout does not match its exact event commit OID." >&2
+            exit 1
+          fi
+          if ! git -C "$UNTRUSTED_ROOT" merge-base --is-ancestor \
+            "$BASE_OID" "$HEAD_OID"; then
+            echo "Pull request head must contain the exact current event base." >&2
+            exit 1
+          fi
+
+          TRUSTED_PATHS=(
+            .github/workflows/ci.yml
+            requirements-v2.in
+            requirements-v2.txt
+            retrospective-history-v2-admin-public.asc
+            retrospective-history-v2-publisher.asc
+            schemas/retained-manifest-v2.schema.json
+            schemas/session-retrospective-v2.schema.json
+            scripts/retrospective_history_attestation_v2.py
+            scripts/retrospective_history_credentials_v2.py
+            scripts/retrospective_history_git_v2.py
+            scripts/retrospective_history_merge_v2.py
+            scripts/retrospective_history_privacy_v2.py
+            scripts/retrospective_history_templates_v2.py
+            scripts/retrospective_history_v2.py
+            scripts/validate_retained_history.py
+          )
+          for relative in "${TRUSTED_PATHS[@]}"; do
+            entry="$(
+              git -C "$TRUSTED_ROOT" ls-tree "$BASE_OID" -- \
+                ":(literal)$relative"
+            )"
+            metadata="${entry%%$'\t'*}"
+            tree_path="${entry#*$'\t'}"
+            mode=""
+            object_type=""
+            object_id=""
+            extra=""
+            read -r mode object_type object_id extra <<< "$metadata"
+            candidate="$TRUSTED_ROOT/$relative"
+            if [ "$entry" = "$metadata" ] || [ "$tree_path" != "$relative" ] || \
+              [ "$mode" != 100644 ] || [ "$object_type" != blob ] || \
+              [ -z "$object_id" ] || [ -n "$extra" ] || \
+              [ ! -f "$candidate" ] || [ -L "$candidate" ]; then
+              echo "Trusted base is missing an exact regular trust-root file." >&2
+              exit 1
+            fi
+          done
+
+          for checkout in "$TRUSTED_ROOT" "$UNTRUSTED_ROOT"; do
+            if git -C "$checkout" config --local --get-regexp \
+              '^(http\..*\.extraheader|credential\.helper)$' >/dev/null 2>&1; then
+              echo "Checkout credentials remained in local Git configuration." >&2
+              exit 1
+            fi
+          done
+          if [ -n "${GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ]; then
+            echo "A GitHub token was exported to the validation shell." >&2
+            exit 1
+          fi
+
+          {
+            echo "TRUSTED_BASE_OID=$BASE_OID"
+            echo "UNTRUSTED_HEAD_OID=$HEAD_OID"
+          } >> "$GITHUB_ENV"
+      - name: Install trusted validation dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$TRUSTED_ROOT"
+          TRUSTED_VENV="$RUNNER_TEMP/retrospective-history-v2-trusted-venv"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            python -I -m venv "$TRUSTED_VENV"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            "$TRUSTED_VENV/bin/python" -I -m pip install \
+              --disable-pip-version-check \
+              --no-input \
+              --only-binary=:all: \
+              --require-hashes \
+              --requirement "$TRUSTED_ROOT/requirements-v2.txt"
+          echo "TRUSTED_PYTHON=$TRUSTED_VENV/bin/python" >> "$GITHUB_ENV"
+      - name: Import trusted signing keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          TRUSTED_GNUPGHOME="$RUNNER_TEMP/rh2-gpg"
+          install -d -m 700 "$TRUSTED_GNUPGHOME"
+          KEY_FILES=(
+            "$TRUSTED_ROOT/retrospective-history-v2-admin-public.asc"
+            "$TRUSTED_ROOT/retrospective-history-v2-publisher.asc"
+          )
+          for key_file in "${KEY_FILES[@]}"; do
+            if ! SHOW_RECORDS="$(
+              GNUPGHOME="$TRUSTED_GNUPGHOME" gpg \
+                --quiet --no-options --no-autostart --batch --with-colons \
+                --import-options show-only --dry-run --import "$key_file"
+            )"; then
+              echo "Trusted signing key material is not a valid public-key export." >&2
+              exit 1
+            fi
+            if ! printf '%s\n' "$SHOW_RECORDS" |
+              awk -F: '$1 == "pub" { found = 1 } END { exit !found }'; then
+              echo "Trusted signing key material contains no public primary key." >&2
+              exit 1
+            fi
+            if printf '%s\n' "$SHOW_RECORDS" |
+              awk -F: '$1 == "sec" || $1 == "ssb" { found = 1 } END { exit !found }'; then
+              echo "Trusted signing key material contains secret-key packets." >&2
+              exit 1
+            fi
+          done
+          GNUPGHOME="$TRUSTED_GNUPGHOME" gpg \
+            --quiet --no-options --batch --import \
+            "${KEY_FILES[@]}" \
+            >/dev/null 2>&1
+          SECRET_RECORDS="$(
+            GNUPGHOME="$TRUSTED_GNUPGHOME" gpg \
+              --quiet --no-options --no-autostart --batch --with-colons \
+              --list-secret-keys
+          )"
+          if [ -n "$SECRET_RECORDS" ]; then
+            echo "Trusted signing key import populated the secret keyring." >&2
+            exit 1
+          fi
+          KEY_RECORDS="$(
+            GNUPGHOME="$TRUSTED_GNUPGHOME" gpg \
+              --quiet --no-options --no-autostart --batch --with-colons \
+              --fingerprint --list-keys
+          )"
+          EXPECTED_FINGERPRINTS=(
+            EFBBC913F49A5F6E0AF0D248F70246143DC28F32
+            968479A1AFF927E37D1A566BB5690EEEBB952194
+            40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52
+          )
+          PRIMARY_FINGERPRINTS="$(
+            printf '%s\n' "$KEY_RECORDS" |
+              awk -F: '
+                $1 == "pub" { primary = 1; next }
+                $1 == "fpr" && primary { print $10; primary = 0 }
+              '
+          )"
+          if [ "$(printf '%s\n' "$PRIMARY_FINGERPRINTS" | sed '/^$/d' | wc -l | tr -d ' ')" -ne 3 ]; then
+            echo "Trusted signing key set has an unexpected primary-key count." >&2
+            exit 1
+          fi
+          for expected in "${EXPECTED_FINGERPRINTS[@]}"; do
+            if ! printf '%s\n' "$PRIMARY_FINGERPRINTS" |
+              awk -v expected="$expected" '$0 == expected { found = 1 } END { exit !found }'; then
+              echo "Trusted signing key fingerprint is unavailable." >&2
+              exit 1
+            fi
+          done
+          while IFS= read -r actual; do
+            case " ${EXPECTED_FINGERPRINTS[*]} " in
+              *" $actual "*) ;;
+              *)
+                echo "Trusted signing key set contains an unexpected primary key." >&2
+                exit 1
+                ;;
+            esac
+          done <<< "$PRIMARY_FINGERPRINTS"
+          echo "TRUSTED_GNUPGHOME=$TRUSTED_GNUPGHOME" >> "$GITHUB_ENV"
+      - name: Build immutable candidate merge plan
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          BASE_OID: ${{ steps.resolve-candidate.outputs.base_oid }}
+          HEAD_OID: ${{ steps.resolve-candidate.outputs.head_oid }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$TRUSTED_GNUPGHOME"
+          cd "$TRUSTED_ROOT"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            "$TRUSTED_PYTHON" -I - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+
+          trusted_root = Path(os.environ["TRUSTED_ROOT"]).resolve(strict=True)
+          sys.path.insert(0, str(trusted_root))
+          from scripts.validate_retained_history import build_pull_request_candidate_plan
+
+
+          plan, issues = build_pull_request_candidate_plan(
+              Path(os.environ["UNTRUSTED_ROOT"]),
+              os.environ["BASE_OID"],
+              os.environ["HEAD_OID"],
+          )
+          for issue in issues:
+              print(issue)
+          if issues or plan is None:
+              raise SystemExit(1)
+          Path(os.environ["MERGE_PLAN_PATH"]).write_text(
+              json.dumps(plan.as_dict(), sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Monitor default branch squash
+        if: ${{ github.event_name == 'push' }}
+        env:
+          BASE_OID: ${{ github.event.before }}
+          EVENT_FORCED: ${{ github.event.forced }}
+          HEAD_OID: ${{ github.event.after }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$TRUSTED_GNUPGHOME"
+          cd "$TRUSTED_ROOT"
+          env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            "$TRUSTED_PYTHON" -I - <<'PY'
+          from __future__ import annotations
+
+          import os
+          from pathlib import Path
+          import sys
+
+
+          trusted_root = Path(os.environ["TRUSTED_ROOT"]).resolve(strict=True)
+          sys.path.insert(0, str(trusted_root))
+          from scripts.validate_retained_history import (
+              validate_append_only_event_range,
+              validate_fixed_head_snapshot,
+          )
+
+
+          candidate = Path(os.environ["UNTRUSTED_ROOT"])
+          issues = validate_fixed_head_snapshot(candidate, os.environ["HEAD_OID"])
+          if not issues:
+              issues.extend(
+                  validate_append_only_event_range(
+                      candidate,
+                      os.environ["BASE_OID"],
+                      os.environ["HEAD_OID"],
+                      forced=os.environ["EVENT_FORCED"] == "true",
+                  )
+              )
+          for issue in issues:
+              print(issue)
+          raise SystemExit(bool(issues))
+          PY
+
+      - name: Execute trusted App squash transaction
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          EXPECTED_APP_ID: ${{ secrets.RETROSPECTIVE_HISTORY_MERGE_APP_ID }}
+          EXPECTED_APP_SLUG: ${{ steps.merge-token.outputs.app-slug }}
+          EVENT_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.merge-token.outputs.token }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          if [ -z "$GH_TOKEN" ]; then
+            echo "The trusted merge GitHub App token is unavailable." >&2
+            exit 1
+          fi
+          env -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+            "$TRUSTED_PYTHON" -I - transact \
+              --repository "$EVENT_REPOSITORY" \
+              --pull-request "$PULL_REQUEST_NUMBER" \
+              --binding "$CANDIDATE_BINDING_PATH" \
+              --plan "$MERGE_PLAN_PATH" \
+              --app-id "$EXPECTED_APP_ID" \
+              --app-slug "$EXPECTED_APP_SLUG" \
+              --details-url "$RUN_DETAILS_URL" \
+              --wal "$PUBLICATION_WAL_PATH" \
+              --receipt "$MERGE_RECEIPT_PATH" <<'PY'
+          from pathlib import Path
+          import os
+          import sys
+
+          trusted_root = Path(os.environ["TRUSTED_ROOT"]).resolve(strict=True)
+          sys.path.insert(0, str(trusted_root))
+          from scripts.retrospective_history_merge_v2 import main
+
+          raise SystemExit(main(sys.argv[1:]))
+          PY
