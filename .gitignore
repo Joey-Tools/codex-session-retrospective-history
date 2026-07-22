@@ -7,6 +7,9 @@ __pycache__/
 *.pyc
 .DS_Store
 
+# Local private signing material. Only the public keyring is tracked.
+retrospective-history-v2-admin.asc
+
 # Raw or transient Codex evidence must not be retained here.
 auth.json
 config.toml
