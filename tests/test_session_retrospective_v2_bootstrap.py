@@ -1,103 +1,4286 @@
 from __future__ import annotations
 
+import base64
+import copy
+import hashlib
+import importlib.util
+import json
+import os
 from pathlib import Path
+import pwd
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/session-retrospective-v2-bootstrap.yml"
+PERMANENT_CI = (
+    ROOT / ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
+)
+VALIDATOR = ROOT / "scripts/validate_retained_history.py"
+CI_HELPER = ROOT / "scripts/trusted_history_ci.py"
+EXPECTED_WORKFLOW_POLICY_SHA256 = (
+    "21fcb80f9c8c5ec3c653f042e5a3ed86e8d664c69189eaee73fedb99fa9112d3"
+)
+CLOSED_GIT_WORKFLOW_ENV = {
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES": "",
+    "GIT_CONFIG_COUNT": "0",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_LITERAL_PATHSPECS": "1",
+    "GIT_NO_LAZY_FETCH": "1",
+    "GIT_NO_REPLACE_OBJECTS": "1",
+    "GIT_OPTIONAL_LOCKS": "0",
+    "GIT_TERMINAL_PROMPT": "0",
+}
+FIXTURE_TIMESTAMP = 1_784_073_600
+FIXTURE_SIGNER_FINGERPRINT = (
+    "0123456789ABCDEF0123456789ABCDEF01234567"
+)
+ACTUAL_BASE_SHA = "97f236c56cbbf24776899178175e2603ecf30fb0"
+LEGACY_CI = (
+    "name: CI\n"
+    "\n"
+    "on:\n"
+    "  pull_request:\n"
+    "  push:\n"
+    "    branches: [master]\n"
+    "\n"
+    "jobs:\n"
+    "  test:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    steps:\n"
+    "      - uses: actions/checkout@v4\n"
+    "      - uses: actions/setup-python@v5\n"
+    "        with:\n"
+    "          python-version: \"3.12\"\n"
+    "      - name: Validate JSON syntax\n"
+    "        run: |\n"
+    "          python -m json.tool schemas/session-retrospective-v1.schema.json >/dev/null\n"
+    "          python -m json.tool schemas/retained-manifest-v1.schema.json >/dev/null\n"
+    "      - name: Run tests\n"
+    "        run: python -m unittest discover -s tests\n"
+    "      - name: Validate retained history tree\n"
+    "        run: python scripts/validate_retained_history.py --root .\n"
+)
+
+
+def load_module(name: str, path: Path) -> object:
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+VALIDATOR_MODULE = load_module("bootstrap_workflow_validator", VALIDATOR)
+CI_MODULE = load_module("trusted_history_ci", CI_HELPER)
+
+
+def load_workflow(path: Path = WORKFLOW) -> dict:
+    return VALIDATOR_MODULE.parse_strict_workflow_yaml(
+        path.read_text(encoding="utf-8")
+    )
+
+
+def workflow_job() -> dict:
+    return load_workflow()["jobs"]["trusted_history_gate"]
+
+
+def steps_by_name(job: dict | None = None) -> dict[str, dict]:
+    steps = (job or workflow_job())["steps"]
+    named = {step["name"]: step for step in steps}
+    if len(named) != len(steps):
+        raise AssertionError("workflow step names must be unique")
+    return named
+
+
+def git(root: Path, *arguments: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *arguments],
+        env={
+            **os.environ,
+            "TZ": "UTC",
+            "GIT_AUTHOR_DATE": f"{FIXTURE_TIMESTAMP} +0000",
+            "GIT_COMMITTER_DATE": f"{FIXTURE_TIMESTAMP} +0000",
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def configure_git(root: Path) -> None:
+    git(root, "config", "commit.gpgsign", "false")
+    git(root, "config", "tag.gpgsign", "false")
+    name, email = VALIDATOR_MODULE.HISTORY_V2_CANONICAL_IDENTITY.rsplit(" <", 1)
+    git(root, "config", "user.name", name)
+    git(root, "config", "user.email", email.removesuffix(">"))
+
+
+def fixture_signature_armor(
+    *,
+    timestamp: int = FIXTURE_TIMESTAMP,
+    signer_fingerprint: str = FIXTURE_SIGNER_FINGERPRINT,
+) -> bytes:
+    fingerprint = bytes.fromhex(signer_fingerprint)
+    hashed = (
+        b"\x05\x02"
+        + timestamp.to_bytes(4, "big")
+        + b"\x16\x21\x04"
+        + fingerprint
+    )
+    unhashed = b"\x09\x10" + fingerprint[-8:]
+    mpi = bytes((0, 1, 1))
+    body = (
+        bytes(
+            (
+                4,
+                0,
+                22,
+                VALIDATOR_MODULE.HISTORY_V2_SIGNATURE_HASH_ALGORITHM,
+            )
+        )
+        + len(hashed).to_bytes(2, "big")
+        + hashed
+        + len(unhashed).to_bytes(2, "big")
+        + unhashed
+        + bytes((0, 0))
+        + mpi
+        + mpi
+    )
+    packet = VALIDATOR_MODULE.encode_history_v2_signature_packet(body)
+    encoded = base64.b64encode(packet).decode("ascii")
+    checksum = base64.b64encode(
+        VALIDATOR_MODULE.bootstrap_v2_crc24(packet)
+    ).decode("ascii")
+    return (
+        "-----BEGIN PGP SIGNATURE-----\n"
+        "\n"
+        + "\n".join(
+            encoded[index : index + 64]
+            for index in range(0, len(encoded), 64)
+        )
+        + "\n="
+        + checksum
+        + "\n-----END PGP SIGNATURE-----\n"
+    ).encode("ascii")
+
+
+def fixture_raw_commit(
+    root: Path,
+    *,
+    tree_oid: str,
+    parents: tuple[str, ...],
+    message: str,
+    author: str = VALIDATOR_MODULE.HISTORY_V2_CANONICAL_IDENTITY,
+    committer: str = VALIDATOR_MODULE.HISTORY_V2_CANONICAL_IDENTITY,
+    author_timestamp: int = FIXTURE_TIMESTAMP,
+    committer_timestamp: int = FIXTURE_TIMESTAMP,
+    author_timezone: str = "+0000",
+    committer_timezone: str = "+0000",
+    extra_headers: tuple[bytes, ...] = (),
+    signature_armor: bytes | None = None,
+    include_signature: bool = True,
+) -> str:
+    armor = signature_armor or fixture_signature_armor(
+        timestamp=committer_timestamp
+    )
+    armor_lines = armor.removesuffix(b"\n").split(b"\n")
+    signature_headers = (
+        b"gpgsig " + armor_lines[0],
+        *(b" " + line for line in armor_lines[1:]),
+    )
+    headers = (
+        f"tree {tree_oid}".encode("ascii"),
+        *(f"parent {parent}".encode("ascii") for parent in parents),
+        f"author {author} {author_timestamp} {author_timezone}".encode("utf-8"),
+        (
+            f"committer {committer} {committer_timestamp} "
+            f"{committer_timezone}"
+        ).encode("utf-8"),
+        *extra_headers,
+        *(signature_headers if include_signature else ()),
+    )
+    raw_commit = (
+        b"\n".join(headers) + b"\n\n" + message.encode("utf-8") + b"\n"
+    )
+    result = subprocess.run(
+        ["git", "-C", str(root), "hash-object", "-t", "commit", "-w", "--stdin"],
+        env={
+            **os.environ,
+            "TZ": "UTC",
+            "GIT_AUTHOR_DATE": f"{FIXTURE_TIMESTAMP} +0000",
+            "GIT_COMMITTER_DATE": f"{FIXTURE_TIMESTAMP} +0000",
+        },
+        input=raw_commit,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    return result.stdout.decode("ascii").strip()
+
+
+def fixture_commit_bytes(root: Path, commit_oid: str) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(root), "cat-file", "commit", commit_oid],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    ).stdout
+
+
+def fixture_store_commit(root: Path, raw_commit: bytes) -> str:
+    return subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "hash-object",
+            "--literally",
+            "-t",
+            "commit",
+            "-w",
+            "--stdin",
+        ],
+        input=raw_commit,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    ).stdout.decode("ascii").strip()
+
+
+def commit_all(
+    root: Path,
+    message: str,
+    *,
+    parents: tuple[str, ...] | None = None,
+) -> str:
+    git(root, "add", "--all")
+    tree_oid = git(root, "write-tree")
+    if parents is None:
+        current = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
+            env={
+                **os.environ,
+                "TZ": "UTC",
+                "GIT_AUTHOR_DATE": f"{FIXTURE_TIMESTAMP} +0000",
+                "GIT_COMMITTER_DATE": f"{FIXTURE_TIMESTAMP} +0000",
+            },
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        parents = (current.stdout.strip(),) if current.returncode == 0 else ()
+    commit_oid = fixture_raw_commit(
+        root,
+        tree_oid=tree_oid,
+        parents=parents,
+        message=message,
+    )
+    git(root, "update-ref", "HEAD", commit_oid)
+    git(root, "reset", "--hard", "--quiet", commit_oid)
+    return commit_oid
+
+
+def tree_api_payload(root: Path, revision: str) -> dict:
+    raw = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "ls-tree",
+            "-r",
+            "-t",
+            "-z",
+            "--full-tree",
+            revision,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    ).stdout
+    entries = []
+    for record in raw.split(b"\0"):
+        if not record:
+            continue
+        metadata, path = record.split(b"\t", 1)
+        mode, object_type, object_id = metadata.decode("ascii").split()
+        entry = {
+            "path": path.decode("utf-8"),
+            "mode": mode,
+            "type": object_type,
+            "sha": object_id,
+        }
+        if object_type == "blob":
+            entry["size"] = int(git(root, "cat-file", "-s", object_id))
+        entries.append(entry)
+    return {
+        "sha": git(root, "rev-parse", f"{revision}^{{tree}}"),
+        "truncated": False,
+        "tree": entries,
+    }
+
+
+def tree_api_payloads(root: Path, revisions: tuple[str, ...]) -> dict[str, dict]:
+    payloads = (tree_api_payload(root, revision) for revision in revisions)
+    return {payload["sha"]: payload for payload in payloads}
+
+
+def blob_api_payload(root: Path, object_id: str) -> dict[str, object]:
+    value = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "blob", object_id],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    ).stdout
+    encoded = base64.b64encode(value).decode("ascii")
+    return {
+        "sha": object_id,
+        "size": len(value),
+        "encoding": "base64",
+        "content": "\n".join(
+            encoded[index : index + 76]
+            for index in range(0, len(encoded), 76)
+        ),
+    }
+
+
+def bare_object_exists_without_lazy_fetch(git_dir: Path, object_id: str) -> bool:
+    result = subprocess.run(
+        CI_MODULE.closed_git_command(
+            f"--git-dir={git_dir}",
+            "cat-file",
+            "-e",
+            object_id,
+        ),
+        env=CI_MODULE.closed_git_environment(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def seal_partial_bare_store(git_dir: Path, *, expected_url: str) -> None:
+    remotes = subprocess.run(
+        CI_MODULE.closed_git_command(
+            f"--git-dir={git_dir}",
+            "remote",
+        ),
+        env=CI_MODULE.closed_git_environment(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    if len(remotes) == 1:
+        observed_url = subprocess.run(
+            CI_MODULE.closed_git_command(
+                f"--git-dir={git_dir}",
+                "remote",
+                "get-url",
+                remotes[0],
+            ),
+            env=CI_MODULE.closed_git_environment(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if observed_url != expected_url:
+            raise AssertionError(
+                f"unexpected synthetic promisor URL: {observed_url!r}"
+            )
+        subprocess.run(
+            CI_MODULE.closed_git_command(
+                f"--git-dir={git_dir}",
+                "remote",
+                "remove",
+                remotes[0],
+            ),
+            env=CI_MODULE.closed_git_environment(),
+            check=True,
+        )
+    elif remotes:
+        raise AssertionError(f"unexpected synthetic promisor remotes: {remotes!r}")
+    cleanup = subprocess.run(
+        CI_MODULE.closed_git_command(
+            f"--git-dir={git_dir}",
+            "config",
+            "--unset-all",
+            "extensions.partialClone",
+        ),
+        env=CI_MODULE.closed_git_environment(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if cleanup.returncode not in (0, 5):
+        raise subprocess.CalledProcessError(
+            cleanup.returncode,
+            cleanup.args,
+            output=cleanup.stdout,
+            stderr=cleanup.stderr,
+        )
+
+
+def preflight_complete_fixture(
+    git_dir: Path,
+    **arguments: object,
+) -> object:
+    with mock.patch.object(
+        CI_MODULE,
+        "validate_oid_only_candidate_store",
+    ):
+        return CI_MODULE.preflight_git_candidate(git_dir, **arguments)
+
+
+def fetch_synthetic_candidate_store(
+    temporary: Path,
+    graph: BootstrapGraph,
+    *,
+    head: str,
+    depth: int,
+    filtered: bool,
+    sealed: bool = True,
+) -> Path:
+    bare = temporary / "candidate.git"
+    subprocess.run(
+        ["git", "init", "--bare", "--quiet", str(bare)],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            f"--git-dir={bare}",
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--depth=1",
+            graph.root.as_uri(),
+            graph.base,
+        ],
+        check=True,
+    )
+    command = [
+        "git",
+        f"--git-dir={bare}",
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        f"--depth={depth}",
+    ]
+    if filtered:
+        command.append("--filter=blob:none")
+    command.extend(
+        (
+            graph.root.as_uri(),
+            f"+{head}:refs/synthetic/candidate",
+        )
+    )
+    subprocess.run(command, check=True)
+    if sealed:
+        seal_partial_bare_store(
+            bare,
+            expected_url=graph.root.as_uri(),
+        )
+    return bare
+
+
+class StructuralSignatureVerifier:
+    def __init__(self, _public_key: bytes, *, relative: Path) -> None:
+        self.relative = relative
+
+    def __enter__(self) -> StructuralSignatureVerifier:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    @staticmethod
+    def verify(signature: object) -> None:
+        if not hasattr(signature, "signer_fingerprint"):
+            raise AssertionError("commit signature was not structurally validated")
+
+
+class BootstrapGraph:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        subprocess.run(
+            ["git", "init", "--quiet", str(root)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        configure_git(root)
+        self.write(".github/workflows/ci.yml", LEGACY_CI)
+        self.write("AGENTS.md", "Synthetic tracked guidance.\n")
+        self.write(
+            "retrospective-history-v2-admin-public.asc",
+            "Synthetic admin public key fixture.\n",
+        )
+        self.write(
+            "retrospective-history-v2-publisher.asc",
+            "Synthetic publisher public key fixture.\n",
+        )
+        self.actual_base = commit_all(root, "actual base")
+
+        self.write(
+            ".github/bootstrap/session-retrospective-v2-permanent-ci.yml",
+            PERMANENT_CI.read_text(encoding="utf-8"),
+        )
+        self.write(
+            ".github/workflows/session-retrospective-v2-bootstrap.yml",
+            WORKFLOW.read_text(encoding="utf-8"),
+        )
+        self.write(
+            "tests/test_session_retrospective_v2_bootstrap.py",
+            '"""Synthetic bootstrap test."""\n',
+        )
+        self.write(
+            "scripts/trusted_history_ci.py",
+            CI_HELPER.read_text(encoding="utf-8"),
+        )
+        self.base = commit_all(root, "install bootstrap")
+
+    @property
+    def git_dir(self) -> Path:
+        return self.root / ".git"
+
+    def write(self, relative: str, value: str) -> None:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value, encoding="utf-8")
+
+    def remove_bootstrap(self, *, retain: set[str] | None = None) -> None:
+        retain = retain or set()
+        for relative in CI_MODULE.BOOTSTRAP_TEMPORARY_PATHS:
+            if relative not in retain:
+                (self.root / relative).unlink()
+
+    def create_candidate(
+        self,
+        *,
+        retain: set[str] | None = None,
+        message: str = "candidate",
+    ) -> str:
+        self.remove_bootstrap(retain=retain)
+        self.write(
+            ".github/workflows/ci.yml",
+            PERMANENT_CI.read_text(encoding="utf-8"),
+        )
+        self.write("candidate.txt", "candidate\n")
+        return commit_all(self.root, message)
+
+    def preflight(self, head: str, *, base: str | None = None) -> object:
+        return preflight_complete_fixture(
+            self.git_dir,
+            base_sha=base or self.base,
+            head_sha=head,
+            tree_payload=tree_api_payload(self.root, head),
+            policy="bootstrap-v2",
+        )
+
+
+def pull_payload(*, base_sha: str = "b" * 40, head_sha: str = "a" * 40) -> dict:
+    return {
+        "number": 17,
+        "node_id": "PR_kwDO_bootstrap",
+        "state": "open",
+        "merged": False,
+        "merged_at": None,
+        "draft": False,
+        "base": {
+            "ref": "master",
+            "sha": base_sha,
+            "repo": {"full_name": "Joey-Tools/codex-session-retrospective-history"},
+        },
+        "head": {
+            "ref": "wip/session-retrospective-v2-history-bootstrap",
+            "sha": head_sha,
+            "repo": {"full_name": "Joey-Tools/codex-session-retrospective-history"},
+        },
+    }
+
+
+def validate_pull(payload: dict) -> object:
+    return CI_MODULE.validate_pull_request_payload(
+        payload,
+        repository="Joey-Tools/codex-session-retrospective-history",
+        number=17,
+        node_id="PR_kwDO_bootstrap",
+        base_ref="master",
+        base_sha="b" * 40,
+        head_repository="Joey-Tools/codex-session-retrospective-history",
+        head_ref="wip/session-retrospective-v2-history-bootstrap",
+        head_sha="a" * 40,
+    )
+
+
+TEST_REPOSITORY = "Joey-Tools/codex-session-retrospective-history"
+
+
+def merge_group_ref(number: int = 17) -> str:
+    return (
+        "refs/heads/gh-readonly-queue/master/"
+        f"pr-{number}-synthetic"
+    )
+
+
+def merge_group_event_payload(
+    *,
+    base_sha: str,
+    queue_sha: str,
+    number: int = 17,
+) -> dict:
+    return {
+        "action": "checks_requested",
+        "repository": {"full_name": TEST_REPOSITORY},
+        "merge_group": {
+            "base_ref": "refs/heads/master",
+            "base_sha": base_sha,
+            "head_ref": merge_group_ref(number),
+            "head_sha": queue_sha,
+        },
+    }
+
+
+def merge_group_pull_payload(
+    *,
+    base_sha: str,
+    head_sha: str,
+    title: str,
+    number: int = 17,
+) -> dict:
+    payload = pull_payload(base_sha=base_sha, head_sha=head_sha)
+    payload["number"] = number
+    payload["title"] = title
+    return payload
+
+
+def repository_configuration_payload() -> dict:
+    return {
+        "full_name": TEST_REPOSITORY,
+        "default_branch": "master",
+        "allow_squash_merge": True,
+        "allow_merge_commit": False,
+        "allow_rebase_merge": False,
+        "squash_merge_commit_title": "PR_TITLE",
+        "squash_merge_commit_message": "BLANK",
+    }
+
+
+def live_merge_group_ref_payload(*, queue_sha: str, number: int = 17) -> dict:
+    return {
+        "ref": merge_group_ref(number),
+        "object": {
+            "type": "commit",
+            "sha": queue_sha,
+        },
+    }
+
+
+def predecessor_audit_payloads(
+    *,
+    base_sha: str,
+    parent_sha: str,
+    candidate_sha: str,
+) -> dict[str, dict]:
+    run_id = 701
+    job_id = 801
+    check_run_id = 501
+    check_suite_id = 601
+    predecessor_number = 16
+    node_id = "PR_kwDO_predecessor"
+    details_url = (
+        f"https://github.com/{TEST_REPOSITORY}/actions/runs/"
+        f"{run_id}/job/{job_id}"
+    )
+    return {
+        "associated": {
+            "number": predecessor_number,
+            "node_id": node_id,
+        },
+        "pull": {
+            "number": predecessor_number,
+            "node_id": node_id,
+            "state": "closed",
+            "merged": True,
+            "merged_at": "2026-07-15T00:00:00Z",
+            "draft": False,
+            "merge_commit_sha": base_sha,
+            "base": {
+                "ref": "master",
+                "sha": parent_sha,
+                "repo": {"full_name": TEST_REPOSITORY},
+            },
+            "head": {
+                "ref": "wip/predecessor",
+                "sha": candidate_sha,
+                "repo": {"full_name": TEST_REPOSITORY},
+            },
+        },
+        "check": {
+            "id": check_run_id,
+            "node_id": "CR_kwDO_predecessor",
+            "name": CI_MODULE.POST_MERGE_AUDIT_CHECK_CONTEXT,
+            "head_sha": base_sha,
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-07-15T00:02:00Z",
+            "completed_at": "2026-07-15T00:04:00Z",
+            "details_url": details_url,
+            "pull_requests": [],
+            "app": {
+                "id": CI_MODULE.GITHUB_ACTIONS_APP_ID,
+                "slug": CI_MODULE.GITHUB_ACTIONS_APP_SLUG,
+            },
+            "check_suite": {"id": check_suite_id},
+        },
+        "run": {
+            "id": run_id,
+            "workflow_id": 901,
+            "name": CI_MODULE.PERMANENT_WORKFLOW_NAME,
+            "path": CI_MODULE.PERMANENT_WORKFLOW_PATH,
+            "event": "push",
+            "head_branch": "master",
+            "head_sha": base_sha,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+            "check_suite_id": check_suite_id,
+            "created_at": "2026-07-15T00:01:00Z",
+            "run_started_at": "2026-07-15T00:02:00Z",
+            "updated_at": "2026-07-15T00:05:00Z",
+            "html_url": (
+                f"https://github.com/{TEST_REPOSITORY}/actions/runs/{run_id}"
+            ),
+            "jobs_url": (
+                f"https://api.github.com/repos/{TEST_REPOSITORY}/actions/"
+                f"runs/{run_id}/jobs"
+            ),
+            "repository": {"full_name": TEST_REPOSITORY},
+            "head_repository": {"full_name": TEST_REPOSITORY},
+        },
+        "job": {
+            "id": job_id,
+            "run_id": run_id,
+            "run_attempt": 1,
+            "workflow_name": CI_MODULE.PERMANENT_WORKFLOW_NAME,
+            "name": CI_MODULE.POST_MERGE_AUDIT_CHECK_CONTEXT,
+            "head_sha": base_sha,
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-07-15T00:02:30Z",
+            "completed_at": "2026-07-15T00:03:30Z",
+            "html_url": details_url,
+            "check_run_url": (
+                f"https://api.github.com/repos/{TEST_REPOSITORY}/"
+                f"check-runs/{check_run_id}"
+            ),
+        },
+    }
+
+
+def active_branch_rules_payload() -> list[dict]:
+    return [
+        {"type": "deletion"},
+        {
+            "type": "merge_queue",
+            "parameters": {
+                "merge_method": "SQUASH",
+                "max_entries_to_merge": 1,
+                "min_entries_to_merge": 1,
+            },
+        },
+        {"type": "non_fast_forward"},
+        {
+            "type": "pull_request",
+            "parameters": {
+                "allowed_merge_methods": ["squash"],
+                "required_approving_review_count": 1,
+                "dismiss_stale_reviews_on_push": True,
+                "require_last_push_approval": True,
+                "required_review_thread_resolution": True,
+            },
+        },
+        {"type": "required_linear_history"},
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "required_status_checks": [
+                    {
+                        "context": CI_MODULE.REQUIRED_CHECK_CONTEXT,
+                        "integration_id": CI_MODULE.GITHUB_ACTIONS_APP_ID,
+                    }
+                ],
+            },
+        },
+    ]
+
+
+def branch_protection_payload() -> dict:
+    return {
+        "required_status_checks": {
+            "strict": True,
+            "contexts": [CI_MODULE.REQUIRED_CHECK_CONTEXT],
+            "checks": [
+                {
+                    "context": CI_MODULE.REQUIRED_CHECK_CONTEXT,
+                    "app_id": CI_MODULE.GITHUB_ACTIONS_APP_ID,
+                }
+            ],
+        },
+        "required_pull_request_reviews": {
+            "required_approving_review_count": 1,
+            "dismiss_stale_reviews": True,
+            "require_last_push_approval": True,
+            "bypass_pull_request_allowances": {
+                "apps": [],
+                "teams": [],
+                "users": [],
+            },
+        },
+        "enforce_admins": {"enabled": True},
+        "required_linear_history": {"enabled": True},
+        "required_conversation_resolution": {"enabled": True},
+        "allow_force_pushes": {"enabled": False},
+        "allow_deletions": {"enabled": False},
+    }
+
+
+class MergeGroupGraph:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        subprocess.run(
+            ["git", "init", "--quiet", str(root)],
+            check=True,
+        )
+        configure_git(root)
+        for relative in CI_MODULE.PERMANENT_TRUST_GENERATION_PATHS:
+            self.write(relative, f"Synthetic trusted file: {relative}\n")
+        self.base = commit_all(root, "base")
+
+    @property
+    def git_dir(self) -> Path:
+        return self.root / ".git"
+
+    def write(self, relative: str, value: str) -> None:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value, encoding="utf-8")
+
+    def reset(self, revision: str) -> None:
+        git(self.root, "reset", "--hard", "--quiet", revision)
+
+    def candidate(self, *, role: str, message: str) -> str:
+        self.reset(self.base)
+        if role == "publication":
+            self.write(
+                "retained/daily/episodes.jsonl",
+                '{"episode":"candidate"}\n',
+            )
+        elif role == "admin":
+            self.write("README.md", "Signed admin candidate.\n")
+        else:
+            raise AssertionError(f"unsupported fixture role: {role}")
+        return commit_all(self.root, message)
+
+    def queue(
+        self,
+        *,
+        candidate: str,
+        role: str,
+        advance_base: bool,
+    ) -> tuple[str, str]:
+        self.reset(self.base)
+        if advance_base:
+            self.write(
+                "retained/weekly/episodes.jsonl",
+                '{"episode":"concurrent"}\n',
+            )
+            queue_base = commit_all(self.root, "concurrent publication")
+        else:
+            queue_base = self.base
+        candidate_path = (
+            "retained/daily/episodes.jsonl"
+            if role == "publication"
+            else "README.md"
+        )
+        git(self.root, "checkout", candidate, "--", candidate_path)
+        git(self.root, "add", "--all")
+        queue_tree = git(self.root, "write-tree")
+        queue = fixture_raw_commit(
+            self.root,
+            tree_oid=queue_tree,
+            parents=(queue_base, candidate),
+            message="queue",
+            include_signature=False,
+        )
+        git(self.root, "update-ref", "HEAD", queue)
+        git(self.root, "reset", "--hard", "--quiet", queue)
+        return queue_base, queue
+
+    def plan(self, *, candidate: str, role: str, subject: str) -> dict:
+        entries = CI_MODULE._trust_generation_entries(
+            self.git_dir,
+            self.base,
+        )
+        return {
+            "schema_version": 1,
+            "base_oid": self.base,
+            "head_oid": candidate,
+            "head_tree_oid": git(
+                self.root,
+                "rev-parse",
+                f"{candidate}^{{tree}}",
+            ),
+            "squash_subject": subject,
+            "trust_generation": hashlib.sha256(
+                CI_MODULE.compact_json_bytes(entries)
+            ).hexdigest(),
+            "role": role,
+        }
+
+    def snapshot(
+        self,
+        *,
+        candidate: str,
+        queue_base: str,
+        queue: str,
+        title: str,
+    ) -> object:
+        return CI_MODULE.MergeGroupSnapshot(
+            repository=TEST_REPOSITORY,
+            base_ref="refs/heads/master",
+            base_sha=queue_base,
+            queue_ref=merge_group_ref(),
+            queue_sha=queue,
+            workflow_sha=queue_base,
+            pull_request_number=17,
+            pull_request_node_id="PR_kwDO_bootstrap",
+            pull_request_title=title,
+            candidate_ref="wip/history-publication",
+            candidate_sha=candidate,
+            required_check=CI_MODULE.REQUIRED_CHECK_CONTEXT,
+            tcb_sha256="1" * 64,
+        )
 
 
 class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
-    def test_bootstrap_is_read_only_same_repo_and_secret_free(self) -> None:
-        workflow = WORKFLOW.read_text(encoding="utf-8")
+    def test_workflow_policy_is_duplicate_key_safe_and_exact(self) -> None:
+        workflow_text = WORKFLOW.read_text(encoding="utf-8")
+        workflow = load_workflow()
+        observed = VALIDATOR_MODULE.bootstrap_workflow_policy_fingerprint(workflow)
+        self.assertEqual(observed, EXPECTED_WORKFLOW_POLICY_SHA256)
+        self.assertEqual(
+            VALIDATOR_MODULE.BOOTSTRAP_WORKFLOW_POLICY_SHA256,
+            EXPECTED_WORKFLOW_POLICY_SHA256,
+        )
+        duplicate = workflow_text.replace(
+            "name: Session Retrospective v2 Bootstrap\n",
+            "name: Session Retrospective v2 Bootstrap\nname: Shadow\n",
+            1,
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate key: name"):
+            VALIDATOR_MODULE.parse_strict_workflow_yaml(duplicate)
 
-        self.assertIn("pull_request_target:", workflow)
-        self.assertIn("\n  pull_request:\n", workflow)
-        self.assertEqual(workflow.count("contents: read"), 2)
-        self.assertNotIn("contents: write", workflow)
-        self.assertNotIn("pull-requests: write", workflow)
-        self.assertNotIn("secrets.", workflow)
-        self.assertIn(
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            workflow,
+    def test_trigger_permissions_identity_outputs_and_timeout_are_exact(self) -> None:
+        workflow = load_workflow()
+        self.assertEqual(
+            workflow["on"],
+            {
+                "pull_request_target": {
+                    "branches": ["master"],
+                    "types": [
+                        "opened",
+                        "reopened",
+                        "synchronize",
+                        "ready_for_review",
+                        "converted_to_draft",
+                        "edited",
+                    ],
+                },
+                "merge_group": {"types": ["checks_requested"]},
+            },
         )
-        self.assertIn("github.event.pull_request.base.ref == 'master'", workflow)
-        self.assertIn(
-            "github.event.pull_request.head.ref == "
-            "'wip/session-retrospective-v2-history'",
-            workflow,
+        self.assertEqual(workflow["permissions"], {})
+        self.assertEqual(
+            {key: workflow["env"][key] for key in CLOSED_GIT_WORKFLOW_ENV},
+            CLOSED_GIT_WORKFLOW_ENV,
         )
-        self.assertIn("github.event_name == 'pull_request_target'", workflow)
-        self.assertIn("github.event_name == 'pull_request'", workflow)
-        self.assertIn(
-            "'wip/session-retrospective-v2-ci-bootstrap'",
-            workflow,
+        self.assertEqual(
+            workflow["env"]["RETROSPECTIVE_HISTORY_MUTATION_MODEL"],
+            "github-protected-merge-queue-squash-only",
         )
-        self.assertIn(
-            ".github/workflows/session-retrospective-v2-bootstrap.yml",
-            workflow,
+        self.assertIn("current-q", workflow["env"]["RETROSPECTIVE_HISTORY_TCB"])
+        self.assertNotIn("pull_request", workflow["on"])
+        job = workflow_job()
+        self.assertEqual(job["runs-on"], "ubuntu-24.04")
+        self.assertEqual(job["timeout-minutes"], 25)
+        self.assertEqual(job["name"], "Trusted history gate")
+        self.assertEqual(
+            job["permissions"],
+            {"contents": "read", "pull-requests": "read"},
         )
-        self.assertIn("timeout-minutes: 30", workflow)
+        self.assertNotIn("outputs", job)
+        self.assertIn("MERGE_GROUP_SNAPSHOT", job["env"])
+        self.assertIn("QUEUE_ROOT", job["env"])
+        self.assertIn("github.event.pull_request.draft == false", job["if"])
+        self.assertIn("github.event_name == 'merge_group'", job["if"])
 
-    def test_bootstrap_binds_and_scrubs_candidate_execution(self) -> None:
-        workflow = WORKFLOW.read_text(encoding="utf-8")
+    def test_only_trusted_base_is_checked_out_and_actions_are_pinned(self) -> None:
+        action_steps = [step for step in workflow_job()["steps"] if "uses" in step]
+        self.assertEqual(len(action_steps), 2)
+        checkout, setup = action_steps
+        self.assertEqual(checkout["name"], "Checkout exact trusted B0 or B1")
+        self.assertEqual(checkout["with"]["path"], "trusted")
+        self.assertEqual(checkout["with"]["ref"], "${{ env.TRUSTED_SHA }}")
+        self.assertIs(checkout["with"]["persist-credentials"], False)
+        self.assertNotIn("candidate", checkout["with"]["path"])
+        self.assertEqual(setup["with"], {"python-version": "3.13", "cache": False})
+        for step in action_steps:
+            self.assertRegex(step["uses"], r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$")
 
+    def test_candidate_is_preflighted_before_blob_fetch_and_materialization(self) -> None:
+        names = [step["name"] for step in workflow_job()["steps"]]
+        ordered = (
+            "Fetch bounded bootstrap graph without checkout",
+            "Preflight exact signed bootstrap H",
+            "Materialize only preflight-bounded blobs",
+            "Verify signature and materialize H and Q as data",
+            "Establish read-only H and Q mounts",
+            "Validate B0/H candidate or B1/Q transaction",
+        )
+        offsets = [names.index(name) for name in ordered]
+        self.assertEqual(offsets, sorted(offsets))
+        named = steps_by_name()
+        metadata_fetch = named[ordered[0]]["run"]
+        blob_fetch = named[ordered[2]]["run"]
+        materialize = named[ordered[3]]["run"]
+        self.assertIn("--filter=blob:none", metadata_fetch)
+        self.assertIn("--depth=2", metadata_fetch)
+        self.assertIn("remote get-url", metadata_fetch)
+        self.assertIn('remote remove "${remotes[0]}"', metadata_fetch)
         self.assertIn(
-            "CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}", workflow
+            "config --unset-all extensions.partialClone",
+            metadata_fetch,
         )
-        self.assertIn(
-            "CANDIDATE_REPOSITORY: "
-            "${{ github.event.pull_request.head.repo.full_name }}",
-            workflow,
-        )
-        self.assertNotIn(
-            "CANDIDATE_REPOSITORY: ${{ github.repository }}", workflow
-        )
-        self.assertIn(
-            'if [ "$CANDIDATE_REPOSITORY" != "${GITHUB_REPOSITORY}" ]; then',
-            workflow,
-        )
-        self.assertIn('actual="$(git -C candidate rev-parse --verify HEAD)"', workflow)
-        self.assertIn('if [ "$actual" != "$CANDIDATE_SHA" ]', workflow)
-        plain_checkout_input = "persist-creden" "tials: false"
-        self.assertEqual(workflow.count(plain_checkout_input), 1)
-        self.assertNotIn('"persist-\\u0063redentials": false', workflow)
-        self.assertIn("credential\\.helper", workflow)
-        self.assertEqual(workflow.count("env -i \\"), 4)
-        self.assertIn("GIT_CONFIG_GLOBAL=/dev/null", workflow)
-        self.assertIn("GIT_CONFIG_NOSYSTEM=1", workflow)
-        self.assertIn("PIP_CONFIG_FILE=/dev/null", workflow)
+        self.assertIn("clear_partial_clone()", metadata_fetch)
+        self.assertNotIn("|| :", metadata_fetch)
+        self.assertIn("materialize-blobs", blob_fetch)
+        self.assertIn('--manifest "$PREFLIGHT_MANIFEST"', blob_fetch)
+        self.assertNotIn("--filter=blob:limit", blob_fetch)
+        self.assertNotIn("--refetch", blob_fetch)
+        self.assertIn("verify-objects", materialize)
+        self.assertLess(materialize.index("verify-objects"), materialize.index("worktree add"))
 
-        create_home = workflow.index("      - name: Create isolated home")
-        install_dependencies = workflow.index(
-            "      - name: Install hash-pinned candidate dependencies"
-        )
-        run_validation = workflow.index(
-            "      - name: Run candidate validation without credentials"
-        )
-        create_home_step = workflow[create_home:install_dependencies]
-        self.assertIn(
-            'install -d -m 700 "$RUNNER_TEMP/retrospective-v2-bootstrap-home"',
-            create_home_step,
-        )
-        self.assertNotIn("\n        if:", create_home_step)
-        self.assertLess(create_home, install_dependencies)
-        self.assertLess(create_home, run_validation)
+    def test_partial_clone_cleanup_distinguishes_absent_from_failure(self) -> None:
+        cleanup_scripts: list[tuple[Path, str, str]] = []
+        for workflow_path in (WORKFLOW, PERMANENT_CI):
+            workflow = load_workflow(workflow_path)
+            for job in workflow["jobs"].values():
+                for step in job["steps"]:
+                    script = step.get("run")
+                    if (
+                        isinstance(script, str)
+                        and "clear_partial_clone() {" in script
+                    ):
+                        cleanup_scripts.append(
+                            (workflow_path, step["name"], script)
+                        )
+        self.assertEqual(len(cleanup_scripts), 2)
 
-    def test_bootstrap_pins_actions_and_dependency_hashes(self) -> None:
-        workflow = WORKFLOW.read_text(encoding="utf-8")
+        for workflow_path, step_name, script in cleanup_scripts:
+            with self.subTest(workflow=workflow_path.name, step=step_name):
+                self.assertIn(
+                    "config --unset-all extensions.partialClone",
+                    script,
+                )
+                self.assertIn('[ "$cleanup_status" -ne 5 ]', script)
+                self.assertIn("Partial clone cleanup failed.", script)
+                self.assertNotIn("|| :", script)
 
+    def test_candidate_code_is_never_imported_or_executed(self) -> None:
+        job = workflow_job()
+        run_scripts = "\n".join(step["run"] for step in job["steps"] if "run" in step)
+        for forbidden in (
+            "candidate/scripts/",
+            "$CANDIDATE_ROOT/scripts/",
+            "python -m unittest",
+            "pip install",
+            "working-directory:",
+            "actions/cache",
+        ):
+            self.assertNotIn(forbidden, run_scripts)
+        validation = steps_by_name()[
+            "Validate B0/H candidate or B1/Q transaction"
+        ]["run"]
         self.assertIn(
-            "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
-            workflow,
+            'python -I "$TRUSTED_ROOT/scripts/validate_retained_history.py"',
+            validation,
         )
-        self.assertIn(
-            "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
-            workflow,
+        self.assertIn('--candidate-root "$CANDIDATE_ROOT"', validation)
+        self.assertIn("env -i", validation)
+        self.assertNotIn("GH_TOKEN", validation)
+        self.assertNotIn("GITHUB_TOKEN", validation)
+
+    def test_network_and_validation_steps_have_explicit_resource_bounds(self) -> None:
+        named = steps_by_name()
+        for name in (
+            "Fetch bounded bootstrap graph without checkout",
+            "Materialize only preflight-bounded blobs",
+            "Validate B0/H candidate or B1/Q transaction",
+        ):
+            script = named[name]["run"]
+            self.assertIn("timeout --signal=TERM --kill-after=5s", script)
+            self.assertIn("ulimit -f", script)
+            self.assertIn("ulimit -n", script)
+        validation = named["Validate B0/H candidate or B1/Q transaction"]["run"]
+        self.assertIn("ulimit -t", validation)
+        self.assertIn('>"$output" 2>&1', validation)
+        self.assertIn('tail -n 120 "$output"', validation)
+
+    def test_evidence_is_queue_bound_and_has_no_commit_status(self) -> None:
+        evidence = steps_by_name()["Publish bootstrap gate evidence"]
+        script = evidence["run"]
+        for identity in (
+            "B0_SHA",
+            "CANDIDATE_SHA",
+            "TRUSTED_SHA",
+            "QUEUE_SHA",
+        ):
+            self.assertIn(identity, script)
+        self.assertIn("never reused by the merge queue", script)
+        self.assertNotIn(" status \\", script)
+        bind = steps_by_name()["Bind live PR or exact merge group"]["run"]
+        self.assertIn("snapshot", bind)
+        self.assertIn("merge-group-snapshot", bind)
+        self.assertEqual(evidence["if"], "${{ always() }}")
+
+    def test_success_summaries_report_only_event_specific_evidence(self) -> None:
+        cases = (
+            (WORKFLOW, "Publish bootstrap gate evidence", False),
+            (PERMANENT_CI, "Publish gate evidence", True),
         )
-        self.assertIn("if: github.event_name == 'pull_request_target'", workflow)
-        self.assertIn("python -m pip --isolated install --require-hashes", workflow)
+        for workflow_path, step_name, has_role in cases:
+            workflow = load_workflow(workflow_path)
+            script = steps_by_name(
+                workflow["jobs"]["trusted_history_gate"]
+            )[step_name]["run"]
+            with self.subTest(workflow=workflow_path.name):
+                for event_kind in ("pull-request", "merge-group"):
+                    with self.subTest(event=event_kind), tempfile.TemporaryDirectory() as raw:
+                        temporary = Path(raw)
+                        summary = temporary / "summary.md"
+                        result = temporary / "result.json"
+                        result.write_text(
+                            json.dumps({"role": "publication"}) + "\n",
+                            encoding="utf-8",
+                        )
+                        environment = {
+                            **os.environ,
+                            "B0_SHA": "a" * 40,
+                            "CANDIDATE_SHA": "b" * 40,
+                            "EVENT_KIND": event_kind,
+                            "FINAL_AUTHORITY_OUTCOME": (
+                                "success"
+                                if event_kind == "merge-group"
+                                else "skipped"
+                            ),
+                            "GITHUB_STEP_SUMMARY": str(summary),
+                            "PREFLIGHT_OUTCOME": "success",
+                            "QUEUE_SHA": "d" * 40,
+                            "RELEASE_OUTCOME": "success",
+                            "RESULT_PATH": str(result),
+                            "TRUSTED_SHA": "c" * 40,
+                            "VALIDATION_OUTCOME": "success",
+                        }
+                        completed = subprocess.run(
+                            ["bash", "-c", script],
+                            env=environment,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            check=False,
+                        )
+                        self.assertEqual(
+                            completed.returncode,
+                            0,
+                            completed.stderr,
+                        )
+                        rendered = summary.read_text(encoding="utf-8")
+                        if event_kind == "merge-group":
+                            self.assertIn(
+                                "were re-snapshotted by the final "
+                                "merge-group authority step",
+                                rendered,
+                            )
+                            self.assertIn("Queue base B1", rendered)
+                            self.assertNotIn(
+                                "performs no final Q",
+                                rendered,
+                            )
+                        else:
+                            self.assertIn(
+                                "performs no final Q",
+                                rendered,
+                            )
+                            self.assertNotIn(
+                                "were re-snapshotted",
+                                rendered,
+                            )
+                            self.assertNotIn("Queue base B1", rendered)
+                        if has_role:
+                            self.assertIn(
+                                "Validated role: `publication`",
+                                rendered,
+                            )
+
+    def test_pull_request_payload_binds_identity_lifecycle_base_and_head(self) -> None:
+        snapshot = validate_pull(pull_payload())
+        self.assertEqual(snapshot.number, 17)
+        self.assertEqual(snapshot.node_id, "PR_kwDO_bootstrap")
+        self.assertEqual(snapshot.state, "open")
+        self.assertIs(snapshot.merged, False)
+        self.assertIsNone(snapshot.merged_at)
+        self.assertIs(snapshot.draft, False)
+        mutations = (
+            ("number", lambda value: value.__setitem__("number", 18)),
+            ("node", lambda value: value.__setitem__("node_id", "PR_other")),
+            ("state", lambda value: value.__setitem__("state", "closed")),
+            ("merged", lambda value: value.__setitem__("merged", True)),
+            ("merged_at", lambda value: value.__setitem__("merged_at", "2026-07-23T00:00:00Z")),
+            ("draft", lambda value: value.__setitem__("draft", True)),
+            ("base", lambda value: value["base"].__setitem__("sha", "c" * 40)),
+            ("head", lambda value: value["head"].__setitem__("sha", "d" * 40)),
+        )
+        for label, mutate in mutations:
+            with self.subTest(label=label):
+                payload = copy.deepcopy(pull_payload())
+                mutate(payload)
+                with self.assertRaisesRegex(CI_MODULE.GateError, "identity, lifecycle, base, or head"):
+                    validate_pull(payload)
+
+    def test_validation_jobs_publish_no_commit_status_and_have_no_write_token(self) -> None:
+        for workflow_path in (WORKFLOW, PERMANENT_CI):
+            workflow = load_workflow(workflow_path)
+            for name, job in workflow["jobs"].items():
+                scripts = "\n".join(
+                    step["run"] for step in job["steps"] if "run" in step
+                )
+                self.assertNotIn("/statuses/", scripts)
+                self.assertFalse(
+                    any(value == "write" for value in job["permissions"].values())
+                )
+
+    def test_policy_file_reads_protect_selected_filesystem_properties(self) -> None:
+        readers = (
+            (
+                "authorization",
+                CI_MODULE,
+                "_read_policy_file_descriptor",
+                lambda path: CI_MODULE.read_stable_policy_file(
+                    path,
+                    "authorization",
+                    max_bytes=1024,
+                ),
+                CI_MODULE.GateError,
+            ),
+            (
+                "signing key",
+                VALIDATOR_MODULE,
+                "_read_history_v2_policy_file_descriptor",
+                lambda path: VALIDATOR_MODULE.read_history_v2_stable_policy_file(
+                    path,
+                    label="signing key",
+                    max_bytes=1024,
+                ),
+                ValueError,
+            ),
+        )
+        original_value = b'{"value":1}\n'
+        replacement_value = b'{"value":2}\n'
+
+        for label, module, helper_name, reader, error_type in readers:
+            with self.subTest(reader=label, transition="benign metadata"):
+                with tempfile.TemporaryDirectory() as raw:
+                    path = Path(raw) / "policy.json"
+                    path.write_bytes(original_value)
+                    path.chmod(0o644)
+                    helper = getattr(module, helper_name)
+                    calls = 0
+
+                    def benign_transition(
+                        descriptor: int,
+                        *,
+                        max_bytes: int,
+                    ) -> bytes:
+                        nonlocal calls
+                        value = helper(descriptor, max_bytes=max_bytes)
+                        calls += 1
+                        if calls == 1:
+                            os.utime(path, ns=(1_700_000_000_000_000_000,) * 2)
+                            path.chmod(0o600)
+                        return value
+
+                    with mock.patch.object(
+                        module,
+                        helper_name,
+                        side_effect=benign_transition,
+                    ):
+                        self.assertEqual(reader(path), original_value)
+
+            with self.subTest(reader=label, transition="replacement"):
+                with tempfile.TemporaryDirectory() as raw:
+                    directory = Path(raw)
+                    path = directory / "policy.json"
+                    replacement = directory / "replacement.json"
+                    path.write_bytes(original_value)
+                    helper = getattr(module, helper_name)
+                    calls = 0
+
+                    def replace_after_first_read(
+                        descriptor: int,
+                        *,
+                        max_bytes: int,
+                    ) -> bytes:
+                        nonlocal calls
+                        value = helper(descriptor, max_bytes=max_bytes)
+                        calls += 1
+                        if calls == 1:
+                            replacement.write_bytes(original_value)
+                            os.replace(replacement, path)
+                        return value
+
+                    with (
+                        mock.patch.object(
+                            module,
+                            helper_name,
+                            side_effect=replace_after_first_read,
+                        ),
+                        self.assertRaisesRegex(
+                            error_type,
+                            "object identity changed",
+                        ),
+                    ):
+                        reader(path)
+
+            with self.subTest(reader=label, transition="content"):
+                with tempfile.TemporaryDirectory() as raw:
+                    path = Path(raw) / "policy.json"
+                    path.write_bytes(original_value)
+                    helper = getattr(module, helper_name)
+                    calls = 0
+
+                    def mutate_after_first_read(
+                        descriptor: int,
+                        *,
+                        max_bytes: int,
+                    ) -> bytes:
+                        nonlocal calls
+                        value = helper(descriptor, max_bytes=max_bytes)
+                        calls += 1
+                        if calls == 1:
+                            path.write_bytes(replacement_value)
+                        return value
+
+                    with (
+                        mock.patch.object(
+                            module,
+                            helper_name,
+                            side_effect=mutate_after_first_read,
+                        ),
+                        self.assertRaisesRegex(error_type, "content changed"),
+                    ):
+                        reader(path)
+
+            with self.subTest(reader=label, transition="access policy"):
+                with tempfile.TemporaryDirectory() as raw:
+                    path = Path(raw) / "policy.json"
+                    path.write_bytes(original_value)
+                    path.chmod(0o600)
+                    helper = getattr(module, helper_name)
+                    calls = 0
+
+                    def widen_after_first_read(
+                        descriptor: int,
+                        *,
+                        max_bytes: int,
+                    ) -> bytes:
+                        nonlocal calls
+                        value = helper(descriptor, max_bytes=max_bytes)
+                        calls += 1
+                        if calls == 1:
+                            path.chmod(0o666)
+                        return value
+
+                    with (
+                        mock.patch.object(
+                            module,
+                            helper_name,
+                            side_effect=widen_after_first_read,
+                        ),
+                        self.assertRaisesRegex(
+                            error_type,
+                            "access policy changed",
+                        ),
+                    ):
+                        reader(path)
+
+            with self.subTest(reader=label, state="missing"):
+                with tempfile.TemporaryDirectory() as raw:
+                    with self.assertRaisesRegex(error_type, "is missing"):
+                        reader(Path(raw) / "missing.json")
+
+            with self.subTest(reader=label, state="unreadable"):
+                with tempfile.TemporaryDirectory() as raw:
+                    path = Path(raw) / "policy.json"
+                    path.write_bytes(original_value)
+                    with (
+                        mock.patch.object(
+                            module.os,
+                            "open",
+                            side_effect=PermissionError("denied"),
+                        ),
+                        self.assertRaisesRegex(error_type, "is unreadable"),
+                    ):
+                        reader(path)
+
+    def test_merge_queue_is_the_only_master_mutation_authority(self) -> None:
+        for workflow_path in (WORKFLOW, PERMANENT_CI):
+            workflow = load_workflow(workflow_path)
+            self.assertIn("merge_group", workflow["on"])
+            gate = workflow["jobs"]["trusted_history_gate"]
+            self.assertEqual(gate["name"], CI_MODULE.REQUIRED_CHECK_CONTEXT)
+            expected_permissions = {
+                "contents": "read",
+                "pull-requests": "read",
+            }
+            if workflow_path == PERMANENT_CI:
+                expected_permissions.update(
+                    {
+                        "actions": "read",
+                        "checks": "read",
+                    }
+                )
+            self.assertEqual(
+                gate["permissions"],
+                expected_permissions,
+            )
+            for job in workflow["jobs"].values():
+                self.assertFalse(
+                    any(value == "write" for value in job["permissions"].values())
+                )
+
+        combined = "\n".join(
+            (
+                WORKFLOW.read_text(encoding="utf-8"),
+                PERMANENT_CI.read_text(encoding="utf-8"),
+                CI_HELPER.read_text(encoding="utf-8"),
+            )
+        )
+        for prohibited in (
+            "contents: write",
+            "authorize-merge",
+            "consume-merge",
+            "force-with-lease",
+            "exact-ref-updated",
+            "already-converged",
+        ):
+            self.assertNotIn(prohibited, combined)
+        for obsolete in (
+            "create_merge_authorization",
+            "consume_merge_authorization",
+            "push_exact_authorized_ref",
+        ):
+            self.assertFalse(hasattr(CI_MODULE, obsolete))
+        with (
+            mock.patch.object(CI_MODULE.request, "urlopen") as urlopen,
+            self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "mutation is prohibited",
+            ),
+        ):
+            CI_MODULE.github_json(
+                "PUT",
+                TEST_REPOSITORY,
+                "/git/refs/heads/master",
+                token="synthetic",
+                payload={"sha": "a" * 40},
+            )
+        urlopen.assert_not_called()
+
+    def test_trusted_branch_configuration_is_exact_and_fail_closed(self) -> None:
+        digest = CI_MODULE.validate_trusted_branch_configuration(
+            repository_payload=repository_configuration_payload(),
+            active_rules_payload=active_branch_rules_payload(),
+            protection_payload=branch_protection_payload(),
+            ruleset_summaries=[],
+            ruleset_details=[],
+            repository=TEST_REPOSITORY,
+        )
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+        cases = []
+        repository = repository_configuration_payload()
+        repository["allow_merge_commit"] = True
+        cases.append(("non-squash merge", repository, active_branch_rules_payload(), branch_protection_payload(), [], []))
+
+        rules = active_branch_rules_payload()
+        next(
+            rule for rule in rules if rule["type"] == "merge_queue"
+        )["parameters"]["max_entries_to_merge"] = 2
+        cases.append(("multi-PR queue", repository_configuration_payload(), rules, branch_protection_payload(), [], []))
+
+        rules = active_branch_rules_payload()
+        next(
+            rule for rule in rules if rule["type"] == "required_status_checks"
+        )["parameters"]["required_status_checks"][0]["context"] = "stale check"
+        cases.append(("stale check", repository_configuration_payload(), rules, branch_protection_payload(), [], []))
+
+        protection = branch_protection_payload()
+        protection["allow_force_pushes"]["enabled"] = True
+        cases.append(("force push", repository_configuration_payload(), active_branch_rules_payload(), protection, [], []))
+
+        cases.append(
+            (
+                "bypass actor",
+                repository_configuration_payload(),
+                active_branch_rules_payload(),
+                branch_protection_payload(),
+                [{"id": 9}],
+                [
+                    {
+                        "id": 9,
+                        "enforcement": "active",
+                        "bypass_actors": [{"actor_id": 1}],
+                    }
+                ],
+            )
+        )
+        for label, repo, rules, protection, summaries, details in cases:
+            with self.subTest(label=label), self.assertRaises(CI_MODULE.GateError):
+                CI_MODULE.validate_trusted_branch_configuration(
+                    repository_payload=repo,
+                    active_rules_payload=rules,
+                    protection_payload=protection,
+                    ruleset_summaries=summaries,
+                    ruleset_details=details,
+                    repository=TEST_REPOSITORY,
+                )
+
+    def test_merge_group_event_proves_exact_single_pr_queue_coordinates(self) -> None:
+        base = "b" * 40
+        queue = "c" * 40
+        payload = merge_group_event_payload(base_sha=base, queue_sha=queue)
+        self.assertEqual(
+            CI_MODULE.validate_merge_group_event(
+                payload,
+                repository=TEST_REPOSITORY,
+                event_ref=merge_group_ref(),
+                event_sha=queue,
+                workflow_sha=base,
+            ),
+            (17, base, queue),
+        )
+        mutations = (
+            ("action", lambda value: value.__setitem__("action", "destroyed")),
+            (
+                "base ref",
+                lambda value: value["merge_group"].__setitem__(
+                    "base_ref",
+                    "refs/heads/release",
+                ),
+            ),
+            (
+                "queue ref",
+                lambda value: value["merge_group"].__setitem__(
+                    "head_ref",
+                    "refs/heads/gh-readonly-queue/master/pr-17-a/pr-18-b",
+                ),
+            ),
+            (
+                "queue sha",
+                lambda value: value["merge_group"].__setitem__(
+                    "head_sha",
+                    "d" * 40,
+                ),
+            ),
+        )
+        for label, mutate in mutations:
+            changed = copy.deepcopy(payload)
+            mutate(changed)
+            with self.subTest(label=label), self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "exact B1/Q pair",
+            ):
+                CI_MODULE.validate_merge_group_event(
+                    changed,
+                    repository=TEST_REPOSITORY,
+                    event_ref=merge_group_ref(),
+                    event_sha=queue,
+                    workflow_sha=base,
+                )
+
+    def test_get_to_queue_mutation_lifecycle_races_fail_without_a_writer(
+        self,
+    ) -> None:
+        base = "b" * 40
+        head = "a" * 40
+        valid = merge_group_pull_payload(
+            base_sha=base,
+            head_sha=head,
+            title="Publish retained history",
+        )
+        CI_MODULE.validate_merge_group_pull_request(
+            valid,
+            repository=TEST_REPOSITORY,
+            number=17,
+            base_sha=base,
+        )
+        mutations = (
+            (
+                "closed",
+                "not open",
+                lambda value: value.__setitem__("state", "closed"),
+            ),
+            (
+                "draft",
+                "is draft",
+                lambda value: value.__setitem__("draft", True),
+            ),
+            (
+                "retargeted",
+                "base changed",
+                lambda value: value["base"].__setitem__("ref", "release"),
+            ),
+            (
+                "head repository changed",
+                "head changed",
+                lambda value: value["head"]["repo"].__setitem__(
+                    "full_name",
+                    "Joey-Tools/other",
+                ),
+            ),
+        )
+        for label, expected, mutate in mutations:
+            changed = copy.deepcopy(valid)
+            mutate(changed)
+            with self.subTest(label=label), self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                expected,
+            ):
+                CI_MODULE.validate_merge_group_pull_request(
+                    changed,
+                    repository=TEST_REPOSITORY,
+                    number=17,
+                    base_sha=base,
+                )
+
+        with tempfile.TemporaryDirectory() as raw:
+            event_path = Path(raw) / "event.json"
+            event_path.write_text(
+                json.dumps(
+                    merge_group_event_payload(
+                        base_sha=base,
+                        queue_sha="c" * 40,
+                    )
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    side_effect=CI_MODULE.GateError("synthetic 404"),
+                ),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "pull request is unavailable",
+                ),
+            ):
+                CI_MODULE.read_live_merge_group_snapshot(
+                    repository=TEST_REPOSITORY,
+                    event_path=event_path,
+                    event_ref=merge_group_ref(),
+                    event_sha="c" * 40,
+                    workflow_sha=base,
+                    token="read-only",
+                )
+
+    def test_predecessor_audit_fuse_requires_exact_external_evidence(
+        self,
+    ) -> None:
+        base = "b" * 40
+        parent = "a" * 40
+        candidate = "c" * 40
+        payloads = predecessor_audit_payloads(
+            base_sha=base,
+            parent_sha=parent,
+            candidate_sha=candidate,
+        )
+
+        def github_payload(
+            _method: str,
+            _repository: str,
+            route: str,
+            *,
+            token: str,
+        ) -> dict:
+            self.assertEqual(token, "read-only")
+            if route == "/pulls/16":
+                return payloads["pull"]
+            if route == "/actions/runs/701":
+                return payloads["run"]
+            raise AssertionError(f"unexpected route: {route}")
+
+        def object_inventory(**kwargs: object) -> list[dict]:
+            item_key = kwargs["item_key"]
+            if item_key == "check_runs":
+                return [payloads["check"]]
+            if item_key == "jobs":
+                return [payloads["job"]]
+            raise AssertionError(f"unexpected item key: {item_key}")
+
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "github_paginated_list",
+                return_value=[payloads["associated"]],
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "github_paginated_object_items",
+                side_effect=object_inventory,
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "github_json",
+                side_effect=github_payload,
+            ),
+        ):
+            evidence = CI_MODULE.read_trusted_predecessor_audit_evidence(
+                repository=TEST_REPOSITORY,
+                base_sha=base,
+                parent_sha=parent,
+                current_pr_number=17,
+                token="read-only",
+            )
+        self.assertEqual(evidence.base_sha, base)
+        self.assertEqual(evidence.parent_sha, parent)
+        self.assertEqual(evidence.candidate_sha, candidate)
+        self.assertRegex(evidence.sha256, r"^[0-9a-f]{64}$")
+
+        cases: list[tuple[str, str, list[dict], list[dict]]] = []
+        cases.append(("missing", "missing", [], [payloads["job"]]))
+        cases.append(
+            (
+                "ambiguous",
+                "ambiguous",
+                [payloads["check"], copy.deepcopy(payloads["check"])],
+                [payloads["job"]],
+            )
+        )
+        for label, field, replacement, expected in (
+            ("failed", "conclusion", "failure", "failed"),
+            ("nonterminal", "status", "in_progress", "nonterminal"),
+            ("stale", "head_sha", "d" * 40, "stale"),
+        ):
+            changed = copy.deepcopy(payloads["check"])
+            changed[field] = replacement
+            cases.append((label, expected, [changed], [payloads["job"]]))
+        lookalike = copy.deepcopy(payloads["check"])
+        lookalike["app"]["slug"] = "lookalike-actions"
+        cases.append(("lookalike", "lookalike", [lookalike], [payloads["job"]]))
+
+        for label, expected, checks, jobs in cases:
+            def changed_inventory(
+                *,
+                item_key: str,
+                **_kwargs: object,
+            ) -> list[dict]:
+                return checks if item_key == "check_runs" else jobs
+
+            with (
+                self.subTest(label=label),
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_paginated_list",
+                    return_value=[payloads["associated"]],
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_paginated_object_items",
+                    side_effect=changed_inventory,
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    side_effect=github_payload,
+                ),
+                self.assertRaisesRegex(CI_MODULE.GateError, expected),
+            ):
+                CI_MODULE.read_trusted_predecessor_audit_evidence(
+                    repository=TEST_REPOSITORY,
+                    base_sha=base,
+                    parent_sha=parent,
+                    current_pr_number=17,
+                    token="read-only",
+                )
+
+    def test_predecessor_evidence_pagination_is_exact_and_terminal(
+        self,
+    ) -> None:
+        item = {"id": 501}
+        with mock.patch.object(
+            CI_MODULE,
+            "github_json",
+            side_effect=(
+                {"total_count": 1, "check_runs": [item]},
+                {"total_count": 1, "check_runs": []},
+            ),
+        ) as request_json:
+            self.assertEqual(
+                CI_MODULE.github_paginated_object_items(
+                    repository=TEST_REPOSITORY,
+                    route="/commits/" + "a" * 40 + "/check-runs",
+                    item_key="check_runs",
+                    token="read-only",
+                    label="synthetic check",
+                ),
+                [item],
+            )
+        self.assertEqual(request_json.call_count, 2)
+
+        pagination_cases = (
+            (
+                "duplicate",
+                (
+                    {"total_count": 2, "check_runs": [item, item]},
+                ),
+                "duplicate",
+            ),
+            (
+                "incomplete",
+                (
+                    {"total_count": 2, "check_runs": [item]},
+                ),
+                "incomplete",
+            ),
+            (
+                "nonterminal",
+                (
+                    {"total_count": 1, "check_runs": [item]},
+                    {"total_count": 1, "check_runs": [{"id": 777}]},
+                ),
+                "not terminal",
+            ),
+        )
+        for label, responses, expected in pagination_cases:
+            with (
+                self.subTest(label=label),
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    side_effect=responses,
+                ),
+                self.assertRaisesRegex(CI_MODULE.GateError, expected),
+            ):
+                CI_MODULE.github_paginated_object_items(
+                    repository=TEST_REPOSITORY,
+                    route="/commits/" + "a" * 40 + "/check-runs",
+                    item_key="check_runs",
+                    token="read-only",
+                    label="synthetic check",
+                )
+
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "github_json",
+                side_effect=([{"number": 16}], [{"number": 99}]),
+            ),
+            self.assertRaisesRegex(CI_MODULE.GateError, "not terminal"),
+        ):
+            CI_MODULE.github_paginated_list(
+                repository=TEST_REPOSITORY,
+                route="/commits/" + "a" * 40 + "/pulls",
+                token="read-only",
+                label="synthetic pull",
+            )
+
+    def test_final_publication_gate_consumes_predecessor_audit_fuse(
+        self,
+    ) -> None:
+        snapshot = CI_MODULE.MergeGroupSnapshot(
+            repository=TEST_REPOSITORY,
+            base_ref="refs/heads/master",
+            base_sha="b" * 40,
+            queue_ref=merge_group_ref(),
+            queue_sha="c" * 40,
+            workflow_sha="b" * 40,
+            pull_request_number=17,
+            pull_request_node_id="PR_kwDO_bootstrap",
+            pull_request_title="Publish retained history",
+            candidate_ref="wip/history-publication",
+            candidate_sha="a" * 40,
+            required_check=CI_MODULE.REQUIRED_CHECK_CONTEXT,
+            tcb_sha256="d" * 64,
+        )
+        evidence = CI_MODULE.PredecessorAuditEvidence(
+            base_sha=snapshot.base_sha,
+            parent_sha="e" * 40,
+            pull_request_number=16,
+            pull_request_node_id="PR_kwDO_predecessor",
+            candidate_sha="f" * 40,
+            merged_at="2026-07-15T00:00:00Z",
+            check_run_id=501,
+            check_run_node_id="CR_kwDO_predecessor",
+            check_suite_id=601,
+            workflow_run_id=701,
+            workflow_id=901,
+            workflow_run_attempt=1,
+            job_id=801,
+            started_at="2026-07-15T00:02:00Z",
+            completed_at="2026-07-15T00:04:00Z",
+            sha256="1" * 64,
+        )
+
+        class Validator:
+            BOOTSTRAP_V2_TEMPORARY_PATHS = frozenset(
+                {Path(".github/bootstrap/synthetic-marker")}
+            )
+
+            @staticmethod
+            def history_v2_bootstrap_markers(
+                _root: Path,
+                _revision: str,
+            ) -> frozenset[Path]:
+                return frozenset()
+
+            @staticmethod
+            def validate_history_v2_tree(_root: Path) -> list[str]:
+                return []
+
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "read_live_merge_group_snapshot",
+                return_value=snapshot,
+            ),
+            mock.patch.object(CI_MODULE, "_worktree_head"),
+            mock.patch.object(
+                CI_MODULE,
+                "trusted_validator_module",
+                return_value=Validator,
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "_single_worktree_parent",
+                return_value=evidence.parent_sha,
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "read_trusted_predecessor_audit_evidence",
+                return_value=evidence,
+            ) as audit,
+        ):
+            receipt = CI_MODULE.verify_live_merge_group_authority(
+                expected=snapshot,
+                event_path=Path("/synthetic/event.json"),
+                event_ref=snapshot.queue_ref,
+                event_sha=snapshot.queue_sha,
+                workflow_sha=snapshot.workflow_sha,
+                policy="history-v2",
+                trusted_base_root=Path("/synthetic/trusted"),
+                token="read-only",
+            )
+        self.assertEqual(receipt["mode"], "required")
+        self.assertEqual(receipt["audit"]["sha256"], evidence.sha256)
+        audit.assert_called_once_with(
+            repository=TEST_REPOSITORY,
+            base_sha=snapshot.base_sha,
+            parent_sha=evidence.parent_sha,
+            current_pr_number=17,
+            token="read-only",
+        )
+
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "read_live_merge_group_snapshot",
+                return_value=snapshot,
+            ),
+            mock.patch.object(CI_MODULE, "_worktree_head"),
+            mock.patch.object(
+                CI_MODULE,
+                "trusted_validator_module",
+                return_value=Validator,
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "_single_worktree_parent",
+                return_value=evidence.parent_sha,
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "read_trusted_predecessor_audit_evidence",
+                side_effect=CI_MODULE.GateError(
+                    "predecessor audit evidence is missing"
+                ),
+            ),
+            self.assertRaisesRegex(CI_MODULE.GateError, "missing"),
+        ):
+            CI_MODULE.verify_live_merge_group_authority(
+                expected=snapshot,
+                event_path=Path("/synthetic/event.json"),
+                event_ref=snapshot.queue_ref,
+                event_sha=snapshot.queue_sha,
+                workflow_sha=snapshot.workflow_sha,
+                policy="history-v2",
+                trusted_base_root=Path("/synthetic/trusted"),
+                token="read-only",
+            )
+
+    def test_final_merge_group_snapshot_rejects_live_protected_state_races(
+        self,
+    ) -> None:
+        base = "b" * 40
+        queue = "c" * 40
+        head = "a" * 40
+
+        def initial_payloads() -> dict[str, object]:
+            return {
+                "pull": merge_group_pull_payload(
+                    base_sha=base,
+                    head_sha=head,
+                    title="Publish retained history",
+                ),
+                "ref": live_merge_group_ref_payload(queue_sha=queue),
+                "repository": repository_configuration_payload(),
+                "rules": active_branch_rules_payload(),
+                "protection": branch_protection_payload(),
+                "rulesets": [],
+            }
+
+        def mutate_closed(payloads: dict[str, object]) -> None:
+            assert isinstance(payloads["pull"], dict)
+            payloads["pull"]["state"] = "closed"
+
+        def mutate_draft(payloads: dict[str, object]) -> None:
+            assert isinstance(payloads["pull"], dict)
+            payloads["pull"]["draft"] = True
+
+        def mutate_retarget(payloads: dict[str, object]) -> None:
+            assert isinstance(payloads["pull"], dict)
+            payloads["pull"]["base"]["ref"] = "release"
+
+        def mutate_head(payloads: dict[str, object]) -> None:
+            assert isinstance(payloads["pull"], dict)
+            payloads["pull"]["head"]["sha"] = "d" * 40
+
+        def mutate_queue(payloads: dict[str, object]) -> None:
+            assert isinstance(payloads["ref"], dict)
+            payloads["ref"]["object"]["sha"] = "d" * 40
+
+        def mutate_config(payloads: dict[str, object]) -> None:
+            assert isinstance(payloads["repository"], dict)
+            payloads["repository"]["allow_squash_merge"] = False
+
+        cases = (
+            ("closed", mutate_closed),
+            ("draft", mutate_draft),
+            ("retarget", mutate_retarget),
+            ("head", mutate_head),
+            ("queue", mutate_queue),
+            ("config", mutate_config),
+            ("deleted", None),
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            event_path = Path(raw) / "event.json"
+            event_path.write_text(
+                json.dumps(
+                    merge_group_event_payload(
+                        base_sha=base,
+                        queue_sha=queue,
+                    )
+                ),
+                encoding="utf-8",
+            )
+            for label, mutate in cases:
+                payloads = initial_payloads()
+                deleted = False
+
+                def github_payload(
+                    _method: str,
+                    _repository: str,
+                    route: str,
+                    *,
+                    token: str,
+                ) -> object:
+                    self.assertEqual(token, "read-only")
+                    if route == "/pulls/17":
+                        if deleted:
+                            raise CI_MODULE.GateError("synthetic deleted PR")
+                        return copy.deepcopy(payloads["pull"])
+                    if route.startswith("/git/ref/"):
+                        return copy.deepcopy(payloads["ref"])
+                    if route == "":
+                        return copy.deepcopy(payloads["repository"])
+                    if route == "/rules/branches/master":
+                        return copy.deepcopy(payloads["rules"])
+                    if route == "/branches/master/protection":
+                        return copy.deepcopy(payloads["protection"])
+                    if route == "/rulesets?per_page=100&includes_parents=true":
+                        return copy.deepcopy(payloads["rulesets"])
+                    raise AssertionError(f"unexpected route: {route}")
+
+                with mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    side_effect=github_payload,
+                ):
+                    initial = CI_MODULE.read_live_merge_group_snapshot(
+                        repository=TEST_REPOSITORY,
+                        event_path=event_path,
+                        event_ref=merge_group_ref(),
+                        event_sha=queue,
+                        workflow_sha=base,
+                        token="read-only",
+                    )
+                    if mutate is None:
+                        deleted = True
+                    else:
+                        mutate(payloads)
+                    with (
+                        self.subTest(label=label),
+                        mock.patch.object(
+                            CI_MODULE,
+                            "_worktree_head",
+                            side_effect=AssertionError(
+                                "authority path reached after live drift"
+                            ),
+                        ) as authority,
+                        self.assertRaises(CI_MODULE.GateError),
+                    ):
+                        CI_MODULE.verify_live_merge_group_authority(
+                            expected=initial,
+                            event_path=event_path,
+                            event_ref=merge_group_ref(),
+                            event_sha=queue,
+                            workflow_sha=base,
+                            policy="history-v2",
+                            trusted_base_root=Path(raw) / "trusted",
+                            token="read-only",
+                        )
+                    authority.assert_not_called()
+
+    def test_publication_revalidates_full_current_q_after_base_advance(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = MergeGroupGraph(temporary / "repo")
+            subject = "Publish retained history"
+            candidate = graph.candidate(
+                role="publication",
+                message=subject,
+            )
+            queue_base, queue = graph.queue(
+                candidate=candidate,
+                role="publication",
+                advance_base=True,
+            )
+            plan = graph.plan(
+                candidate=candidate,
+                role="publication",
+                subject=subject,
+            )
+            snapshot = graph.snapshot(
+                candidate=candidate,
+                queue_base=queue_base,
+                queue=queue,
+                title=subject,
+            )
+            candidate_root = temporary / "candidate"
+            queue_root = temporary / "queue"
+            git(
+                graph.root,
+                "worktree",
+                "add",
+                "--quiet",
+                "--detach",
+                str(candidate_root),
+                candidate,
+            )
+            git(
+                graph.root,
+                "worktree",
+                "add",
+                "--quiet",
+                "--detach",
+                str(queue_root),
+                queue,
+            )
+            calls: list[tuple[object, ...]] = []
+
+            class Plan:
+                @staticmethod
+                def as_dict() -> dict:
+                    return plan
+
+            class Validator:
+                history_v2_mutable_artifact = staticmethod(
+                    VALIDATOR_MODULE.history_v2_mutable_artifact
+                )
+
+                @staticmethod
+                def build_pull_request_candidate_plan(
+                    root: Path,
+                    base_sha: str,
+                    head_sha: str,
+                ) -> tuple[Plan, list[str]]:
+                    calls.append(("candidate", root, base_sha, head_sha))
+                    return Plan(), []
+
+                @staticmethod
+                def validate_fixed_head_snapshot(
+                    root: Path,
+                    head_sha: str,
+                ) -> list[str]:
+                    calls.append(("fixed-q", root, head_sha))
+                    return []
+
+                @staticmethod
+                def validate_append_only_event_range(
+                    root: Path,
+                    base_sha: str,
+                    head_sha: str,
+                    *,
+                    forced: bool,
+                ) -> list[str]:
+                    calls.append(
+                        ("prospective", root, base_sha, head_sha, forced)
+                    )
+                    return []
+
+            with mock.patch.object(
+                CI_MODULE,
+                "trusted_validator_module",
+                return_value=Validator,
+            ):
+                projection = CI_MODULE.validate_merge_group_transaction(
+                    git_dir=graph.git_dir,
+                    snapshot=snapshot,
+                    candidate_root=candidate_root,
+                    queue_root=queue_root,
+                    policy="history-v2",
+                )
+            self.assertEqual(projection.role, "publication")
+            self.assertEqual(projection.candidate_base_sha, graph.base)
+            self.assertEqual(projection.queue_base_sha, queue_base)
+            self.assertNotEqual(projection.prospective_sha, candidate)
+            self.assertEqual(
+                [call[0] for call in calls],
+                ["candidate", "fixed-q", "prospective"],
+            )
+            self.assertEqual(calls[1][2], queue)
+            self.assertEqual(calls[2][2], queue_base)
+            self.assertEqual(calls[2][3], projection.prospective_sha)
+            self.assertIs(calls[2][4], False)
+
+    def test_admin_and_bootstrap_require_queue_base_to_equal_candidate_base(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            graph = MergeGroupGraph(Path(raw) / "repo")
+            subject = "Update trusted history policy"
+            candidate = graph.candidate(role="admin", message=subject)
+            queue_base, queue = graph.queue(
+                candidate=candidate,
+                role="admin",
+                advance_base=True,
+            )
+            snapshot = graph.snapshot(
+                candidate=candidate,
+                queue_base=queue_base,
+                queue=queue,
+                title=subject,
+            )
+            plan = graph.plan(
+                candidate=candidate,
+                role="admin",
+                subject=subject,
+            )
+            for policy, supplied_plan, expected in (
+                ("history-v2", plan, "admin merge group requires B1 == B0"),
+                ("bootstrap-v2", None, "bootstrap merge group requires B1 == B0"),
+            ):
+                with self.subTest(policy=policy), self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    expected,
+                ):
+                    CI_MODULE._validate_merge_group_graph(
+                        graph.git_dir,
+                        snapshot,
+                        policy=policy,
+                        plan=supplied_plan,
+                    )
+
+    def test_queue_rejects_head_update_after_snapshot_and_leaves_refs_unchanged(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            graph = MergeGroupGraph(Path(raw) / "repo")
+            original = graph.candidate(
+                role="publication",
+                message="Publish original history",
+            )
+            queue_base, queue = graph.queue(
+                candidate=original,
+                role="publication",
+                advance_base=False,
+            )
+            graph.reset(graph.base)
+            graph.write(
+                "retained/daily/episodes.jsonl",
+                '{"episode":"updated"}\n',
+            )
+            updated = commit_all(graph.root, "Publish updated history")
+            snapshot = graph.snapshot(
+                candidate=updated,
+                queue_base=queue_base,
+                queue=queue,
+                title="Publish updated history",
+            )
+            before = git(graph.root, "rev-parse", "refs/heads/master")
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "exact B1/H parent-edge shape",
+            ):
+                CI_MODULE._validate_merge_group_graph(
+                    graph.git_dir,
+                    snapshot,
+                    policy="history-v2",
+                    plan=graph.plan(
+                        candidate=updated,
+                        role="publication",
+                        subject="Publish updated history",
+                    ),
+                )
+            self.assertEqual(
+                git(graph.root, "rev-parse", "refs/heads/master"),
+                before,
+            )
+
+    def test_real_base_ci_blob_and_authorized_permanent_blob_are_exact(self) -> None:
+        actual_base = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "show",
+                f"{ACTUAL_BASE_SHA}:.github/workflows/ci.yml",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if actual_base.returncode != 0:
+            self.skipTest("actual base object is unavailable in this checkout")
+        self.assertEqual(actual_base.stdout, LEGACY_CI.encode("utf-8"))
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "repo")
+            legacy_blob = git(graph.root, "rev-parse", f"{graph.actual_base}:.github/workflows/ci.yml")
+            template_blob = git(
+                graph.root,
+                "rev-parse",
+                f"{graph.base}:.github/bootstrap/session-retrospective-v2-permanent-ci.yml",
+            )
+        self.assertEqual(legacy_blob, VALIDATOR_MODULE.BOOTSTRAP_V2_LEGACY_CI_BLOB_OID)
+        self.assertEqual(template_blob, VALIDATOR_MODULE.BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID)
+
+    def test_bootstrap_preflight_rejects_raw_commit_metadata_attacks(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "repo")
+            canonical_head = graph.create_candidate(message="Canonical candidate")
+            canonical = fixture_commit_bytes(graph.root, canonical_head)
+            header = canonical.partition(b"\n\n")[0]
+            cases = (
+                (
+                    "unknown header",
+                    canonical.replace(
+                        b"\ngpgsig ",
+                        b"\nx-private hidden\ngpgsig ",
+                        1,
+                    ),
+                ),
+                (
+                    "multiline header",
+                    canonical.replace(
+                        b"\ngpgsig ",
+                        b"\n hidden-continuation\ngpgsig ",
+                        1,
+                    ),
+                ),
+                (
+                    "signature alias",
+                    canonical.replace(
+                        b"\ngpgsig ",
+                        b"\ngpgsig-sha256 ",
+                        1,
+                    ),
+                ),
+                (
+                    "encoding",
+                    canonical.replace(
+                        b"\ngpgsig ",
+                        b"\nencoding UTF-8\ngpgsig ",
+                        1,
+                    ),
+                ),
+                ("CR", canonical.replace(b"\n", b"\r\n", 1)),
+                (
+                    "noncanonical identity",
+                    canonical.replace(
+                        VALIDATOR_MODULE.HISTORY_V2_CANONICAL_IDENTITY.encode(
+                            "ascii"
+                        ),
+                        b"Synthetic Test <synthetic@example.invalid>",
+                        1,
+                    ),
+                ),
+                (
+                    "non-UTC",
+                    canonical.replace(b" +0000\ncommitter", b" +0800\ncommitter", 1),
+                ),
+                (
+                    "noncanonical message",
+                    header + b"\n\n Candidate\n",
+                ),
+                (
+                    "sensitive message",
+                    header
+                    + b"\n\nLeaked token ghp_ABCDEFGHIJKLMNOPQRST\n",
+                ),
+            )
+            for label, raw_commit in cases:
+                with self.subTest(label=label):
+                    head = fixture_store_commit(graph.root, raw_commit)
+                    with self.assertRaisesRegex(
+                        CI_MODULE.GateError,
+                        "metadata policy",
+                    ):
+                        CI_MODULE.validate_candidate_commit_object(
+                            graph.git_dir,
+                            head,
+                        )
+
+    def test_candidate_tree_closure_and_original_oid_are_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "repo")
+            head = graph.create_candidate()
+            preflight = graph.preflight(head)
+            CI_MODULE.reconstruct_candidate_tree_oid(
+                preflight.entries,
+                expected_tree_sha=preflight.head_tree_sha,
+            )
+
+            entries = preflight.entries
+            first_tree = next(
+                entry for entry in entries if entry.object_type == "tree"
+            )
+            nested_empty = (
+                *entries,
+                CI_MODULE.TreeEntry(
+                    "placeholder",
+                    "040000",
+                    "tree",
+                    first_tree.object_id,
+                    None,
+                ),
+                CI_MODULE.TreeEntry(
+                    "placeholder/nested",
+                    "040000",
+                    "tree",
+                    first_tree.object_id,
+                    None,
+                ),
+            )
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "empty or unrepresented subtree",
+            ):
+                CI_MODULE.validate_complete_tree_entries(
+                    nested_empty,
+                    expected_oid_length=40,
+                    require_blob_sizes=True,
+                )
+
+            sensitive = (
+                *entries,
+                CI_MODULE.TreeEntry(
+                    "archive/raw",
+                    "040000",
+                    "tree",
+                    first_tree.object_id,
+                    None,
+                ),
+            )
+            with self.assertRaisesRegex(CI_MODULE.GateError, "sensitive path"):
+                CI_MODULE.validate_complete_tree_entries(
+                    sensitive,
+                    expected_oid_length=40,
+                    require_blob_sizes=True,
+                )
+
+            case_collision = (
+                *entries,
+                CI_MODULE.TreeEntry(
+                    first_tree.path.swapcase(),
+                    "040000",
+                    "tree",
+                    first_tree.object_id,
+                    None,
+                ),
+            )
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "metadata is invalid",
+            ):
+                CI_MODULE.validate_complete_tree_entries(
+                    case_collision,
+                    expected_oid_length=40,
+                    require_blob_sizes=True,
+                )
+
+            without_tree = tuple(
+                entry for entry in entries if entry.path != first_tree.path
+            )
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "empty or unrepresented subtree",
+            ):
+                CI_MODULE.validate_complete_tree_entries(
+                    without_tree,
+                    expected_oid_length=40,
+                    require_blob_sizes=True,
+                )
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "differs from the original",
+            ):
+                CI_MODULE.reconstruct_candidate_tree_oid(
+                    entries,
+                    expected_tree_sha="f" * 40,
+                )
+
+            payload = tree_api_payload(graph.root, head)
+            payload["tree"] = [
+                entry
+                for entry in payload["tree"]
+                if entry["path"] != first_tree.path
+            ]
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "omits bare Git entries",
+            ):
+                CI_MODULE.validate_tree_api_payload(
+                    payload,
+                    expected_tree_sha=preflight.head_tree_sha,
+                    local_entries=CI_MODULE.git_tree_entries(
+                        graph.git_dir,
+                        head,
+                    ),
+                )
+
+    def test_bootstrap_preflight_rejects_sensitive_leaf_blob_before_dispatch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "repo")
+            graph.remove_bootstrap()
+            graph.write(
+                ".github/workflows/ci.yml",
+                PERMANENT_CI.read_text(encoding="utf-8"),
+            )
+            graph.write("reports/api-token.txt", "must not be fetched\n")
+            head = commit_all(graph.root, "sensitive leaf probe")
+            payload = tree_api_payload(graph.root, head)
+
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "validate_tree_api_payload",
+                    side_effect=AssertionError(
+                        "sensitive leaf reached API type dispatch"
+                    ),
+                ) as api_validation,
+                mock.patch.object(
+                    CI_MODULE,
+                    "reconstruct_candidate_tree_oid",
+                    side_effect=AssertionError(
+                        "sensitive leaf reached tree reconstruction"
+                    ),
+                ) as reconstruction,
+                self.assertRaisesRegex(CI_MODULE.GateError, "sensitive path"),
+            ):
+                CI_MODULE.preflight_git_candidate(
+                    graph.git_dir,
+                    base_sha=graph.base,
+                    head_sha=head,
+                    tree_payload=payload,
+                    policy="bootstrap-v2",
+                )
+            api_validation.assert_not_called()
+            reconstruction.assert_not_called()
+
+    def test_bootstrap_preflight_rejects_admin_armor_path_variants_before_fetch(
+        self,
+    ) -> None:
+        forbidden_leaf = "retrospective-history-v2-admin.asc"
+        fullwidth_leaf = "".join(
+            chr(ord(character) + 0xFEE0)
+            if 0x21 <= ord(character) <= 0x7E
+            else character
+            for character in forbidden_leaf
+        )
+        variants = (
+            forbidden_leaf,
+            forbidden_leaf.upper(),
+            fullwidth_leaf,
+            f"archive/{forbidden_leaf}/report.md",
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "repo")
+            head = graph.create_candidate()
+            existing_blob = git(graph.root, "rev-parse", f"{head}:AGENTS.md")
+            original_git_output = CI_MODULE.git_output
+
+            for path in variants:
+                with self.subTest(path=path):
+                    record = (
+                        f"100644 blob {existing_blob}\t{path}".encode("utf-8")
+                        + b"\x00"
+                    )
+
+                    def injected_git_output(
+                        git_dir: Path,
+                        *arguments: str,
+                        **kwargs: object,
+                    ) -> bytes:
+                        output = original_git_output(
+                            git_dir,
+                            *arguments,
+                            **kwargs,
+                        )
+                        if (
+                            arguments
+                            and arguments[0] == "ls-tree"
+                            and arguments[-1] == head
+                        ):
+                            return record + output
+                        return output
+
+                    tree_loader = mock.Mock(
+                        side_effect=AssertionError(
+                            "forbidden armor path reached tree API fetch"
+                        )
+                    )
+                    with (
+                        mock.patch.object(
+                            CI_MODULE,
+                            "git_output",
+                            side_effect=injected_git_output,
+                        ),
+                        mock.patch.object(
+                            CI_MODULE,
+                            "reconstruct_candidate_tree_oid",
+                            side_effect=AssertionError(
+                                "forbidden armor path reached tree materialization"
+                            ),
+                        ) as tree_materialization,
+                        mock.patch.object(
+                            CI_MODULE,
+                            "materialize_preflight_blobs",
+                            side_effect=AssertionError(
+                                "forbidden armor path reached blob fetch"
+                            ),
+                        ) as blob_fetch,
+                        self.assertRaisesRegex(
+                            CI_MODULE.GateError,
+                            "sensitive path",
+                        ),
+                    ):
+                        preflight = CI_MODULE.preflight_git_candidate(
+                            graph.git_dir,
+                            base_sha=graph.base,
+                            head_sha=head,
+                            tree_payload=None,
+                            tree_payload_loader=tree_loader,
+                            policy="bootstrap-v2",
+                        )
+                        CI_MODULE.materialize_preflight_blobs(
+                            graph.git_dir,
+                            preflight,
+                            repository=(
+                                "Joey-Tools/"
+                                "codex-session-retrospective-history"
+                            ),
+                            token="synthetic",
+                        )
+                    tree_loader.assert_not_called()
+                    tree_materialization.assert_not_called()
+                    blob_fetch.assert_not_called()
+
+    def test_bootstrap_preflight_verifies_admin_signature_before_execution(
+        self,
+    ) -> None:
+        expected_roles = {
+            "bootstrap-v2": Path(
+                "retrospective-history-v2-admin-public.asc"
+            ),
+            "history-v2": Path(
+                "retrospective-history-v2-publisher.asc"
+            ),
+        }
+        for policy, expected_relative in expected_roles.items():
+            with self.subTest(policy=policy), tempfile.TemporaryDirectory() as raw:
+                graph = BootstrapGraph(Path(raw) / "repo")
+                head = graph.create_candidate()
+                preflight = preflight_complete_fixture(
+                    graph.git_dir,
+                    base_sha=graph.base,
+                    head_sha=head,
+                    tree_payload=tree_api_payload(graph.root, head),
+                    policy=policy,
+                )
+                trusted_validator = CI_MODULE.trusted_validator_module()
+                key_digests = dict(
+                    trusted_validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256
+                )
+                for relative in expected_roles.values():
+                    key_digests[relative] = hashlib.sha256(
+                        (graph.root / relative).read_bytes()
+                    ).hexdigest()
+                observed_roles: list[Path] = []
+
+                class CapturingVerifier(StructuralSignatureVerifier):
+                    def __init__(
+                        self,
+                        public_key: bytes,
+                        *,
+                        relative: Path,
+                    ) -> None:
+                        super().__init__(public_key, relative=relative)
+                        observed_roles.append(relative)
+
+                with (
+                    mock.patch.object(
+                        trusted_validator,
+                        "BOOTSTRAP_V2_PUBLIC_KEY_SHA256",
+                        key_digests,
+                    ),
+                    mock.patch.object(
+                        trusted_validator,
+                        "HistoryV2SignatureVerifier",
+                        CapturingVerifier,
+                    ),
+                ):
+                    CI_MODULE.verify_preflight_objects(
+                        graph.git_dir,
+                        preflight,
+                    )
+                self.assertEqual(
+                    observed_roles,
+                    [expected_relative] if policy == "bootstrap-v2" else [],
+                )
+
+    def test_shared_git_graph_accepts_only_one_direct_candidate_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "valid")
+            head = graph.create_candidate()
+            preflight = graph.preflight(head)
+            self.assertEqual(preflight.base_sha, graph.base)
+            self.assertEqual(preflight.head_sha, head)
+            self.assertEqual(preflight.commit_count, 1)
+
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "stale")
+            head = graph.create_candidate()
+            with self.assertRaises(CI_MODULE.GateError):
+                graph.preflight(head, base=graph.actual_base)
+
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "multi")
+            graph.write("intermediate.txt", "intermediate\n")
+            commit_all(graph.root, "intermediate")
+            head = graph.create_candidate()
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "exactly one commit",
+            ):
+                graph.preflight(head)
+
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "merge")
+            git(graph.root, "switch", "--quiet", "-c", "side")
+            graph.write("side.txt", "side\n")
+            side = commit_all(graph.root, "side")
+            git(graph.root, "switch", "--quiet", "--detach", graph.base)
+            head = graph.create_candidate(message="candidate side")
+            git(
+                graph.root,
+                "merge",
+                "--quiet",
+                "--no-ff",
+                "--no-commit",
+                "side",
+            )
+            merge_head = commit_all(
+                graph.root,
+                "merge",
+                parents=(head, side),
+            )
+            self.assertNotEqual(head, merge_head)
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "exactly one commit",
+            ):
+                graph.preflight(merge_head)
+
+    def test_shared_git_graph_requires_explicit_bootstrap_deletions(self) -> None:
+        for retained in CI_MODULE.BOOTSTRAP_TEMPORARY_PATHS:
+            with self.subTest(retained=retained):
+                with tempfile.TemporaryDirectory() as raw:
+                    graph = BootstrapGraph(Path(raw) / "repo")
+                    head = graph.create_candidate(retain={retained})
+                    with self.assertRaisesRegex(CI_MODULE.GateError, "explicitly delete"):
+                        graph.preflight(head)
+
+    def test_shared_git_graph_rejects_size_count_and_api_identity_attacks(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "ci")
+            graph.remove_bootstrap()
+            graph.write(".github/workflows/ci.yml", LEGACY_CI)
+            head = commit_all(graph.root, "wrong CI")
+            with self.assertRaisesRegex(CI_MODULE.GateError, "authorized permanent blob"):
+                graph.preflight(head)
+
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "large")
+            graph.remove_bootstrap()
+            graph.write(".github/workflows/ci.yml", PERMANENT_CI.read_text())
+            oversized = graph.root / "oversized.bin"
+            oversized.write_bytes(b"x" * (CI_MODULE.MAX_BLOB_BYTES + 1))
+            head = commit_all(graph.root, "oversized")
+            with self.assertRaisesRegex(CI_MODULE.GateError, "blob exceeds"):
+                graph.preflight(head)
+
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "count")
+            head = graph.create_candidate()
+            with mock.patch.object(CI_MODULE, "MAX_BLOB_ENTRIES", 1):
+                with self.assertRaisesRegex(CI_MODULE.GateError, "blob count"):
+                    graph.preflight(head)
+
+        with tempfile.TemporaryDirectory() as raw:
+            graph = BootstrapGraph(Path(raw) / "api")
+            head = graph.create_candidate()
+            payload = tree_api_payload(graph.root, head)
+            payload["sha"] = "f" * 40
+            with self.assertRaisesRegex(CI_MODULE.GateError, "incomplete or changed"):
+                preflight_complete_fixture(
+                    graph.git_dir,
+                    base_sha=graph.base,
+                    head_sha=head,
+                    tree_payload=payload,
+                    policy="bootstrap-v2",
+                )
+
+    def test_bounded_command_stops_on_output_and_time_limits(self) -> None:
+        with self.assertRaises(CI_MODULE.GateError):
+            CI_MODULE.run_bounded(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os; os.write(1, b'x' * (8 * 1024 * 1024))",
+                ],
+                max_output_bytes=128,
+                timeout_seconds=2,
+            )
+        with self.assertRaises(CI_MODULE.GateError):
+            CI_MODULE.run_bounded(
+                [sys.executable, "-c", "import time; time.sleep(2)"],
+                max_output_bytes=128,
+                timeout_seconds=0.05,
+            )
+        self.assertEqual(
+            CI_MODULE.run_bounded(
+                [sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"],
+                input_data=b"bounded input",
+                max_output_bytes=128,
+                timeout_seconds=2,
+            ),
+            b"bounded input",
+        )
+
+    def test_bounded_command_kills_descendants_holding_output_pipe(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            child_pid_path = Path(raw) / "child.pid"
+            program = (
+                "import os, pathlib, time\n"
+                f"path = pathlib.Path({str(child_pid_path)!r})\n"
+                "child = os.fork()\n"
+                "if child == 0:\n"
+                "    time.sleep(60)\n"
+                "else:\n"
+                "    path.write_text(str(child), encoding='ascii')\n"
+                "    os.write(1, b'x' * (8 * 1024 * 1024))\n"
+                "    time.sleep(60)\n"
+            )
+            with self.assertRaises(CI_MODULE.GateError):
+                CI_MODULE.run_bounded(
+                    [sys.executable, "-c", program],
+                    max_output_bytes=1024,
+                    timeout_seconds=5,
+                )
+            child_pid = int(child_pid_path.read_text(encoding="ascii"))
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(child_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("bounded command descendant remained alive")
+
+    def test_history_preflight_manifest_covers_every_new_commit_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = BootstrapGraph(temporary / "source")
+            first_path = graph.root / "reports" / "daily" / "2026" / "07" / "15.md"
+            first_path.parent.mkdir(parents=True, exist_ok=True)
+            first_path.write_text("first retained report\n", encoding="utf-8")
+            first = commit_all(graph.root, "append first retained report")
+            first_blob = git(
+                graph.root,
+                "rev-parse",
+                f"{first}:reports/daily/2026/07/15.md",
+            )
+            first_path.unlink()
+            second_path = (
+                graph.root / "reports" / "daily" / "2026" / "07" / "16.md"
+            )
+            second_path.write_text("second retained report\n", encoding="utf-8")
+            second = commit_all(graph.root, "replace retained report")
+
+            preflight = preflight_complete_fixture(
+                graph.git_dir,
+                base_sha=graph.base,
+                head_sha=second,
+                tree_payload=tree_api_payloads(
+                    graph.root,
+                    (first, second),
+                ),
+                policy="history-v2",
+            )
+            self.assertEqual(
+                tuple(commit.object_id for commit in preflight.commits),
+                (first, second),
+            )
+            self.assertEqual(preflight.commit_count, 2)
+            self.assertEqual(
+                tuple(tree.tree_oid for tree in preflight.trees),
+                tuple(dict.fromkeys(commit.tree_oid for commit in preflight.commits)),
+            )
+            self.assertIn(
+                first_blob,
+                {
+                    entry.object_id
+                    for entry in CI_MODULE.allowed_blob_entries(preflight)
+                },
+            )
+
+            manifest = temporary / "preflight.json"
+            CI_MODULE.write_json(manifest, preflight.as_dict())
+            self.assertEqual(CI_MODULE.load_preflight(manifest), preflight)
+
+    def test_history_preflight_manifest_has_an_independent_bounded_size(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = BootstrapGraph(temporary / "repo")
+            for index in range(700):
+                graph.write(
+                    f"bulk/file-{index:04d}.txt",
+                    f"bounded manifest entry {index}\n",
+                )
+            head = commit_all(graph.root, "bounded manifest")
+            preflight = preflight_complete_fixture(
+                graph.git_dir,
+                base_sha=graph.base,
+                head_sha=head,
+                tree_payload=tree_api_payload(graph.root, head),
+                policy="history-v2",
+            )
+            encoded = CI_MODULE.compact_json_bytes(preflight.as_dict())
+            self.assertGreater(len(encoded), CI_MODULE.MAX_POLICY_JSON_BYTES)
+            self.assertLessEqual(
+                len(encoded),
+                CI_MODULE.MAX_PREFLIGHT_MANIFEST_BYTES,
+            )
+
+            manifest = temporary / "preflight.json"
+            CI_MODULE.write_json(
+                manifest,
+                preflight.as_dict(),
+                max_bytes=CI_MODULE.MAX_PREFLIGHT_MANIFEST_BYTES,
+            )
+            self.assertEqual(CI_MODULE.load_preflight(manifest), preflight)
+
+    def test_history_preflight_rejects_deleted_sensitive_intermediate_before_fetch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = BootstrapGraph(temporary / "source")
+            sensitive = graph.root / "reports" / "api-token.txt"
+            sensitive.parent.mkdir(parents=True, exist_ok=True)
+            sensitive.write_text("intermediate secret-shaped data\n", encoding="utf-8")
+            first = commit_all(graph.root, "add sensitive intermediate")
+            sensitive_oid = git(
+                graph.root,
+                "rev-parse",
+                f"{first}:reports/api-token.txt",
+            )
+            sensitive.unlink()
+            second = commit_all(graph.root, "delete sensitive intermediate")
+            git(graph.root, "config", "uploadpack.allowFilter", "true")
+
+            bare = temporary / "candidate.git"
+            subprocess.run(
+                ["git", "init", "--bare", "--quiet", str(bare)],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={bare}",
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    "--depth=1",
+                    graph.root.as_uri(),
+                    graph.base,
+                ],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={bare}",
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    "--depth=65",
+                    "--filter=blob:none",
+                    graph.root.as_uri(),
+                    f"+{second}:refs/trusted-history/candidate",
+                ],
+                check=True,
+            )
+            seal_partial_bare_store(
+                bare,
+                expected_url=graph.root.as_uri(),
+            )
+            self.assertFalse(
+                bare_object_exists_without_lazy_fetch(bare, sensitive_oid)
+            )
+
+            payloads = tree_api_payloads(graph.root, (first, second))
+            tree_requests: list[str] = []
+
+            def load_tree(tree_oid: str) -> dict:
+                tree_requests.append(tree_oid)
+                return payloads[tree_oid]
+
+            materialize_worktree = mock.Mock()
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "materialize_preflight_blobs",
+                    side_effect=AssertionError(
+                        "sensitive intermediate reached blob acquisition"
+                    ),
+                ) as blob_acquisition,
+                self.assertRaisesRegex(CI_MODULE.GateError, "sensitive path"),
+            ):
+                preflight = CI_MODULE.preflight_git_candidate(
+                    bare,
+                    base_sha=graph.base,
+                    head_sha=second,
+                    tree_payload=None,
+                    tree_payload_loader=load_tree,
+                    policy="history-v2",
+                )
+                CI_MODULE.materialize_preflight_blobs(
+                    bare,
+                    preflight,
+                    repository=(
+                        "Joey-Tools/codex-session-retrospective-history"
+                    ),
+                    token="synthetic",
+                )
+                materialize_worktree()
+
+            self.assertEqual(tree_requests, [])
+            blob_acquisition.assert_not_called()
+            materialize_worktree.assert_not_called()
+            self.assertFalse(
+                bare_object_exists_without_lazy_fetch(bare, sensitive_oid)
+            )
+
+    def test_partial_bare_preflight_precedes_blob_refetch_and_materialization(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = BootstrapGraph(temporary / "source")
+            head = graph.create_candidate()
+            git(graph.root, "config", "uploadpack.allowFilter", "true")
+            bare = temporary / "candidate.git"
+            subprocess.run(
+                ["git", "init", "--bare", "--quiet", str(bare)], check=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={bare}",
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    "--depth=1",
+                    graph.root.as_uri(),
+                    graph.base,
+                ],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={bare}",
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    "--depth=2",
+                    "--filter=blob:none",
+                    graph.root.as_uri(),
+                    f"+{head}:refs/bootstrap/candidate",
+                ],
+                check=True,
+            )
+            seal_partial_bare_store(
+                bare,
+                expected_url=graph.root.as_uri(),
+            )
+            preflight = CI_MODULE.preflight_git_candidate(
+                bare,
+                base_sha=graph.base,
+                head_sha=head,
+                tree_payload=tree_api_payload(graph.root, head),
+                policy="bootstrap-v2",
+            )
+            manifest = temporary / "preflight.json"
+            CI_MODULE.write_json(manifest, preflight.as_dict())
+
+            candidate_only_oid = git(
+                graph.root,
+                "rev-parse",
+                f"{head}:candidate.txt",
+            )
+            self.assertFalse(
+                bare_object_exists_without_lazy_fetch(
+                    bare,
+                    candidate_only_oid,
+                )
+            )
+            requested_oids: list[str] = []
+
+            def load_blob(object_id: str) -> dict[str, object]:
+                requested_oids.append(object_id)
+                return blob_api_payload(graph.root, object_id)
+
+            CI_MODULE.materialize_preflight_blobs(
+                bare,
+                CI_MODULE.load_preflight(manifest),
+                repository="Joey-Tools/codex-session-retrospective-history",
+                token="synthetic",
+                blob_loader=load_blob,
+            )
+            self.assertEqual(
+                requested_oids,
+                [
+                    entry.object_id
+                    for entry in CI_MODULE.allowed_blob_entries(preflight)
+                ],
+            )
+            self.assertTrue(
+                bare_object_exists_without_lazy_fetch(
+                    bare,
+                    candidate_only_oid,
+                )
+            )
+            trusted_validator = CI_MODULE.trusted_validator_module()
+            key_digests = dict(
+                trusted_validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256
+            )
+            for relative in trusted_validator.HISTORY_V2_SIGNATURE_KEY_PATHS.values():
+                key_digests[relative] = hashlib.sha256(
+                    (graph.root / relative).read_bytes()
+                ).hexdigest()
+            with (
+                mock.patch.object(
+                    trusted_validator,
+                    "BOOTSTRAP_V2_PUBLIC_KEY_SHA256",
+                    key_digests,
+                ),
+                mock.patch.object(
+                    trusted_validator,
+                    "HistoryV2SignatureVerifier",
+                    StructuralSignatureVerifier,
+                ),
+            ):
+                CI_MODULE.verify_preflight_objects(
+                    bare, CI_MODULE.load_preflight(manifest)
+                )
+            materialized = temporary / "candidate"
+            subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={bare}",
+                    "worktree",
+                    "add",
+                    "--quiet",
+                    "--detach",
+                    str(materialized),
+                    head,
+                ],
+                check=True,
+            )
+
+            self.assertEqual(git(materialized, "rev-parse", "HEAD"), head)
+            self.assertEqual(git(materialized, "status", "--porcelain=v1"), "")
+
+            tampered = preflight.as_dict()
+            tampered["total_blob_bytes"] += 1
+            manifest.write_text(json.dumps(tampered), encoding="utf-8")
+            with self.assertRaisesRegex(CI_MODULE.GateError, "counts changed"):
+                CI_MODULE.load_preflight(manifest)
+
+    def test_oid_only_preflight_rejects_filter_downgrade_and_early_blob(
+        self,
+    ) -> None:
+        for attack in ("filter-downgrade", "early-blob"):
+            with self.subTest(attack=attack), tempfile.TemporaryDirectory() as raw:
+                temporary = Path(raw)
+                graph = BootstrapGraph(temporary / "source")
+                head = graph.create_candidate()
+                git(graph.root, "config", "uploadpack.allowFilter", "true")
+                bare = fetch_synthetic_candidate_store(
+                    temporary,
+                    graph,
+                    head=head,
+                    depth=2,
+                    filtered=attack == "early-blob",
+                )
+                candidate_oid = git(
+                    graph.root,
+                    "rev-parse",
+                    f"{head}:candidate.txt",
+                )
+                if attack == "early-blob":
+                    self.assertFalse(
+                        bare_object_exists_without_lazy_fetch(
+                            bare,
+                            candidate_oid,
+                        )
+                    )
+                    observed = CI_MODULE.git_output(
+                        bare,
+                        "hash-object",
+                        "-w",
+                        "--stdin",
+                        input_data=(graph.root / "candidate.txt").read_bytes(),
+                        max_bytes=128,
+                    ).decode("ascii").strip()
+                    self.assertEqual(observed, candidate_oid)
+                else:
+                    self.assertTrue(
+                        bare_object_exists_without_lazy_fetch(
+                            bare,
+                            candidate_oid,
+                        )
+                    )
+
+                tree_loader = mock.Mock(
+                    side_effect=AssertionError(
+                        "early candidate blob reached the tree API"
+                    )
+                )
+                with self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "present before allowlisted acquisition",
+                ):
+                    CI_MODULE.preflight_git_candidate(
+                        bare,
+                        base_sha=graph.base,
+                        head_sha=head,
+                        tree_payload=None,
+                        tree_payload_loader=tree_loader,
+                        policy="bootstrap-v2",
+                    )
+                tree_loader.assert_not_called()
+
+    def test_oid_only_preflight_rejects_promisor_remote_before_api(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = BootstrapGraph(temporary / "source")
+            head = graph.create_candidate()
+            git(graph.root, "config", "uploadpack.allowFilter", "true")
+            bare = fetch_synthetic_candidate_store(
+                temporary,
+                graph,
+                head=head,
+                depth=2,
+                filtered=True,
+                sealed=False,
+            )
+            tree_loader = mock.Mock(
+                side_effect=AssertionError(
+                    "promisor fallback reached the tree API"
+                )
+            )
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "unsafe partial-clone or remote config",
+            ):
+                CI_MODULE.preflight_git_candidate(
+                    bare,
+                    base_sha=graph.base,
+                    head_sha=head,
+                    tree_payload=None,
+                    tree_payload_loader=tree_loader,
+                    policy="bootstrap-v2",
+                )
+            tree_loader.assert_not_called()
+
+    def test_preflight_rejects_real_replace_ref_before_object_and_api_loaders(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = BootstrapGraph(temporary / "source")
+            head = graph.create_candidate()
+            git(graph.root, "config", "uploadpack.allowFilter", "true")
+            bare = fetch_synthetic_candidate_store(
+                temporary,
+                graph,
+                head=head,
+                depth=2,
+                filtered=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={bare}",
+                    "replace",
+                    head,
+                    graph.base,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            tree_loader = mock.Mock(
+                side_effect=AssertionError(
+                    "replace ref reached the tree API"
+                )
+            )
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "candidate_commit_range",
+                    side_effect=AssertionError(
+                        "replace ref reached candidate object loading"
+                    ),
+                ) as object_loader,
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "replace refs are prohibited",
+                ),
+            ):
+                CI_MODULE.preflight_git_candidate(
+                    bare,
+                    base_sha=graph.base,
+                    head_sha=head,
+                    tree_payload=None,
+                    tree_payload_loader=tree_loader,
+                    policy="bootstrap-v2",
+                )
+            object_loader.assert_not_called()
+            tree_loader.assert_not_called()
+
+    def test_preflight_fails_closed_on_replace_ref_inventory_uncertainty(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = BootstrapGraph(temporary / "source")
+            head = graph.create_candidate()
+            bare = fetch_synthetic_candidate_store(
+                temporary,
+                graph,
+                head=head,
+                depth=2,
+                filtered=False,
+            )
+            original_git_output = CI_MODULE.git_output
+            attacks = {
+                "enumeration-failure": CI_MODULE.GateError(
+                    "synthetic enumeration failure"
+                ),
+                "malformed-output": b"refs/replace/not-canonical\r\n",
+            }
+            for label, outcome in attacks.items():
+                with self.subTest(attack=label):
+                    tree_loader = mock.Mock(
+                        side_effect=AssertionError(
+                            "uncertain replace refs reached the tree API"
+                        )
+                    )
+
+                    def injected_git_output(
+                        git_dir: Path,
+                        *arguments: str,
+                        **kwargs: object,
+                    ) -> bytes:
+                        if arguments[:1] == ("for-each-ref",):
+                            if isinstance(outcome, Exception):
+                                raise outcome
+                            return outcome
+                        return original_git_output(
+                            git_dir,
+                            *arguments,
+                            **kwargs,
+                        )
+
+                    with (
+                        mock.patch.object(
+                            CI_MODULE,
+                            "git_output",
+                            side_effect=injected_git_output,
+                        ),
+                        mock.patch.object(
+                            CI_MODULE,
+                            "candidate_commit_range",
+                            side_effect=AssertionError(
+                                "uncertain replace refs reached object loading"
+                            ),
+                        ) as object_loader,
+                        self.assertRaisesRegex(
+                            CI_MODULE.GateError,
+                            "replace ref inventory",
+                        ),
+                    ):
+                        CI_MODULE.preflight_git_candidate(
+                            bare,
+                            base_sha=graph.base,
+                            head_sha=head,
+                            tree_payload=None,
+                            tree_payload_loader=tree_loader,
+                            policy="bootstrap-v2",
+                        )
+                    object_loader.assert_not_called()
+                    tree_loader.assert_not_called()
+
+    def test_preflight_rejects_partial_clone_config_before_api(self) -> None:
+        unsafe_config = {
+            "extension": ("extensions.partialClone", "origin"),
+            "promisor": ("remote.origin.promisor", "true"),
+            "partial-clone-filter": (
+                "remote.origin.partialCloneFilter",
+                "blob:none",
+            ),
+            "filter": ("remote.origin.filter", "blob:none"),
+            "push-follow-tags": ("push.followTags", "true"),
+            "url-rewrite": (
+                "url.file:///tmp/untrusted/.insteadOf",
+                "https://github.com/",
+            ),
+        }
+        for label, (key, value) in unsafe_config.items():
+            with self.subTest(config=label), tempfile.TemporaryDirectory() as raw:
+                temporary = Path(raw)
+                graph = BootstrapGraph(temporary / "source")
+                head = graph.create_candidate()
+                git(graph.root, "config", "uploadpack.allowFilter", "true")
+                bare = fetch_synthetic_candidate_store(
+                    temporary,
+                    graph,
+                    head=head,
+                    depth=2,
+                    filtered=True,
+                )
+                subprocess.run(
+                    [
+                        "git",
+                        f"--git-dir={bare}",
+                        "config",
+                        key,
+                        value,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=True,
+                )
+                tree_loader = mock.Mock(
+                    side_effect=AssertionError(
+                        "unsafe candidate config reached the tree API"
+                    )
+                )
+                with (
+                    mock.patch.object(
+                        CI_MODULE,
+                        "candidate_commit_range",
+                        side_effect=AssertionError(
+                            "unsafe candidate config reached object loading"
+                        ),
+                    ) as object_loader,
+                    self.assertRaisesRegex(
+                        CI_MODULE.GateError,
+                        "unsafe partial-clone or remote config",
+                    ),
+                ):
+                    CI_MODULE.preflight_git_candidate(
+                        bare,
+                        base_sha=graph.base,
+                        head_sha=head,
+                        tree_payload=None,
+                        tree_payload_loader=tree_loader,
+                        policy="bootstrap-v2",
+                    )
+                object_loader.assert_not_called()
+                tree_loader.assert_not_called()
+
+    def test_preflight_fails_closed_when_config_inventory_is_uncertain(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = BootstrapGraph(temporary / "source")
+            head = graph.create_candidate()
+            bare = fetch_synthetic_candidate_store(
+                temporary,
+                graph,
+                head=head,
+                depth=2,
+                filtered=False,
+            )
+            tree_loader = mock.Mock(
+                side_effect=AssertionError(
+                    "uncertain candidate config reached the tree API"
+                )
+            )
+            original_git_output = CI_MODULE.git_output
+
+            def fail_config_inventory(
+                git_dir: Path,
+                *arguments: str,
+                **kwargs: object,
+            ) -> bytes:
+                if arguments[:2] == ("config", "--local"):
+                    raise CI_MODULE.GateError("synthetic config read failure")
+                return original_git_output(git_dir, *arguments, **kwargs)
+
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "git_output",
+                    side_effect=fail_config_inventory,
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "candidate_commit_range",
+                    side_effect=AssertionError(
+                        "uncertain candidate config reached object loading"
+                    ),
+                ) as object_loader,
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "config inventory could not be enumerated",
+                ),
+            ):
+                CI_MODULE.preflight_git_candidate(
+                    bare,
+                    base_sha=graph.base,
+                    head_sha=head,
+                    tree_payload=None,
+                    tree_payload_loader=tree_loader,
+                    policy="bootstrap-v2",
+                )
+            object_loader.assert_not_called()
+            tree_loader.assert_not_called()
+
+    def test_blob_materialization_rechecks_replace_refs_and_config_before_api(
+        self,
+    ) -> None:
+        for attack in ("replace-ref", "promisor-config"):
+            with self.subTest(attack=attack), tempfile.TemporaryDirectory() as raw:
+                temporary = Path(raw)
+                graph = BootstrapGraph(temporary / "source")
+                head = graph.create_candidate()
+                git(graph.root, "config", "uploadpack.allowFilter", "true")
+                bare = fetch_synthetic_candidate_store(
+                    temporary,
+                    graph,
+                    head=head,
+                    depth=2,
+                    filtered=True,
+                )
+                preflight = CI_MODULE.preflight_git_candidate(
+                    bare,
+                    base_sha=graph.base,
+                    head_sha=head,
+                    tree_payload=tree_api_payload(graph.root, head),
+                    policy="bootstrap-v2",
+                )
+                if attack == "replace-ref":
+                    subprocess.run(
+                        [
+                            "git",
+                            f"--git-dir={bare}",
+                            "replace",
+                            head,
+                            graph.base,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=True,
+                    )
+                    expected_error = "replace refs are prohibited"
+                else:
+                    subprocess.run(
+                        [
+                            "git",
+                            f"--git-dir={bare}",
+                            "config",
+                            "remote.origin.promisor",
+                            "true",
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=True,
+                    )
+                    expected_error = "unsafe partial-clone or remote config"
+
+                blob_loader = mock.Mock(
+                    side_effect=AssertionError(
+                        "unsafe repository policy reached the blob API"
+                    )
+                )
+                with (
+                    mock.patch.object(
+                        CI_MODULE,
+                        "git_tree_entries",
+                        side_effect=AssertionError(
+                            "unsafe repository policy reached tree loading"
+                        ),
+                    ) as tree_loader,
+                    self.assertRaisesRegex(
+                        CI_MODULE.GateError,
+                        expected_error,
+                    ),
+                ):
+                    CI_MODULE.materialize_preflight_blobs(
+                        bare,
+                        preflight,
+                        repository=(
+                            "Joey-Tools/codex-session-retrospective-history"
+                        ),
+                        token="synthetic",
+                        blob_loader=blob_loader,
+                    )
+                tree_loader.assert_not_called()
+                blob_loader.assert_not_called()
+
+    def test_oid_only_preflight_accepts_unchanged_blob_metadata_transition(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = BootstrapGraph(temporary / "source")
+            (graph.root / "AGENTS.md").chmod(0o755)
+            head = commit_all(graph.root, "change tracked executable mode")
+            git(graph.root, "config", "uploadpack.allowFilter", "true")
+            bare = fetch_synthetic_candidate_store(
+                temporary,
+                graph,
+                head=head,
+                depth=65,
+                filtered=True,
+            )
+            preflight = CI_MODULE.preflight_git_candidate(
+                bare,
+                base_sha=graph.base,
+                head_sha=head,
+                tree_payload=tree_api_payload(graph.root, head),
+                policy="history-v2",
+            )
+            entry = next(
+                candidate
+                for candidate in preflight.entries
+                if candidate.path == "AGENTS.md"
+            )
+            self.assertEqual(entry.mode, "100755")
+            base_oids = {
+                candidate.object_id
+                for candidate in CI_MODULE.git_tree_entries(
+                    bare,
+                    graph.base,
+                )
+                if candidate.object_type == "blob"
+            }
+            self.assertTrue(
+                all(
+                    candidate.object_id in base_oids
+                    for candidate in CI_MODULE.allowed_blob_entries(preflight)
+                )
+            )
+
+    def test_git_object_access_policy_is_closed_and_rejects_alternates(
+        self,
+    ) -> None:
+        dangerous = {
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/tmp/untrusted-alternates",
+            "GIT_CONFIG_PARAMETERS": "'remote.origin.promisor'='true'",
+            "GIT_OBJECT_DIRECTORY": "/tmp/untrusted-objects",
+            "GIT_REPLACE_REF_BASE": "refs/untrusted/",
+        }
+        with mock.patch.dict(os.environ, dangerous, clear=False):
+            for module in (CI_MODULE, VALIDATOR_MODULE):
+                with self.subTest(module=module.__name__):
+                    environment = module.closed_git_environment()
+                    self.assertEqual(environment["GIT_NO_LAZY_FETCH"], "1")
+                    self.assertEqual(environment["GIT_NO_REPLACE_OBJECTS"], "1")
+                    self.assertEqual(environment["GIT_CONFIG_COUNT"], "0")
+                    for name in dangerous:
+                        self.assertNotIn(name, environment)
+
+        with tempfile.TemporaryDirectory() as raw:
+            bare = Path(raw) / "candidate.git"
+            subprocess.run(
+                ["git", "init", "--bare", "--quiet", str(bare)],
+                check=True,
+            )
+            alternate = bare / "objects" / "info" / "alternates"
+            alternate.write_text("/tmp/untrusted-objects\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "alternate object fallback is prohibited",
+            ):
+                CI_MODULE.git_text(bare, "remote")
+
+            real_open = CI_MODULE.os.open
+            resolved_alternate = alternate.resolve()
+
+            def deny_alternate(path: object, *arguments: object) -> int:
+                if Path(path).resolve() == resolved_alternate:
+                    raise PermissionError("synthetic denial")
+                return real_open(path, *arguments)
+
+            with (
+                mock.patch.object(
+                    CI_MODULE.os,
+                    "open",
+                    side_effect=deny_alternate,
+                ),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "alternate policy is unreadable",
+                ),
+            ):
+                CI_MODULE.git_text(bare, "remote")
+            alternate.unlink()
+            self.assertEqual(CI_MODULE.git_text(bare, "remote"), "")
+
+    @unittest.skipIf(
+        sys.platform == "darwin",
+        "Darwin does not provide the Linux runner UID/sudo contract",
+    )
+    def test_linux_sudo_chdir_enters_nobody_owned_0700_execution_root(
+        self,
+    ) -> None:
+        if not sys.platform.startswith("linux"):
+            self.skipTest("requires Linux UID semantics")
+        sudo = shutil.which("sudo")
+        pwd_command = shutil.which("pwd")
+        if sudo is None or pwd_command is None:
+            self.skipTest("sudo and pwd are required")
+        privilege_probe = subprocess.run(
+            [sudo, "-n", "true"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if privilege_probe.returncode != 0:
+            self.skipTest("passwordless sudo is unavailable")
+        nobody = pwd.getpwnam("nobody")
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            temporary.chmod(0o755)
+            execution = temporary / "execution"
+            execution.mkdir(mode=0o700)
+            subprocess.run(
+                [
+                    sudo,
+                    "-n",
+                    "chown",
+                    f"{nobody.pw_uid}:{nobody.pw_gid}",
+                    str(execution),
+                ],
+                check=True,
+            )
+            try:
+                result = subprocess.run(
+                    [
+                        sudo,
+                        "-n",
+                        "-u",
+                        "nobody",
+                        f"--chdir={execution}",
+                        "--",
+                        pwd_command,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(Path(result.stdout.strip()), execution)
+            finally:
+                subprocess.run(
+                    [
+                        sudo,
+                        "-n",
+                        "chown",
+                        f"{os.getuid()}:{os.getgid()}",
+                        str(execution),
+                    ],
+                    check=True,
+                )
+
+    def test_default_branch_execution_copy_preserves_exact_authority_tree(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            authority = temporary / "authority"
+            subprocess.run(
+                ["git", "init", "--quiet", str(authority)],
+                check=True,
+            )
+            configure_git(authority)
+            source = authority / "scripts" / "example.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("VALUE = 1\n", encoding="utf-8")
+            (authority / ".gitattributes").write_text(
+                "scripts/example.py export-ignore\n"
+                "metadata.txt export-subst\n",
+                encoding="utf-8",
+            )
+            metadata = authority / "metadata.txt"
+            metadata.write_text("$Format:%H$\n", encoding="utf-8")
+            executable = authority / "bin" / "run.sh"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+            (authority / "empty.txt").write_bytes(b"")
+            test_file = authority / "tests" / "test_execution_mutation.py"
+            test_file.parent.mkdir(parents=True)
+            test_file.write_text(
+                "from pathlib import Path\n"
+                "import unittest\n"
+                "\n"
+                "class ExecutionMutationTest(unittest.TestCase):\n"
+                "    def test_mutates_only_disposable_tree(self) -> None:\n"
+                "        Path('scripts/example.py').write_text(\n"
+                "            'VALUE = 2\\n', encoding='utf-8'\n"
+                "        )\n"
+                "        Path('generated-by-test.txt').write_text(\n"
+                "            'generated\\n', encoding='utf-8'\n"
+                "        )\n",
+                encoding="utf-8",
+            )
+            head = commit_all(authority, "default authority fixture")
+            original_tree = git(authority, "rev-parse", "HEAD^{tree}")
+            original_source = source.read_bytes()
+            snapshot = CI_MODULE.capture_pristine_authority(
+                authority,
+                expected_head=head,
+            )
+
+            execution = temporary / "execution"
+            prepared = CI_MODULE.prepare_default_execution_tree(
+                authority,
+                execution,
+                expected_head=head,
+            )
+            self.assertEqual(prepared, snapshot)
+            for relative in (
+                ".gitattributes",
+                "scripts/example.py",
+                "metadata.txt",
+                "bin/run.sh",
+                "empty.txt",
+            ):
+                expected_bytes = (authority / relative).read_bytes()
+                observed_bytes = (execution / relative).read_bytes()
+                expected_oid = git(
+                    authority,
+                    "rev-parse",
+                    f"{head}:{relative}",
+                )
+                self.assertEqual(observed_bytes, expected_bytes)
+                self.assertEqual(
+                    CI_MODULE.git_blob_object_id(
+                        observed_bytes,
+                        expected_length=len(expected_oid),
+                    ),
+                    expected_oid,
+                )
+            self.assertEqual(
+                stat.S_IMODE((execution / "bin/run.sh").stat().st_mode),
+                0o755,
+            )
+            self.assertEqual(
+                stat.S_IMODE((execution / "scripts/example.py").stat().st_mode),
+                0o644,
+            )
+            receipt_path = temporary / "authority-receipt.json"
+            CI_MODULE.write_json(
+                receipt_path,
+                CI_MODULE.authority_snapshot_payload(prepared),
+            )
+            pycache = temporary / "pycache"
+            pycache.mkdir(mode=0o700)
+            environment = {
+                **os.environ,
+                "PYTHONPYCACHEPREFIX": str(pycache),
+                "PYTHONHASHSEED": "0",
+            }
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-B",
+                    "-m",
+                    "compileall",
+                    "-q",
+                    "-f",
+                    "scripts",
+                    "tests",
+                ],
+                cwd=execution,
+                env=environment,
+                check=True,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-B",
+                    "-m",
+                    "unittest",
+                    "discover",
+                    "-s",
+                    "tests",
+                ],
+                cwd=execution,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+
+            CI_MODULE.verify_default_authority(
+                authority,
+                expected_head=head,
+                receipt=CI_MODULE.load_authority_snapshot(receipt_path),
+            )
+            self.assertEqual(git(authority, "rev-parse", "HEAD"), head)
+            self.assertEqual(
+                git(authority, "rev-parse", "HEAD^{tree}"),
+                original_tree,
+            )
+            self.assertEqual(git(authority, "status", "--porcelain=v1"), "")
+            self.assertEqual(source.read_bytes(), original_source)
+            self.assertFalse((authority / "generated-by-test.txt").exists())
+            self.assertTrue((execution / "generated-by-test.txt").is_file())
+            self.assertTrue(pycache.is_dir())
+            self.assertFalse(any(authority.rglob("*.pyc")))
+
+            source_stat = source.stat()
+            os.utime(
+                source,
+                ns=(
+                    source_stat.st_atime_ns,
+                    source_stat.st_mtime_ns + 1_000_000,
+                ),
+            )
+            CI_MODULE.verify_default_authority(
+                authority,
+                expected_head=head,
+                receipt=prepared,
+            )
+            source.write_text("VALUE = 9\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "not pristine",
+            ):
+                CI_MODULE.verify_default_authority(
+                    authority,
+                    expected_head=head,
+                    receipt=prepared,
+                )
+
+    def test_default_execution_copy_rejects_blob_bytes_not_bound_to_oid(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            authority = temporary / "authority"
+            subprocess.run(
+                ["git", "init", "--quiet", str(authority)],
+                check=True,
+            )
+            configure_git(authority)
+            (authority / "payload.txt").write_text(
+                "authenticated payload\n",
+                encoding="utf-8",
+            )
+            head = commit_all(authority, "authority blob fixture")
+            original_output = CI_MODULE._authority_git_output
+
+            def corrupt_blob_batch(
+                root: Path,
+                *arguments: str,
+                **kwargs: object,
+            ) -> bytes:
+                value = original_output(root, *arguments, **kwargs)
+                if arguments != ("cat-file", "--batch"):
+                    return value
+                header_end = value.find(b"\n")
+                if header_end < 0 or header_end + 1 >= len(value):
+                    raise AssertionError("synthetic blob batch was malformed")
+                corrupted = bytearray(value)
+                corrupted[header_end + 1] ^= 1
+                return bytes(corrupted)
+
+            execution = temporary / "execution"
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "_authority_git_output",
+                    side_effect=corrupt_blob_batch,
+                ),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "content differs from its object ID",
+                ),
+            ):
+                CI_MODULE.prepare_default_execution_tree(
+                    authority,
+                    execution,
+                    expected_head=head,
+                )
+            self.assertFalse((execution / "payload.txt").exists())
+
+    def test_default_execution_verifier_distinguishes_protected_properties(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            authority = temporary / "authority"
+            subprocess.run(
+                ["git", "init", "--quiet", str(authority)],
+                check=True,
+            )
+            configure_git(authority)
+            source = authority / "payload.txt"
+            source.write_text("stable payload\n", encoding="utf-8")
+            head = commit_all(authority, "execution verifier fixture")
+            entries = CI_MODULE.git_tree_entries(authority / ".git", head)
+            tree_oid = git(authority, "rev-parse", f"{head}^{{tree}}")
+            execution = temporary / "execution"
+            CI_MODULE.prepare_default_execution_tree(
+                authority,
+                execution,
+                expected_head=head,
+            )
+            payload = execution / "payload.txt"
+            original = payload.read_bytes()
+
+            metadata = payload.stat()
+            os.utime(
+                payload,
+                ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000),
+            )
+            CI_MODULE.verify_default_execution_tree(
+                execution,
+                entries=entries,
+                expected_tree_sha=tree_oid,
+            )
+
+            unexpected = execution / "unexpected.txt"
+            unexpected.write_text("unexpected\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "unexpected paths",
+            ):
+                CI_MODULE.verify_default_execution_tree(
+                    execution,
+                    entries=entries,
+                    expected_tree_sha=tree_oid,
+                )
+            unexpected.unlink()
+
+            payload.chmod(0o600)
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "access policy changed",
+            ):
+                CI_MODULE.verify_default_execution_tree(
+                    execution,
+                    entries=entries,
+                    expected_tree_sha=tree_oid,
+                )
+            payload.chmod(0o644)
+
+            payload.write_bytes(b"mutated payload\n")
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "content differs from its object ID",
+            ):
+                CI_MODULE.verify_default_execution_tree(
+                    execution,
+                    entries=entries,
+                    expected_tree_sha=tree_oid,
+                )
+            payload.write_bytes(original)
+            payload.chmod(0o644)
+
+            current = payload.stat()
+            replaced = mock.Mock(
+                st_mode=current.st_mode,
+                st_dev=current.st_dev,
+                st_ino=current.st_ino + 1,
+            )
+            with (
+                mock.patch.object(
+                    CI_MODULE.os,
+                    "stat",
+                    return_value=replaced,
+                ),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "replaced while being read",
+                ),
+            ):
+                CI_MODULE._read_stable_execution_blob(
+                    payload,
+                    expected_mode=0o644,
+                )
+
+            real_open = CI_MODULE.os.open
+
+            def deny_payload(path: object, *arguments: object) -> int:
+                if Path(path) == payload:
+                    raise PermissionError("synthetic denial")
+                return real_open(path, *arguments)
+
+            with (
+                mock.patch.object(
+                    CI_MODULE.os,
+                    "open",
+                    side_effect=deny_payload,
+                ),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "blob is unreadable",
+                ),
+            ):
+                CI_MODULE._read_stable_execution_blob(
+                    payload,
+                    expected_mode=0o644,
+                )
+
+            payload.unlink()
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "missing authenticated paths",
+            ):
+                CI_MODULE.verify_default_execution_tree(
+                    execution,
+                    entries=entries,
+                    expected_tree_sha=tree_oid,
+                )
+
+    def test_all_inline_shell_scripts_pass_bash_and_shellcheck(self) -> None:
+        for workflow_path in (WORKFLOW, PERMANENT_CI):
+            workflow = load_workflow(workflow_path)
+            for job in workflow["jobs"].values():
+                for step in job["steps"]:
+                    if "run" not in step:
+                        continue
+                    with self.subTest(workflow=workflow_path.name, step=step["name"]):
+                        syntax = subprocess.run(
+                            ["bash", "-n"],
+                            input=step["run"],
+                            text=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            check=False,
+                        )
+                        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+                        if shutil.which("shellcheck"):
+                            checked = subprocess.run(
+                                ["shellcheck", "--shell=bash", "--severity=warning", "-"],
+                                input=step["run"],
+                                text=True,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                check=False,
+                            )
+                            self.assertEqual(
+                                checked.returncode, 0, checked.stdout + checked.stderr
+                            )
 
 
 if __name__ == "__main__":
