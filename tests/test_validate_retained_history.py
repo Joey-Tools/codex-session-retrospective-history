@@ -10376,6 +10376,42 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "bytes allocation exceeds"):
                 MODULE.bootstrap_v2_python_string_constants("value = bytes(9)\n")
 
+    def test_bootstrap_v2_python_opaque_static_decoders_fail_closed(self) -> None:
+        expected = risky_github_classic_token()
+        encoded = base64.b64encode(expected.encode("ascii")).decode("ascii")
+        encoded_hex = expected.encode("ascii").hex()
+        cases = (
+            f'import base64\nvalue = base64.b64decode("{encoded}").decode("ascii")\n',
+            "from base64 import b64decode as reveal\n"
+            f'value = reveal("{encoded}").decode("ascii")\n',
+            "import base64\n"
+            "reveal = base64.b64decode\n"
+            f'value = reveal("{encoded}").decode("ascii")\n',
+            f'import binascii\nvalue = binascii.unhexlify("{encoded_hex}").decode("ascii")\n',
+            "import codecs\n"
+            f'value = codecs.decode("{encoded}", "base64").decode("ascii")\n',
+            f'import base64\npayload = base64.b64decode("{encoded}")\n',
+            "from codecs import decode as reveal\n"
+            f'value = reveal("{encoded}", "base64")\n',
+        )
+        for source in cases:
+            with self.subTest(source=source.splitlines()[-1][:48]):
+                self.assert_python_privacy_layers_reject(
+                    source,
+                    "unresolved binary decoder uses static text input",
+                )
+
+        for source in (
+            'import base64\nvalue = base64.b64decode(payload).decode("ascii")\n',
+            'value = match.group("name").decode("ascii")\n',
+            'value = b"public".decode("ascii")\n',
+        ):
+            with self.subTest(dynamic=source.splitlines()[-1][:48]):
+                self.assertEqual(
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                    [],
+                )
+
     def test_bootstrap_v2_python_opaque_iterables_fail_closed_without_risk_seeds(
         self,
     ) -> None:

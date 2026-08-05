@@ -5029,6 +5029,28 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     deterministic_text_builtin_names = frozenset(
         {"bytearray", "bytes", "chr", "str"}
     )
+    static_binary_decoder_method_names = frozenset(
+        {
+            "a2b_base64",
+            "a2b_hex",
+            "a2b_qp",
+            "a2b_uu",
+            "a85decode",
+            "b16decode",
+            "b32decode",
+            "b32hexdecode",
+            "b64decode",
+            "b85decode",
+            "decode",
+            "decompress",
+            "unhexlify",
+            "unquote_to_bytes",
+            "urlsafe_b64decode",
+        }
+    )
+    static_binary_decoder_modules = frozenset(
+        {"base64", "binascii", "bz2", "codecs", "gzip", "lzma", "urllib.parse", "zlib"}
+    )
 
     def normalized_literal_slice(node: ast.AST) -> slice | None:
         if not isinstance(node, ast.Slice):
@@ -5184,6 +5206,8 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     unresolved_augassign_receiver_ids: set[int] = set()
     bytearray_mutation_receivers: list[ast.Name] = []
     bytearray_mutation_origin_ids: frozenset[int] | None = None
+    static_binary_decoder_import_binding_keys: set[tuple[int, str]] = set()
+    static_binary_decoder_module_bindings: dict[tuple[int, str], str] = {}
 
     def name_has_prior_static_text_origin(
         node: ast.Name,
@@ -5458,6 +5482,31 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             )
             binding_candidates.setdefault((target_scope, target.id), []).append(
                 (node, assigned_value, path, target)
+            )
+
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            scope = scope_by_node_id[id(node)]
+            for alias in node.names:
+                if alias.name not in static_binary_decoder_modules:
+                    continue
+                local_name = alias.asname or alias.name.split(".", 1)[0]
+                static_binary_decoder_module_bindings[
+                    (binding_scope_for_name(scope, local_name), local_name)
+                ] = alias.name
+            continue
+        if (
+            not isinstance(node, ast.ImportFrom)
+            or node.module not in static_binary_decoder_modules
+        ):
+            continue
+        scope = scope_by_node_id[id(node)]
+        for alias in node.names:
+            if alias.name not in static_binary_decoder_method_names:
+                continue
+            local_name = alias.asname or alias.name
+            static_binary_decoder_import_binding_keys.add(
+                (binding_scope_for_name(scope, local_name), local_name)
             )
 
     bytearray_mutating_method_names = frozenset(
@@ -7376,6 +7425,122 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         binding_expression_cache[id(node)] = result
         return result
 
+    def expression_has_static_decoder_module_origin(
+        node: ast.AST,
+        module_names: frozenset[str],
+        observed_keys: frozenset[tuple[int, str]] = frozenset(),
+    ) -> bool:
+        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+            return False
+        key = name_load_binding_key(node)
+        if static_binary_decoder_module_bindings.get(key) in module_names:
+            return True
+        if key in observed_keys:
+            return False
+        next_observed = observed_keys | {key}
+        sources: list[ast.AST] = []
+        for _, assigned_value, path, _ in binding_candidates.get(key, ()):
+            selected = selected_assignment_expression(assigned_value, path)
+            sources.append(selected or assigned_value)
+        sources.extend(ordinary_ambiguous_binding_values.get(key, ()))
+        return any(
+            expression_has_static_decoder_module_origin(
+                source,
+                module_names,
+                next_observed,
+            )
+            for source in sources
+        )
+
+    def expression_has_static_binary_decoder_origin(
+        node: ast.AST,
+        observed_keys: frozenset[tuple[int, str]] = frozenset(),
+    ) -> bool:
+        if isinstance(node, ast.Attribute):
+            if node.attr == "decode":
+                return expression_has_static_decoder_module_origin(
+                    node.value,
+                    frozenset({"codecs"}),
+                )
+            return node.attr in static_binary_decoder_method_names
+        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+            return False
+        key = name_load_binding_key(node)
+        if key in static_binary_decoder_import_binding_keys:
+            return True
+        if key in observed_keys:
+            return False
+        next_observed = observed_keys | {key}
+        sources: list[ast.AST] = []
+        for _, assigned_value, path, _ in binding_candidates.get(key, ()):
+            selected = selected_assignment_expression(assigned_value, path)
+            sources.append(selected or assigned_value)
+        sources.extend(ordinary_ambiguous_binding_values.get(key, ()))
+        return any(
+            expression_has_static_binary_decoder_origin(source, next_observed)
+            for source in sources
+        )
+
+    def value_contains_static_decoder_input(value: Any) -> bool:
+        pending = [value]
+        observed = 0
+        while pending:
+            observed += 1
+            if observed > BOOTSTRAP_V2_MAX_PYTHON_AST_NODES:
+                raise ValueError(
+                    "Python static decoder input exceeds the trusted item limit"
+                )
+            current = pending.pop()
+            if type(current) in {str, bytes}:
+                return True
+            if type(current) in {tuple, list}:
+                pending.extend(current)
+            elif type(current) is dict:
+                for key, child in current.items():
+                    pending.extend((key, child))
+        return False
+
+    def expression_has_static_decoder_input(node: ast.AST) -> bool:
+        evaluated_value = evaluated.get(id(node), not_pure)
+        if evaluated_value is not not_pure and value_contains_static_decoder_input(
+            evaluated_value
+        ):
+            return True
+        return any(
+            isinstance(child, ast.Constant) and type(child.value) in {str, bytes}
+            for child in ast.walk(node)
+        )
+
+    def unresolved_static_binary_decoder_call(node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call) or not expression_has_static_binary_decoder_origin(
+            node.func
+        ):
+            return False
+        source_nodes: list[ast.AST] = []
+        if node.args:
+            first_argument = node.args[0]
+            source_nodes.append(
+                first_argument.value
+                if isinstance(first_argument, ast.Starred)
+                else first_argument
+            )
+        else:
+            source_keyword_names = {
+                "data",
+                "hexstr",
+                "input",
+                "obj",
+                "object",
+                "s",
+                "string",
+            }
+            source_nodes.extend(
+                keyword.value
+                for keyword in node.keywords
+                if keyword.arg in source_keyword_names
+            )
+        return any(expression_has_static_decoder_input(source) for source in source_nodes)
+
     resolved_bindings: dict[
         tuple[int, str],
         tuple[ast.Assign | ast.AnnAssign, Any],
@@ -7986,6 +8151,12 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             if result is not not_pure:
                 record_constructed_result(node, result)
             continue
+
+        if isinstance(node, ast.Call) and unresolved_static_binary_decoder_call(node):
+            raise ValueError(
+                "Python unresolved binary decoder uses static text input "
+                f"at line {getattr(node, 'lineno', 0)}"
+            )
 
         if isinstance(node, ast.Call) and bound_string_method_kinds(node.func):
             if (
