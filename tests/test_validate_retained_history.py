@@ -10058,6 +10058,117 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 self.assertEqual(issues, [])
                 self.assertTrue(MODULE.bootstrap_v2_python_string_constants(probe))
 
+    def test_bootstrap_v2_python_literal_text_transformations_are_scanned(
+        self,
+    ) -> None:
+        relative = Path("tests/test_retrospective_history_v2.py")
+        expected = risky_github_classic_token()
+        escaped = "".join(f"\\x{value:02x}" for value in expected.encode("ascii"))
+        cases = (
+            (
+                "replace",
+                f'value = {expected.replace("p", "x", 1)!r}.replace("x", "p", 1)\n',
+            ),
+            (
+                "reverse slice",
+                f"value = {expected[::-1]!r}[::-1]\n",
+            ),
+            (
+                "bound reverse slice",
+                f"seed = {expected[::-1]!r}\nvalue = seed[::-1]\n",
+            ),
+            (
+                "translate",
+                f'value = {expected.replace("h", "x", 1)!r}.translate('
+                'str.maketrans({"x": "h"}))\n',
+            ),
+            (
+                "encode decode",
+                f'value = r"{escaped}".encode("ascii").decode("unicode_escape")\n',
+            ),
+            (
+                "fromhex",
+                f'value = bytes.fromhex("{expected.encode("ascii").hex()}").decode('
+                '"ascii")\n',
+            ),
+        )
+        for label, source in cases:
+            with self.subTest(label=label):
+                self.assertFalse(
+                    MODULE.contains_bootstrap_v2_privacy_risk_text(
+                        source,
+                        relative=relative,
+                    )
+                )
+                self.assertIn(
+                    expected,
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                )
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    write_bootstrap_v2_candidate(root)
+                    (root / relative).write_text(source, encoding="utf-8")
+
+                    issues = "\n".join(validate_synthetic_bootstrap_v2_candidate(root))
+
+                self.assertIn(
+                    "infrastructure text contains raw/sensitive evidence",
+                    issues,
+                )
+
+    def test_bootstrap_v2_python_literal_text_transformations_accept_benign_values(
+        self,
+    ) -> None:
+        cases = (
+            ('value = "pxblic".replace("x", "u")\n', "public"),
+            ('value = "cilbup"[::-1]\n', "public"),
+            (
+                'value = "pxblic".translate(str.maketrans({"x": "u"}))\n',
+                "public",
+            ),
+            (
+                'value = r"\\x70\\x75\\x62\\x6c\\x69\\x63".encode('
+                '"ascii").decode("unicode_escape")\n',
+                "public",
+            ),
+            ('value = bytes.fromhex("7075626c6963").decode("ascii")\n', "public"),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source):
+                constants = MODULE.bootstrap_v2_python_string_constants(source)
+                self.assertIn(expected, constants)
+                self.assertEqual(
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                    [],
+                )
+
+    def test_bootstrap_v2_python_literal_text_transformations_fail_closed(
+        self,
+    ) -> None:
+        self.assert_python_privacy_layers_reject(
+            'value = "g%s_ABCDEFGHIJKLMNOP".__mod__("hp")\n',
+            "text method is outside the trusted policy",
+        )
+
+        with self.assertRaisesRegex(ValueError, "codec is outside the trusted allowlist"):
+            MODULE.bootstrap_v2_python_string_constants(
+                'value = "public".encode("rot_13")\n'
+            )
+
+        with mock.patch.object(
+            MODULE,
+            "BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES",
+            8,
+        ):
+            with self.assertRaisesRegex(ValueError, "replace exceeds"):
+                MODULE.bootstrap_v2_python_string_constants(
+                    'value = "aaaa".replace("a", "bbbb", count=4)\n'
+                )
+            with self.assertRaisesRegex(ValueError, "translate exceeds"):
+                MODULE.bootstrap_v2_python_string_constants(
+                    'value = "xx".translate(str.maketrans({"x": "abcde"}))\n'
+                )
+
     def test_bootstrap_v2_python_opaque_iterables_fail_closed_without_risk_seeds(
         self,
     ) -> None:

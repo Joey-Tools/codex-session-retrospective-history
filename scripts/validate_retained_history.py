@@ -376,10 +376,10 @@ BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
         (
-            0xC5, 0x04, 0x49, 0xAE, 0xC2, 0x9A, 0xF1, 0x6D,
-            0x71, 0x67, 0xEF, 0x4E, 0x7E, 0x2C, 0xD2, 0xA3,
-            0x64, 0x40, 0x57, 0x7C, 0xAA, 0xA1, 0x8F, 0x19,
-            0x01, 0x83, 0x15, 0x4E, 0x4D, 0x6F, 0x30, 0xBD,
+            0x36, 0x07, 0xF6, 0x4D, 0xC6, 0x05, 0x7C, 0x13,
+            0xA3, 0x83, 0x26, 0xD6, 0xAC, 0x6C, 0x0B, 0x63,
+            0x3B, 0x63, 0x5E, 0x34, 0x60, 0xCA, 0x8E, 0x63,
+            0x93, 0x82, 0x51, 0x49, 0x49, 0x78, 0x6B, 0xB6,
         )
     ).hex(),
 }
@@ -394,7 +394,7 @@ BOOTSTRAP_V2_TRUSTED_OPENPGP_RISK_VALUES_SHA256 = {
 }
 BOOTSTRAP_V2_JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 BOOTSTRAP_V2_MAX_FILE_BYTES = 2 * 1024 * 1024
-BOOTSTRAP_V2_MAX_PYTHON_SOURCE_BYTES = 512 * 1024
+BOOTSTRAP_V2_MAX_PYTHON_SOURCE_BYTES = 544 * 1024
 BOOTSTRAP_V2_MAX_PYTHON_AST_NODES = 100_000
 BOOTSTRAP_V2_MAX_PYTHON_AST_DEPTH = 100
 BOOTSTRAP_V2_MAX_PYTHON_LITERAL_CONSTANTS = 20_000
@@ -4917,6 +4917,93 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 return ~operand
         return None
 
+    modeled_string_method_names = frozenset(
+        {
+            "capitalize",
+            "casefold",
+            "center",
+            "count",
+            "decode",
+            "encode",
+            "endswith",
+            "expandtabs",
+            "find",
+            "format",
+            "format_map",
+            "fromhex",
+            "hex",
+            "index",
+            "isalnum",
+            "isalpha",
+            "isascii",
+            "isdecimal",
+            "isdigit",
+            "isidentifier",
+            "islower",
+            "isnumeric",
+            "isprintable",
+            "isspace",
+            "istitle",
+            "isupper",
+            "join",
+            "ljust",
+            "lower",
+            "lstrip",
+            "maketrans",
+            "partition",
+            "removeprefix",
+            "removesuffix",
+            "replace",
+            "rfind",
+            "rindex",
+            "rjust",
+            "rpartition",
+            "rsplit",
+            "rstrip",
+            "split",
+            "splitlines",
+            "startswith",
+            "strip",
+            "swapcase",
+            "title",
+            "translate",
+            "upper",
+            "zfill",
+        }
+    )
+    runtime_public_string_method_names = frozenset(
+        name
+        for owner in (str, bytes)
+        for name in dir(owner)
+        if not name.startswith("_") and callable(getattr(owner, name, None))
+    )
+    if runtime_public_string_method_names != modeled_string_method_names:
+        raise ValueError(
+            "Python runtime text method surface differs from the trusted policy"
+        )
+    bound_string_method_names = frozenset(
+        name
+        for owner in (str, bytes)
+        for name in dir(owner)
+        if callable(getattr(owner, name, None))
+    )
+
+    def normalized_literal_slice(node: ast.AST) -> slice | None:
+        if not isinstance(node, ast.Slice):
+            return None
+        values: list[int | None] = []
+        for component in (node.lower, node.upper, node.step):
+            if component is None:
+                values.append(None)
+                continue
+            value = normalized_literal_selector(component)
+            if type(value) is not int:
+                return None
+            values.append(value)
+        if values[2] == 0:
+            raise ValueError("Python literal slice uses a zero step")
+        return slice(*values)
+
     def is_supported_binding_expression(node: ast.AST) -> bool:
         if isinstance(node, ast.Constant):
             return node.value is None or type(node.value) in {
@@ -4930,8 +5017,14 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         if isinstance(node, ast.Name):
             return isinstance(node.ctx, ast.Load)
         if isinstance(node, ast.Attribute):
-            return node.attr in {"format", "format_map", "join"} and (
-                is_supported_binding_expression(node.value)
+            return (
+                node.attr in bound_string_method_names
+                and (
+                    node.attr in {"format", "format_map", "join"}
+                    or not isinstance(node.value, ast.Name)
+                    or node.value.id in {"bytes", "str"}
+                )
+                and is_supported_binding_expression(node.value)
             )
         if isinstance(node, (ast.Tuple, ast.List)):
             return all(is_supported_binding_expression(child) for child in node.elts)
@@ -4947,7 +5040,13 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 is_supported_binding_expression(node.operand)
             )
         if isinstance(node, ast.Subscript):
-            return normalized_literal_selector(node.slice) is not None and (
+            return (
+                normalized_literal_selector(node.slice) is not None
+                or (
+                    normalized_literal_slice(node.slice) is not None
+                    and not isinstance(node.value, ast.Name)
+                )
+            ) and (
                 is_supported_binding_expression(node.value)
             )
         if isinstance(node, ast.BinOp):
@@ -4970,7 +5069,12 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             )
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             return (
-                node.func.attr in {"format", "format_map", "join"}
+                node.func.attr in bound_string_method_names
+                and (
+                    node.func.attr in {"format", "format_map", "join"}
+                    or not isinstance(node.func.value, ast.Name)
+                    or node.func.value.id in {"bytes", "str"}
+                )
                 and is_supported_binding_expression(node.func.value)
                 and all(
                     is_supported_binding_expression(
@@ -5265,7 +5369,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         supported_string_call = (
             isinstance(parent, ast.Call)
             and isinstance(parent.func, ast.Attribute)
-            and parent.func.attr in {"format", "format_map", "join"}
+            and parent.func.attr in bound_string_method_names
         )
         opaque_call_cost = int(
             isinstance(parent, ast.Call) and not supported_string_call
@@ -5581,12 +5685,17 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     retained_evaluated_value_sizes: dict[int, int] = {}
     retained_evaluated_bytes = 0
 
+    def evaluated_text_payload_size(value: str | bytes) -> int:
+        if isinstance(value, bytes):
+            return len(value)
+        return len(value.encode("utf-8"))
+
     def charge_retained_evaluated_value(
         node: ast.AST,
         result: str | bytes,
     ) -> None:
         nonlocal retained_evaluated_bytes
-        _, payload_size = bootstrap_v2_python_constant_text(result)
+        payload_size = evaluated_text_payload_size(result)
         if payload_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
             raise ValueError("Python evaluated string exceeds the trusted byte limit")
         existing_size = retained_evaluated_value_sizes.get(id(node), 0)
@@ -5623,7 +5732,6 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             and statement_dominates_load(statement, load)
         )
 
-    bound_string_method_names = frozenset({"format", "format_map", "join"})
     bound_string_method_marker = object()
     bound_string_method_kinds_by_expression_id: dict[int, frozenset[str]] = {}
     bound_string_method_dataflow_ready = False
@@ -6288,7 +6396,11 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             elif isinstance(node, ast.JoinedStr):
                 seeded_expression_ids.add(id(node))
             elif isinstance(node, ast.Call):
-                if bound_string_method_kinds(node.func):
+                if bound_string_method_kinds(node.func) & {
+                    "format",
+                    "format_map",
+                    "join",
+                }:
                     seeded_expression_ids.add(id(node))
             elif isinstance(node, (ast.Tuple, ast.List, ast.Set)):
                 for child in node.elts:
@@ -6354,22 +6466,252 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
 
     def bound_string_method_value(
         method_name: str,
-        receiver: str | bytes,
-    ) -> tuple[object, str, str | bytes]:
+        receiver: Any,
+    ) -> tuple[object, str, Any]:
         return (bound_string_method_marker, method_name, receiver)
 
     def unpack_bound_string_method(
         value: Any,
-    ) -> tuple[str, str | bytes] | None:
+    ) -> tuple[str, Any] | None:
         if (
             type(value) is tuple
             and len(value) == 3
             and value[0] is bound_string_method_marker
             and value[1] in bound_string_method_names
-            and type(value[2]) in {str, bytes}
+            and (
+                type(value[2]) in {str, bytes}
+                or value[2] is str
+                or value[2] is bytes
+            )
         ):
             return value[1], value[2]
         return None
+
+    def unshadowed_builtin_text_type(node: ast.AST) -> type[str] | type[bytes] | None:
+        if (
+            not isinstance(node, ast.Name)
+            or not isinstance(node.ctx, ast.Load)
+            or node.id not in {"bytes", "str"}
+        ):
+            return None
+        key, skipped_class_keys = name_load_binding_resolution(node)
+        if any(
+            binding_event_ids.get(candidate)
+            for candidate in (key, *skipped_class_keys)
+        ):
+            return None
+        return bytes if node.id == "bytes" else str
+
+    def normalized_text_codec(value: Any, *, default: str) -> str:
+        if value is None:
+            value = default
+        if not isinstance(value, str):
+            raise ValueError("Python deterministic text codec name is not a string")
+        normalized = value.casefold().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "latin1": "latin_1",
+            "u8": "utf_8",
+            "utf8": "utf_8",
+            "utf16": "utf_16",
+            "utf32": "utf_32",
+        }
+        normalized = aliases.get(normalized, normalized)
+        allowed = {
+            "ascii",
+            "latin_1",
+            "raw_unicode_escape",
+            "unicode_escape",
+            "utf_8",
+            "utf_8_sig",
+            "utf_16",
+            "utf_16_be",
+            "utf_16_le",
+            "utf_32",
+            "utf_32_be",
+            "utf_32_le",
+        }
+        if normalized not in allowed:
+            raise ValueError(
+                "Python deterministic text codec is outside the trusted allowlist"
+            )
+        return normalized
+
+    def validate_text_method_result(result: Any) -> Any:
+        pending = [result]
+        observed = 0
+        aggregate_text_bytes = 0
+        while pending:
+            observed += 1
+            if observed > BOOTSTRAP_V2_MAX_PYTHON_AST_NODES:
+                raise ValueError(
+                    "Python deterministic text method result exceeds the trusted item limit"
+                )
+            current = pending.pop()
+            if current is None or type(current) in {bool, int}:
+                continue
+            if type(current) in {str, bytes}:
+                payload_size = evaluated_text_payload_size(current)
+                if payload_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
+                    raise ValueError(
+                        "Python evaluated string exceeds the trusted byte limit"
+                    )
+                aggregate_text_bytes += payload_size
+                if aggregate_text_bytes > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_BYTES:
+                    raise ValueError(
+                        "Python deterministic text method result exceeds the trusted byte limit"
+                    )
+                continue
+            if type(current) in {tuple, list}:
+                pending.extend(reversed(current))
+                continue
+            if type(current) is dict:
+                for key, child in current.items():
+                    pending.extend((key, child))
+                continue
+            raise ValueError(
+                "Python deterministic text method returned an unsupported value type"
+            )
+        return result
+
+    def preflight_text_method_call(
+        method_name: str,
+        receiver: Any,
+        arguments: tuple[Any, ...],
+        keywords: dict[str, Any],
+    ) -> None:
+        limit = BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES
+
+        if method_name not in modeled_string_method_names:
+            raise ValueError(
+                "Python deterministic text method is outside the trusted policy"
+            )
+
+        def argument(index: int, name: str, default: Any = None) -> Any:
+            return arguments[index] if len(arguments) > index else keywords.get(
+                name, default
+            )
+
+        if receiver is str or receiver is bytes:
+            if method_name not in {"fromhex", "maketrans"}:
+                raise ValueError(
+                    "Python deterministic text type method is outside the trusted policy"
+                )
+            return
+        if type(receiver) not in {str, bytes}:
+            raise ValueError(
+                "Python deterministic text method uses an unsupported receiver"
+            )
+        if method_name in {"center", "ljust", "rjust", "zfill"}:
+            width = argument(0, "width")
+            if type(width) is not int or width > limit:
+                raise ValueError(
+                    "Python deterministic text padding exceeds the trusted byte limit"
+                )
+        if method_name == "expandtabs":
+            tab_size = argument(0, "tabsize", 8)
+            if type(tab_size) is not int:
+                raise ValueError("Python deterministic expandtabs size is not an integer")
+            source_size = bootstrap_v2_python_constant_text(receiver)[1]
+            if source_size * max(tab_size, 1) > limit:
+                raise ValueError(
+                    "Python deterministic expandtabs exceeds the trusted byte limit"
+                )
+        if method_name == "replace":
+            old = argument(0, "old")
+            new = argument(1, "new")
+            if type(old) is not type(receiver) or type(new) is not type(receiver):
+                raise ValueError(
+                    "Python deterministic replace mixes text and bytes values"
+                )
+            count = argument(2, "count", -1)
+            if type(count) is not int:
+                raise ValueError("Python deterministic replace count is not an integer")
+            occurrence_count = receiver.count(old)
+            if count >= 0:
+                occurrence_count = min(occurrence_count, count)
+            source_size = bootstrap_v2_python_constant_text(receiver)[1]
+            old_size = bootstrap_v2_python_constant_text(old)[1]
+            new_size = bootstrap_v2_python_constant_text(new)[1]
+            growth = occurrence_count * max(new_size - old_size, 0)
+            if source_size + growth > limit:
+                raise ValueError(
+                    "Python deterministic replace exceeds the trusted byte limit"
+                )
+        if method_name == "translate" and isinstance(receiver, str):
+            table = argument(0, "table")
+            if type(table) is not dict:
+                raise ValueError(
+                    "Python deterministic string translate table is unsupported"
+                )
+            translated_size = 0
+            for character in receiver:
+                replacement = table.get(ord(character), character)
+                if replacement is None:
+                    continue
+                if type(replacement) is int:
+                    try:
+                        replacement = chr(replacement)
+                    except (OverflowError, ValueError) as exc:
+                        raise ValueError(
+                            "Python deterministic string translate table is invalid"
+                        ) from exc
+                if not isinstance(replacement, str):
+                    raise ValueError(
+                        "Python deterministic string translate table is invalid"
+                    )
+                translated_size += bootstrap_v2_python_constant_text(replacement)[1]
+                if translated_size > limit:
+                    raise ValueError(
+                        "Python deterministic translate exceeds the trusted byte limit"
+                    )
+        if method_name in {"encode", "decode"}:
+            default_encoding = "utf_8"
+            encoding = argument(0, "encoding")
+            normalized_text_codec(encoding, default=default_encoding)
+            errors = (
+                argument(1, "errors", "strict")
+            )
+            if errors not in {
+                "backslashreplace",
+                "ignore",
+                "namereplace",
+                "replace",
+                "strict",
+                "surrogateescape",
+                "surrogatepass",
+                "xmlcharrefreplace",
+            }:
+                raise ValueError(
+                    "Python deterministic text codec error mode is outside the trusted allowlist"
+                )
+
+    def call_deterministic_text_method(
+        method_name: str,
+        receiver: Any,
+        arguments: tuple[Any, ...],
+        keywords: dict[str, Any],
+    ) -> Any:
+        preflight_text_method_call(method_name, receiver, arguments, keywords)
+        if method_name in {"encode", "decode"}:
+            mutable_arguments = list(arguments)
+            mutable_keywords = dict(keywords)
+            if mutable_arguments:
+                mutable_arguments[0] = normalized_text_codec(
+                    mutable_arguments[0], default="utf_8"
+                )
+            elif "encoding" in mutable_keywords:
+                mutable_keywords["encoding"] = normalized_text_codec(
+                    mutable_keywords["encoding"], default="utf_8"
+                )
+            arguments = tuple(mutable_arguments)
+            keywords = mutable_keywords
+        try:
+            result = getattr(receiver, method_name)(*arguments, **keywords)
+        except Exception as exc:
+            raise ValueError(
+                "Python deterministic text method call is unsupported"
+            ) from exc
+        return validate_text_method_result(result)
 
     def select_assignment_value(result: Any, path: tuple[int, ...]) -> Any:
         for index in path:
@@ -6420,8 +6762,6 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     )
                 return not_pure
             return bootstrap_v2_python_literal_join(receiver, tuple(elements))
-        if not isinstance(receiver, str):
-            raise ValueError("Python dot formatting uses an unsupported receiver type")
         arguments: list[Any] = []
         for argument_node in node.args:
             if isinstance(argument_node, ast.Starred):
@@ -6447,6 +6787,15 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 keywords.update(keyword_value)
             else:
                 keywords[keyword.arg] = keyword_value
+        if method_name not in {"format", "format_map"}:
+            return call_deterministic_text_method(
+                method_name,
+                receiver,
+                tuple(arguments),
+                keywords,
+            )
+        if not isinstance(receiver, str):
+            raise ValueError("Python dot formatting uses an unsupported receiver type")
         return bootstrap_v2_python_dot_format(
             receiver,
             tuple(arguments),
@@ -6475,18 +6824,28 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 statement = candidates[0][0]
                 if binding_is_usable_for_load(node, key, statement):
                     result = resolve_binding(key)
+            if result is not_pure:
+                builtin_type = unshadowed_builtin_text_type(node)
+                if builtin_type is not None:
+                    result = builtin_type
         elif isinstance(node, ast.Subscript):
             container = evaluate_binding_expression(node.value)
             selector = normalized_literal_selector(node.slice)
+            if selector is None:
+                selector = normalized_literal_slice(node.slice)
             if selector is not None:
                 try:
-                    if type(container) in {tuple, list, dict}:
+                    if type(container) in {str, bytes, tuple, list, dict}:
                         result = container[selector]
                 except (IndexError, KeyError, TypeError):
                     result = not_pure
         elif isinstance(node, ast.Attribute) and node.attr in bound_string_method_names:
             receiver = evaluate_binding_expression(node.value)
-            if type(receiver) in {str, bytes}:
+            if (
+                type(receiver) in {str, bytes}
+                or receiver is str
+                or receiver is bytes
+            ):
                 result = bound_string_method_value(node.attr, receiver)
         elif isinstance(node, (ast.Tuple, ast.List)):
             children = [evaluate_binding_expression(child) for child in node.elts]
@@ -6656,7 +7015,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
 
     def record_constructed(node: ast.AST, result: str | bytes) -> None:
         nonlocal evaluated_bytes, evaluated_value_count
-        _, payload_size = bootstrap_v2_python_constant_text(result)
+        payload_size = evaluated_text_payload_size(result)
         if payload_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
             raise ValueError("Python evaluated string exceeds the trusted byte limit")
         charge_retained_evaluated_value(node, result)
@@ -6668,7 +7027,64 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             raise ValueError(
                 "Python AST evaluated strings exceed the trusted byte limit"
             )
-        constructed[id(node)] = result
+        if isinstance(result, str):
+            constructed[id(node)] = result
+        else:
+            try:
+                result.decode("utf-8")
+            except UnicodeDecodeError:
+                return
+            constructed[id(node)] = result
+
+    constructed_container_values: dict[tuple[int, int], str | bytes] = {}
+    recorded_constructed_result_ids: set[int] = set()
+
+    def record_constructed_result(node: ast.AST, result: Any) -> None:
+        nonlocal evaluated_bytes, evaluated_value_count
+        node_id = id(node)
+        if node_id in recorded_constructed_result_ids:
+            return
+        recorded_constructed_result_ids.add(node_id)
+        if type(result) in {str, bytes}:
+            record_constructed(node, result)
+            return
+        pending = [result]
+        observed = 0
+        discovered: list[str | bytes] = []
+        while pending:
+            observed += 1
+            if observed > BOOTSTRAP_V2_MAX_PYTHON_AST_NODES:
+                raise ValueError(
+                    "Python deterministic text method result exceeds the trusted item limit"
+                )
+            current = pending.pop()
+            if type(current) in {str, bytes}:
+                discovered.append(current)
+            elif type(current) in {tuple, list}:
+                pending.extend(reversed(current))
+            elif type(current) is dict:
+                for key, child in current.items():
+                    pending.extend((key, child))
+        for index, child in enumerate(discovered):
+            payload_size = evaluated_text_payload_size(child)
+            if payload_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
+                raise ValueError("Python evaluated string exceeds the trusted byte limit")
+            evaluated_value_count += 1
+            if evaluated_value_count > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUES:
+                raise ValueError("Python AST exceeds the trusted evaluated value limit")
+            evaluated_bytes += payload_size
+            if evaluated_bytes > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_BYTES:
+                raise ValueError(
+                    "Python AST evaluated strings exceed the trusted byte limit"
+                )
+            if isinstance(child, str):
+                constructed_container_values[(node_id, index)] = child
+            else:
+                try:
+                    child.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+                constructed_container_values[(node_id, index)] = child
 
     partial_values: dict[int, str | bytes] = {}
 
@@ -6735,7 +7151,10 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             isinstance(node, ast.BinOp)
             and isinstance(node.op, (ast.Add, ast.Mult, ast.Mod))
             and binding_expression_may_output_text(node)
-        ) or isinstance(node, ast.JoinedStr)
+        ) or isinstance(node, ast.JoinedStr) or (
+            isinstance(node, ast.Subscript)
+            and binding_expression_may_output_text(node)
+        )
         if isinstance(node, ast.AugAssign):
             is_supported_string_constructor = isinstance(
                 node.op, (ast.Add, ast.Mult, ast.Mod)
@@ -6744,6 +7163,15 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             is_supported_string_constructor = is_supported_string_constructor or bool(
                 bound_string_method_kinds(node.func)
             )
+        ambiguity_sensitive_constructor = is_supported_string_constructor
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr not in {"format", "format_map", "join"}
+        ):
+            ambiguity_sensitive_constructor = False
+        if isinstance(node, ast.Subscript):
+            ambiguity_sensitive_constructor = False
         if (
             isinstance(node, ast.AugAssign)
             and id(node) in unresolved_augassign_receiver_ids
@@ -6762,7 +7190,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         )
         if (
             depends_on_ambiguous_binding
-            and is_supported_string_constructor
+            and ambiguity_sensitive_constructor
             and augassign_has_risk_seed
         ):
             raise ValueError(
@@ -6773,11 +7201,8 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         cached_binding_value = binding_expression_cache.get(id(node), not_pure)
         if cached_binding_value is not not_pure:
             evaluated[id(node)] = cached_binding_value
-            if (
-                type(cached_binding_value) in {str, bytes}
-                and is_supported_string_constructor
-            ):
-                record_constructed(node, cached_binding_value)
+            if is_supported_string_constructor:
+                record_constructed_result(node, cached_binding_value)
                 if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
                     for child in (node.left, node.right):
                         if isinstance(child, ast.BinOp) and isinstance(
@@ -6812,9 +7237,37 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     binding[0],
                 )
             ):
-                evaluated[id(node)] = not_pure
+                evaluated[id(node)] = unshadowed_builtin_text_type(node) or not_pure
             else:
                 evaluated[id(node)] = binding[1]
+            continue
+
+        if isinstance(node, ast.Subscript):
+            container = evaluated.get(id(node.value), not_pure)
+            selector: int | str | slice | None = normalized_literal_selector(
+                node.slice
+            )
+            if selector is None:
+                selector = normalized_literal_slice(node.slice)
+            if selector is None or type(container) not in {
+                str,
+                bytes,
+                tuple,
+                list,
+                dict,
+            }:
+                evaluated[id(node)] = not_pure
+                continue
+            try:
+                evaluated[id(node)] = container[selector]
+            except (IndexError, KeyError, TypeError):
+                evaluated[id(node)] = not_pure
+            selected_value = evaluated[id(node)]
+            if (
+                selected_value is not not_pure
+                and binding_expression_may_output_text(node)
+            ):
+                record_constructed_result(node, selected_value)
             continue
 
         if isinstance(node, (ast.Tuple, ast.List)):
@@ -6999,7 +7452,11 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 receiver = evaluated.get(id(node.func.value), not_pure)
                 method_value = (
                     bound_string_method_value(node.func.attr, receiver)
-                    if type(receiver) in {str, bytes}
+                    if (
+                        type(receiver) in {str, bytes}
+                        or receiver is str
+                        or receiver is bytes
+                    )
                     else not_pure
                 )
             else:
@@ -7011,7 +7468,12 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 and node.func.attr in bound_string_method_names
             )
             if method_value is not_pure and (
-                not direct_method_syntax or id(node) in risk_text_seeded_expression_ids
+                not direct_method_syntax
+                or (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr in {"format", "format_map", "join"}
+                    and id(node) in risk_text_seeded_expression_ids
+                )
             ):
                 raise ValueError(
                     "Python string construction uses an unresolved bound string "
@@ -7023,8 +7485,8 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 lambda child: evaluated.get(id(child), not_pure),
             )
             evaluated[id(node)] = result
-            if type(result) in {str, bytes}:
-                record_constructed(node, result)
+            if result is not not_pure:
+                record_constructed_result(node, result)
             continue
 
         evaluated[id(node)] = not_pure
@@ -7552,6 +8014,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         if constructed_value is not None and id(node) not in nested_pure_adds:
             constant_text, _ = bootstrap_v2_python_constant_text(constructed_value)
             constants.append(constant_text)
+    for child in constructed_container_values.values():
+        constant_text, _ = bootstrap_v2_python_constant_text(child)
+        constants.append(constant_text)
     return constants
 
 
