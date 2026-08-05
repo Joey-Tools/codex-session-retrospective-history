@@ -35,56 +35,23 @@ NUL_BYTE = bytes((0,))
 
 
 FORBIDDEN_COMPONENTS = frozenset(
-    {
-        ".codex",
-        ".codex-local",
-        ".codex-tmp",
-        "archived_sessions",
-        "raw",
-        "scratch",
-        "sessions",
-        "transient",
-    }
+    ".codex .codex-local .codex-tmp archived_sessions raw scratch sessions "
+    "transient".split()
 )
 FORBIDDEN_EXACT_PATH_COMPONENTS = frozenset(
-    {
-        "retrospective-history-v2-admin.asc",
-    }
+    {"retrospective-history-v2-admin.asc"}
 )
 FORBIDDEN_FILENAMES = frozenset(
-    {
-        "auth.json",
-        "config.toml",
-        "history.jsonl",
-        "session_index.jsonl",
-        "source_metadata.json",
-        "shard_manifest.json",
-        "shards.jsonl",
-        "turn_summaries.jsonl",
-    }
+    "auth.json config.toml history.jsonl session_index.jsonl source_metadata.json "
+    "shard_manifest.json shards.jsonl turn_summaries.jsonl".split()
 )
 FORBIDDEN_COMPACT_NAME_PARTS = frozenset(
-    {
-        "conversationlog",
-        "fullprompt",
-        "messagelog",
-        "promptlog",
-        "rawtranscript",
-        "tooloutput",
-        "turnsummaries",
-        "userprompt",
-    }
+    "conversationlog fullprompt messagelog promptlog rawtranscript tooloutput "
+    "turnsummaries userprompt".split()
 )
 FORBIDDEN_COMPACT_NAME_PREFIXES = frozenset({"raw"})
 FORBIDDEN_NAME_STEMS = frozenset(
-    {
-        "history",
-        "session_index",
-        "shard_manifest",
-        "shards",
-        "source_metadata",
-        "turn_summaries",
-    }
+    "history session_index shard_manifest shards source_metadata turn_summaries".split()
 )
 COMPRESSED_ARTIFACT_SUFFIXES = frozenset({".bz2", ".gz", ".xz", ".zip", ".zst"})
 PATH_REF_RE = re.compile(r"^path_ref_v1:[0-9a-f]{16}$")
@@ -178,10 +145,10 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("scripts/validate_retained_history.py"): bytes(
         (
-            0x84, 0xE2, 0xB5, 0x37, 0xCE, 0x2D, 0xF1, 0x25,
-            0x57, 0x4A, 0xBB, 0x68, 0xE3, 0xF7, 0xC6, 0x1C,
-            0xEC, 0x21, 0xE8, 0x3D, 0xCC, 0x30, 0xA0, 0x82,
-            0x08, 0x1A, 0xA4, 0x30, 0x03, 0x36, 0xA4, 0x7B,
+            0xF7, 0x8C, 0xE5, 0x19, 0xE5, 0x9E, 0x3D, 0x2A,
+            0x41, 0xF5, 0x72, 0x0D, 0xBD, 0xA2, 0xD6, 0x0F,
+            0x71, 0xEA, 0x78, 0xCC, 0x01, 0x8F, 0x74, 0x47,
+            0x86, 0xB5, 0x6E, 0x7F, 0x65, 0xF0, 0x25, 0x14,
         )
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
@@ -207,71 +174,31 @@ BOOTSTRAP_WORKFLOW_POLICY_SHA256 = (
 BOOTSTRAP_V2_REQUIRED_FILES = frozenset(
     Path(path)
     for path in (
-        ".github/workflows/ci.yml",
-        ".gitignore",
-        "AGENTS.md",
-        "README.md",
-        "data/README.md",
-        "reports/README.md",
-        "requirements-v2.in",
-        "requirements-v2.txt",
-        "retrospective-history-v2-admin-public.asc",
-        "retrospective-history-v2-publisher.asc",
-        "schemas/retained-manifest-v1.schema.json",
-        "schemas/retained-manifest-v2.schema.json",
-        "schemas/session-retrospective-v1.schema.json",
-        "schemas/session-retrospective-v2.schema.json",
-        "scripts/retrospective_history_attestation_v2.py",
-        "scripts/retrospective_history_credentials_v2.py",
-        "scripts/retrospective_history_git_v2.py",
-        "scripts/retrospective_history_merge_v2.py",
-        "scripts/retrospective_history_privacy_v2.py",
-        "scripts/retrospective_history_templates_v2.py",
-        "scripts/retrospective_history_v2.py",
-        "scripts/validate_retained_history.py",
-        "tests/test_retrospective_history_git_v2.py",
-        "tests/test_retrospective_history_merge_v2.py",
-        "tests/test_retrospective_history_privacy_v2.py",
-        "tests/test_retrospective_history_v2.py",
-        "tests/test_retrospective_history_v2_ci.py",
-        "tests/test_retrospective_history_v2_schema_extensions.py",
-        "tests/test_validate_retained_history.py",
-    )
+        ".github/workflows/ci.yml .gitignore AGENTS.md README.md data/README.md "
+        "reports/README.md requirements-v2.in requirements-v2.txt "
+        "retrospective-history-v2-admin-public.asc "
+        "retrospective-history-v2-publisher.asc "
+        "schemas/retained-manifest-v1.schema.json "
+        "schemas/retained-manifest-v2.schema.json "
+        "schemas/session-retrospective-v1.schema.json "
+        "schemas/session-retrospective-v2.schema.json "
+        "scripts/retrospective_history_attestation_v2.py "
+        "scripts/retrospective_history_credentials_v2.py "
+        "scripts/retrospective_history_git_v2.py "
+        "scripts/retrospective_history_merge_v2.py "
+        "scripts/retrospective_history_privacy_v2.py "
+        "scripts/retrospective_history_templates_v2.py "
+        "scripts/retrospective_history_v2.py scripts/validate_retained_history.py "
+        "tests/test_retrospective_history_git_v2.py "
+        "tests/test_retrospective_history_merge_v2.py "
+        "tests/test_retrospective_history_privacy_v2.py "
+        "tests/test_retrospective_history_v2.py "
+        "tests/test_retrospective_history_v2_ci.py "
+        "tests/test_retrospective_history_v2_schema_extensions.py "
+        "tests/test_validate_retained_history.py"
+    ).split()
 )
-BOOTSTRAP_V2_ALLOWED_FILES = frozenset(
-    Path(path)
-    for path in (
-        ".github/workflows/ci.yml",
-        ".gitignore",
-        "AGENTS.md",
-        "README.md",
-        "data/README.md",
-        "reports/README.md",
-        "requirements-v2.in",
-        "requirements-v2.txt",
-        "retrospective-history-v2-admin-public.asc",
-        "retrospective-history-v2-publisher.asc",
-        "schemas/retained-manifest-v1.schema.json",
-        "schemas/retained-manifest-v2.schema.json",
-        "schemas/session-retrospective-v1.schema.json",
-        "schemas/session-retrospective-v2.schema.json",
-        "scripts/retrospective_history_attestation_v2.py",
-        "scripts/retrospective_history_credentials_v2.py",
-        "scripts/retrospective_history_git_v2.py",
-        "scripts/retrospective_history_merge_v2.py",
-        "scripts/retrospective_history_privacy_v2.py",
-        "scripts/retrospective_history_templates_v2.py",
-        "scripts/retrospective_history_v2.py",
-        "scripts/validate_retained_history.py",
-        "tests/test_retrospective_history_git_v2.py",
-        "tests/test_retrospective_history_merge_v2.py",
-        "tests/test_retrospective_history_privacy_v2.py",
-        "tests/test_retrospective_history_v2.py",
-        "tests/test_retrospective_history_v2_ci.py",
-        "tests/test_retrospective_history_v2_schema_extensions.py",
-        "tests/test_validate_retained_history.py",
-    )
-)
+BOOTSTRAP_V2_ALLOWED_FILES = BOOTSTRAP_V2_REQUIRED_FILES
 HISTORY_V2_TRUST_GENERATION_PATHS = tuple(
     sorted(
         BOOTSTRAP_V2_ALLOWED_FILES
@@ -287,16 +214,14 @@ BOOTSTRAP_V2_TEMPORARY_PATHS = frozenset(
     }
 )
 BOOTSTRAP_V2_SCHEMA_FILES = frozenset(
-    {
-        Path("schemas/retained-manifest-v2.schema.json"),
-        Path("schemas/session-retrospective-v2.schema.json"),
-    }
+    Path(path)
+    for path in "schemas/retained-manifest-v2.schema.json "
+    "schemas/session-retrospective-v2.schema.json".split()
 )
 BOOTSTRAP_V2_PUBLIC_KEY_FILES = frozenset(
-    {
-        Path("retrospective-history-v2-admin-public.asc"),
-        Path("retrospective-history-v2-publisher.asc"),
-    }
+    Path(path)
+    for path in "retrospective-history-v2-admin-public.asc "
+    "retrospective-history-v2-publisher.asc".split()
 )
 BOOTSTRAP_V2_PUBLIC_KEY_SHA256 = {
     Path("retrospective-history-v2-admin-public.asc"): (
@@ -306,7 +231,6 @@ BOOTSTRAP_V2_PUBLIC_KEY_SHA256 = {
         "77e33dafc60ea63b23fafa90fdc03aae333cd226e25321aa2e6a77acac06d884"
     ),
 }
-# Only the pre-reviewed risk-bearing line sequences are pinned; every other line remains scanned.
 BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256 = {
     Path(".github/workflows/ci.yml"): (
         "64b699ce73cab252c9958c68535226746425e003530c64ae94e4b9288c626187"
@@ -367,21 +291,18 @@ BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256 = {
         )
     ).hex(),
 }
-# Decoded JSON strings need a separate fingerprint so escape decoding cannot bypass scanning.
 BOOTSTRAP_V2_TRUSTED_DECODED_RISK_VALUES_SHA256 = {
     Path("schemas/session-retrospective-v2.schema.json"): (
         "52e1822e52eef524d48ee8fd528860655d7825c2fd3f52d72502a86979b1c6d6"
     ),
 }
-# Interpreted Python strings are pinned separately so literal decoding cannot bypass line scanning.
-# Binary digest bytes keep these self-referential values out of their own AST fingerprint.
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x54, 0x77, 0x77, 0x98, 0xEE, 0xA5, 0x3C, 0x1F,
-            0x7F, 0x67, 0x74, 0x38, 0xE9, 0x59, 0x15, 0x29,
-            0x92, 0x12, 0xFF, 0xEF, 0xE2, 0x0A, 0x91, 0xF0,
-            0x3C, 0x9C, 0x5C, 0xE7, 0xA9, 0xCA, 0x27, 0x87,
+            0x90, 0x8B, 0x3C, 0xB9, 0x49, 0x60, 0x1A, 0x16,
+            0xF3, 0x04, 0x69, 0x7C, 0x66, 0xB3, 0x9E, 0x98,
+            0x8D, 0x5E, 0xD9, 0x5A, 0x3B, 0xC4, 0x54, 0x7A,
+            0x6D, 0xAD, 0xA6, 0x7A, 0x44, 0x11, 0x55, 0x87,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
@@ -393,7 +314,6 @@ BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
         )
     ),
 }
-# Public identities are scanned with the same categories and pinned independently from packet bytes.
 BOOTSTRAP_V2_TRUSTED_OPENPGP_RISK_VALUES_SHA256 = {
     Path("retrospective-history-v2-admin-public.asc"): (
         "223884eca8b1e2734ae319ef40223f00d6e59734c78ed42169aabe3db6ec0669"
@@ -416,6 +336,7 @@ BOOTSTRAP_V2_MAX_PYTHON_FORMAT_ANALYSIS_OPERATIONS = 1_000_000
 BOOTSTRAP_V2_MAX_PYTHON_TEXT_OUTPUT_OPERATIONS = 2_000_000
 BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_STATES = 200_000
 BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS = 1_000_000
+BOOTSTRAP_V2_MAX_PYTHON_STATIC_DECODER_INPUT_OPERATIONS = 1_000_000
 BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES = 256 * 1024
 BOOTSTRAP_V2_MAX_TREE_BYTES = 16 * 1024 * 1024
 BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES = 4096
@@ -470,12 +391,10 @@ HISTORY_V2_SIGNATURE_KEY_PATHS = {
 }
 HISTORY_V2_SIGNATURE_PUBLIC_KEY_ALGORITHMS = frozenset({1, 22})
 HISTORY_V2_SIGNATURE_HASH_ALGORITHM = 10
-HISTORY_V2_DOMAIN_MODULE_PATHS = (
-    Path("scripts/retrospective_history_attestation_v2.py"),
-    Path("scripts/retrospective_history_credentials_v2.py"),
-    Path("scripts/retrospective_history_git_v2.py"),
-    Path("scripts/retrospective_history_privacy_v2.py"),
-    Path("scripts/retrospective_history_templates_v2.py"),
+HISTORY_V2_DOMAIN_MODULE_PATHS = tuple(
+    Path(f"scripts/retrospective_history_{name}_v2.py")
+    for name in "attestation credentials git privacy templates".split()
+) + (
     Path("scripts/retrospective_history_v2.py"),
 )
 HISTORY_V2_CODEX_TRAILERS = frozenset(
@@ -853,88 +772,41 @@ BOOTSTRAP_V2_FORBIDDEN_ARMOR_MARKERS = (
     "SECRET-SUBKEY PACKET",
 )
 SCHEMA_FILES = frozenset(
-    {"retained-manifest-v1.schema.json", "session-retrospective-v1.schema.json"}
+    "retained-manifest-v1.schema.json session-retrospective-v1.schema.json".split()
 )
 RETAINED_EXPORT_DIRS = frozenset(
     {("retained", "daily"), ("retained", "weekly"), ("retained", "baseline")}
 )
 RETAINED_EXPORT_FILES = frozenset(
-    {
-        "episodes.jsonl",
-        "turn_flags.jsonl",
-        "trend_report.json",
-        "retained_manifest.json",
-    }
+    "episodes.jsonl turn_flags.jsonl trend_report.json retained_manifest.json".split()
 )
 RETAINED_EVIDENCE_HOSTS = frozenset(
-    {"local", "miku-bot-dev", "hoteng-srv-01", "custom_source"}
+    "local miku-bot-dev hoteng-srv-01 custom_source".split()
 )
 RETAINED_HOSTS = frozenset((*RETAINED_EVIDENCE_HOSTS, "scope"))
 RETAINED_FIXED_MODES = frozenset({"daily", "weekly"})
 RETAINED_MODEL_IDS = frozenset(
-    {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex"}
+    "gpt-5.6-sol gpt-5.6-terra gpt-5.5 gpt-5.4 gpt-5.3-codex".split()
 )
 RETAINED_MODEL_ERAS = frozenset(
     (*RETAINED_MODEL_IDS, "other-model", "pre-gpt-5.3-codex", "unknown")
 )
 EPISODE_KEYS = frozenset(
-    {
-        "episode_id",
-        "host",
-        "session_id",
-        "start",
-        "end",
-        "cwd",
-        "model_era",
-        "topic",
-        "turn_count",
-        "friction_flags",
-        "outcome",
-        "work_report_hint",
-    }
+    "episode_id host session_id start end cwd model_era topic turn_count "
+    "friction_flags outcome work_report_hint".split()
 )
 TURN_FLAG_KEYS = frozenset(
-    {
-        "turn_id",
-        "episode_id",
-        "host",
-        "session_id",
-        "source_path",
-        "source_hash",
-        "timestamp",
-        "cwd",
-        "model",
-        "model_era",
-        "redacted_user_prompt_summary",
-        "assistant_action_summary",
-        "issue_flags",
-        "prompt_improvement",
-    }
+    "turn_id episode_id host session_id source_path source_hash timestamp cwd "
+    "model model_era redacted_user_prompt_summary assistant_action_summary "
+    "issue_flags prompt_improvement".split()
 )
 TREND_KEYS = frozenset(
-    {
-        "schema_version",
-        "window",
-        "turn_count",
-        "flagged_turn_count",
-        "episode_count",
-        "flags",
-        "hosts",
-        "model_eras",
-        "coverage_gaps",
-    }
+    "schema_version window turn_count flagged_turn_count episode_count flags "
+    "hosts model_eras coverage_gaps".split()
 )
 MANIFEST_KEYS = frozenset(
-    {
-        "schema_version",
-        "mode",
-        "window",
-        "sources",
-        "coverage_gaps",
-        "redaction_policy_version",
-        "retention_note",
-        "retention_safe",
-    }
+    "schema_version mode window sources coverage_gaps redaction_policy_version "
+    "retention_note retention_safe".split()
 )
 WINDOW_KEYS = frozenset({"mode", "start", "end"})
 SOURCE_SUMMARY_KEYS = frozenset(
@@ -944,39 +816,15 @@ COVERAGE_GAP_KEYS = frozenset({"host", "reason", "root_ref", "bytes"})
 SOURCE_STATUSES = frozenset({"empty", "missing", "ready", "stale"})
 OUTCOMES = frozenset({"needs_review", "no_issue_observed"})
 ISSUE_FLAGS = frozenset(
-    {
-        "approval_auth_friction",
-        "context_loss",
-        "failed_command",
-        "over_exploration",
-        "safety_privacy_flag",
-        "under_asking",
-        "user_correction",
-        "verification_gap",
-    }
+    "approval_auth_friction context_loss failed_command over_exploration "
+    "safety_privacy_flag under_asking user_correction verification_gap".split()
 )
 COVERAGE_REASONS = frozenset(
-    {
-        "auth_gated",
-        "codex_missing",
-        "history_missing",
-        "history_unreadable",
-        "host_unreachable",
-        "invalid_jsonl",
-        "missing_codex",
-        "no_rollout_or_summary_files",
-        "oversized_rollout_skipped",
-        "partial_host_scope",
-        "remote_source_not_materialized",
-        "session_index_missing",
-        "session_index_unreadable",
-        "source_root_missing",
-        "source_root_symlink",
-        "stale_host",
-        "truncated_rollout_summary",
-        "unreachable",
-        "unsafe_source_artifact",
-    }
+    "auth_gated codex_missing history_missing history_unreadable host_unreachable "
+    "invalid_jsonl missing_codex no_rollout_or_summary_files oversized_rollout_skipped "
+    "partial_host_scope remote_source_not_materialized session_index_missing "
+    "session_index_unreadable source_root_missing source_root_symlink stale_host "
+    "truncated_rollout_summary unreachable unsafe_source_artifact".split()
 )
 MAX_MANIFEST_SOURCES = 16
 MAX_COVERAGE_GAPS = 100
@@ -992,10 +840,7 @@ RETAINED_SAFETY_TEXT_RE = re.compile(
 COMMON_BARE_TOKEN_RE = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b"
 )
-RISK_PATTERNS = (
-    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", re.I),
-    re.compile(r"\b(?:https?|ssh)://", re.I),
-    re.compile(r"\bgit@[A-Za-z0-9_.-]+:"),
+COMMON_PATH_RISK_PATTERNS = (
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     re.compile(
         r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/",
@@ -1007,12 +852,8 @@ RISK_PATTERNS = (
         r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\",
         re.I,
     ),
-    re.compile(
-        r"(?<![A-Za-z0-9_])[\"']?"
-        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]*key|authorization|private[\s._-]*key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
-        r"(?!(?:re\.compile|frozenset)\b)",
-        re.I,
-    ),
+)
+COMMON_SECRET_RISK_PATTERNS = (
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
     re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
     COMMON_BARE_TOKEN_RE,
@@ -1029,6 +870,19 @@ RISK_PATTERNS = (
         r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b",
         re.I,
     ),
+)
+RISK_PATTERNS = (
+    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", re.I),
+    re.compile(r"\b(?:https?|ssh)://", re.I),
+    re.compile(r"\bgit@[A-Za-z0-9_.-]+:"),
+    *COMMON_PATH_RISK_PATTERNS,
+    re.compile(
+        r"(?<![A-Za-z0-9_])[\"']?"
+        r"[A-Za-z0-9._-]*(?:password|passwd|pwd|credential|secret(?:[\s._-]+key)?|token|api[\s._-]*key|authorization|private[\s._-]*key)[A-Za-z0-9._-]*[\"']?\s*[:=]\s*[\"']?"
+        r"(?!(?:re\.compile|frozenset)\b)",
+        re.I,
+    ),
+    *COMMON_SECRET_RISK_PATTERNS,
     RETAINED_SAFETY_TEXT_RE,
 )
 INFRASTRUCTURE_RISK_PATTERNS = (
@@ -1045,17 +899,7 @@ INFRASTRUCTURE_RISK_PATTERNS = (
         r"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9._-]+@)(?:localhost|miku-bot-dev|hoteng-srv-01|(?:10|127)(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2}|[A-Za-z0-9-]+):[A-Za-z0-9._~/-]+(?:\.git)?\b",
         re.I,
     ),
-    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
-    re.compile(
-        r"(^|[^A-Za-z0-9_])(?:~|/(?:Users|home|root|private|tmp|var|etc|opt|Volumes|workspace|workspaces))/",
-        re.I,
-    ),
-    re.compile(r"(^|[^A-Za-z0-9_])(?:\./|\.\./)?\.codex(?:-local|-tmp)?(?:/|\\)", re.I),
-    re.compile(r"(^|[^A-Za-z0-9_])(?:sessions|archived_sessions)(?:/|\\)", re.I),
-    re.compile(
-        r"\b[A-Za-z]:\\(?:Users|home|root|private|tmp|var|etc|opt|workspace|workspaces)\\",
-        re.I,
-    ),
+    *COMMON_PATH_RISK_PATTERNS,
     re.compile(
         r"(?<![A-Za-z0-9_])[\"']?"
         r"(?!(?:safe[._-]?token(?:[._-]?re)?|common[._-]?bare[._-]?token[._-]?re|max[._-]?safe[._-]?token[._-]?length|max[._-]?token[._-]?array[._-]?items|sensitive[._-]?token[._-]?re|raw[._-]?id[._-]?token[._-]?re|tokens|risk[._-]?patterns?|infrastructure[._-]?risk[._-]?patterns?|safe[._-]?infrastructure[._-]?lines)[\"']?\s*[:=])"
@@ -1063,22 +907,7 @@ INFRASTRUCTURE_RISK_PATTERNS = (
         r"(?!(?:re\.compile|frozenset)\b)",
         re.I,
     ),
-    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I),
-    re.compile(r"\b(?:sk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{16,}\b"),
-    COMMON_BARE_TOKEN_RE,
-    re.compile(r"(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)"),
-    re.compile(
-        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
-    ),
-    re.compile(r"\brollout(?:-summary)?-[A-Za-z0-9_.-]+\.jsonl\b", re.I),
-    PRIVATE_IPV4_RE,
-    PRIVATE_IPV6_RE,
-    RAW_ID_VALUE_RE,
-    RAW_ID_TOKEN_RE,
-    re.compile(
-        r"\b(?:[A-Za-z0-9-]+\.)+(?:internal|corp|local|lan|example|invalid|test)\b",
-        re.I,
-    ),
+    *COMMON_SECRET_RISK_PATTERNS,
 )
 BOOTSTRAP_V2_EMAIL_RE = re.compile(
     r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@"
@@ -1098,29 +927,15 @@ BOOTSTRAP_V2_IMMUTABLE_GITHUB_ACTION_USES_RE = re.compile(
     r"(?:/[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?)*)@"
     r"(?P<ref>[0-9a-f]{40})"
 )
-# Legitimate public identities, lock hashes, policy regexes, and negative fixtures are exact-fingerprinted.
 BOOTSTRAP_V2_PRIVACY_RISK_PATTERNS = (
     *INFRASTRUCTURE_RISK_PATTERNS,
     *BOOTSTRAP_V2_ADDITIONAL_PRIVACY_RISK_PATTERNS,
 )
 SAFE_INFRASTRUCTURE_LINES = frozenset(
-    {
-        ".codex-local/",
-        ".codex-tmp/",
-        ".codex/",
-        "archived_sessions/",
-        "sessions/",
-        "auth.json",
-        "config.toml",
-        "history.jsonl",
-        "session_index.jsonl",
-        "rollout-*.jsonl",
-        "rollout-summary*.jsonl",
-        "source_metadata.json",
-        "shard_manifest.json",
-        "shards.jsonl",
-        "turn_summaries.jsonl",
-    }
+    ".codex-local/ .codex-tmp/ .codex/ archived_sessions/ sessions/ auth.json "
+    "config.toml history.jsonl session_index.jsonl rollout-*.jsonl "
+    "rollout-summary*.jsonl source_metadata.json shard_manifest.json shards.jsonl "
+    "turn_summaries.jsonl".split()
 )
 
 
@@ -4375,6 +4190,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             }
 
     parent_by_node_id: dict[int, ast.AST] = {}
+    node_by_id = {id(node): node for node in nodes}
     statement_membership: dict[int, tuple[tuple[int, str], int]] = {}
     for parent in nodes:
         for child in ast.iter_child_nodes(parent):
@@ -4931,58 +4747,12 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         return None
 
     modeled_string_method_names = frozenset(
-        {
-            "capitalize",
-            "casefold",
-            "center",
-            "count",
-            "decode",
-            "encode",
-            "endswith",
-            "expandtabs",
-            "find",
-            "format",
-            "format_map",
-            "fromhex",
-            "hex",
-            "index",
-            "isalnum",
-            "isalpha",
-            "isascii",
-            "isdecimal",
-            "isdigit",
-            "isidentifier",
-            "islower",
-            "isnumeric",
-            "isprintable",
-            "isspace",
-            "istitle",
-            "isupper",
-            "join",
-            "ljust",
-            "lower",
-            "lstrip",
-            "maketrans",
-            "partition",
-            "removeprefix",
-            "removesuffix",
-            "replace",
-            "rfind",
-            "rindex",
-            "rjust",
-            "rpartition",
-            "rsplit",
-            "rstrip",
-            "split",
-            "splitlines",
-            "startswith",
-            "strip",
-            "swapcase",
-            "title",
-            "translate",
-            "upper",
-            "zfill",
-        }
+        "capitalize casefold center count decode encode endswith expandtabs find "
+        "format format_map fromhex hex index isalnum isalpha isascii isdecimal "
+        "isdigit isidentifier islower isnumeric isprintable isspace istitle "
+        "isupper join ljust lower lstrip maketrans partition removeprefix "
+        "removesuffix replace rfind rindex rjust rpartition rsplit rstrip split "
+        "splitlines startswith strip swapcase title translate upper zfill".split()
     )
     runtime_public_string_method_names = frozenset(
         name
@@ -4995,27 +4765,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             "Python runtime text method surface differs from the trusted policy"
         )
     non_text_string_method_names = frozenset(
-        {
-            "count",
-            "endswith",
-            "find",
-            "index",
-            "isalnum",
-            "isalpha",
-            "isascii",
-            "isdecimal",
-            "isdigit",
-            "isidentifier",
-            "islower",
-            "isnumeric",
-            "isprintable",
-            "isspace",
-            "istitle",
-            "isupper",
-            "rfind",
-            "rindex",
-            "startswith",
-        }
+        "count endswith find index isalnum isalpha isascii isdecimal isdigit "
+        "isidentifier islower isnumeric isprintable isspace istitle isupper "
+        "rfind rindex startswith".split()
     )
     text_emitting_string_method_names = (
         modeled_string_method_names - non_text_string_method_names
@@ -5029,6 +4781,15 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     deterministic_text_builtin_names = frozenset(
         {"bytearray", "bytes", "chr", "str"}
     )
+    dynamic_code_builtin_names = frozenset({"compile", "eval", "exec"})
+    static_import_builtin_names = frozenset({"__import__"})
+    decoder_source_keyword_names = frozenset(
+        "data hexstr input obj object s string".split()
+    )
+    text_codec_error_modes = frozenset(
+        "backslashreplace ignore namereplace replace strict surrogateescape "
+        "surrogatepass xmlcharrefreplace".split()
+    )
     static_binary_decoder_methods_by_module = {
         "base64": frozenset(
             "a85decode b16decode b32decode b32hexdecode b64decode b85decode "
@@ -5041,25 +4802,18 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         "codecs": {"decode"},
         "gzip": {"decompress"},
         "lzma": {"decompress"},
+        "quopri": {"decodestring"},
         "urllib.parse": {"unquote", "unquote_plus", "unquote_to_bytes"},
         "zlib": {"decompress"},
     }
     static_binary_decoder_modules = set(static_binary_decoder_methods_by_module)
-    static_binary_decoder_method_names = set(
-        method_name
-        for method_names in static_binary_decoder_methods_by_module.values()
+    static_binary_decoder_qualified_names = frozenset(
+        f"{module_name}.{method_name}"
+        for module_name, method_names in static_binary_decoder_methods_by_module.items()
         for method_name in method_names
     )
-    static_binary_decoder_modules_by_method = {
-        method_name: frozenset(
-            module_name
-            for module_name, method_names in (
-                static_binary_decoder_methods_by_module.items()
-            )
-            if method_name in method_names
-        )
-        for method_name in static_binary_decoder_method_names
-    }
+    import_resolver_qualified_names = frozenset({"importlib.import_module"})
+    tracked_static_import_modules = static_binary_decoder_modules | {"importlib"}
 
     def normalized_literal_slice(node: ast.AST) -> slice | None:
         if not isinstance(node, ast.Slice):
@@ -5218,8 +4972,8 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     unresolved_augassign_receiver_ids: set[int] = set()
     bytearray_mutation_receivers: list[ast.Name] = []
     bytearray_mutation_origin_ids: frozenset[int] | None = None
-    static_binary_decoder_import_binding_keys: set[tuple[int, str]] = set()
-    static_binary_decoder_module_bindings: dict[tuple[int, str], str] = {}
+    static_callable_import_bindings: dict[tuple[int, str], list[tuple[int, str]]] = {}
+    static_module_import_bindings: dict[tuple[int, str], list[tuple[int, str]]] = {}
 
     def name_has_prior_static_text_origin(
         node: ast.Name,
@@ -5500,46 +5254,43 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         if isinstance(node, ast.Import):
             scope = scope_by_node_id[id(node)]
             for alias in node.names:
-                if alias.name not in static_binary_decoder_modules:
+                if alias.name not in tracked_static_import_modules:
                     continue
                 local_name = alias.asname or alias.name.split(".", 1)[0]
                 imported_name = (
                     alias.name if alias.asname else alias.name.split(".", 1)[0]
                 )
-                static_binary_decoder_module_bindings[
-                    (binding_scope_for_name(scope, local_name), local_name)
-                ] = imported_name
+                key = (binding_scope_for_name(scope, local_name), local_name)
+                static_module_import_bindings.setdefault(key, []).append(
+                    (id(alias), imported_name)
+                )
             continue
         if not isinstance(node, ast.ImportFrom) or node.level or node.module is None:
             continue
         scope = scope_by_node_id[id(node)]
         for alias in node.names:
+            if alias.name == "*" and node.module in static_binary_decoder_modules:
+                raise ValueError(
+                    "Python decoder module uses a wildcard import "
+                    f"at line {getattr(node, 'lineno', 0)}"
+                )
             local_name = alias.asname or alias.name
             key = (binding_scope_for_name(scope, local_name), local_name)
             qualified_name = f"{node.module}.{alias.name}"
-            if qualified_name in static_binary_decoder_modules:
-                static_binary_decoder_module_bindings[key] = qualified_name
-            if (
-                node.module in static_binary_decoder_modules
-                and alias.name
-                in static_binary_decoder_methods_by_module[node.module]
+            if qualified_name in tracked_static_import_modules:
+                static_module_import_bindings.setdefault(key, []).append(
+                    (id(alias), qualified_name)
+                )
+            if qualified_name in (
+                static_binary_decoder_qualified_names | import_resolver_qualified_names
             ):
-                static_binary_decoder_import_binding_keys.add(key)
+                static_callable_import_bindings.setdefault(key, []).append(
+                    (id(alias), qualified_name)
+                )
 
     bytearray_mutating_method_names = frozenset(
-        {
-            "__delitem__",
-            "__iadd__",
-            "__imul__",
-            "__setitem__",
-            "append",
-            "clear",
-            "extend",
-            "insert",
-            "pop",
-            "remove",
-            "reverse",
-        }
+        "__delitem__ __iadd__ __imul__ __setitem__ append clear extend insert "
+        "pop remove reverse".split()
     )
     for node in nodes:
         receivers: list[ast.Name] = []
@@ -6786,11 +6537,14 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             return value[1], value[2]
         return None
 
-    def unshadowed_deterministic_text_builtin(node: ast.AST) -> Any:
+    def unshadowed_builtin_name(
+        node: ast.AST,
+        names: frozenset[str],
+    ) -> str | None:
         if (
             not isinstance(node, ast.Name)
             or not isinstance(node.ctx, ast.Load)
-            or node.id not in deterministic_text_builtin_names
+            or node.id not in names
         ):
             return None
         key, skipped_class_keys = name_load_binding_resolution(node)
@@ -6798,28 +6552,22 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             binding_event_ids.get(candidate)
             for candidate in (key, *skipped_class_keys)
         ):
+            return None
+        return node.id
+
+    def unshadowed_deterministic_text_builtin(node: ast.AST) -> Any:
+        name = unshadowed_builtin_name(node, deterministic_text_builtin_names)
+        if name is None:
             return None
         return {
             "bytearray": bytearray,
             "bytes": bytes,
             "chr": chr,
             "str": str,
-        }[node.id]
+        }[name]
 
     def unshadowed_static_range_builtin(node: ast.AST) -> Any:
-        if (
-            not isinstance(node, ast.Name)
-            or not isinstance(node.ctx, ast.Load)
-            or node.id != "range"
-        ):
-            return None
-        key, skipped_class_keys = name_load_binding_resolution(node)
-        if any(
-            binding_event_ids.get(candidate)
-            for candidate in (key, *skipped_class_keys)
-        ):
-            return None
-        return range
+        return range if unshadowed_builtin_name(node, frozenset({"range"})) else None
 
     def unshadowed_builtin_text_type(node: ast.AST) -> type[str] | type[bytes] | None:
         value = unshadowed_deterministic_text_builtin(node)
@@ -7064,16 +6812,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 if len(mutable_arguments) >= 3
                 else mutable_keywords["errors"]
             )
-            if errors not in {
-                "backslashreplace",
-                "ignore",
-                "namereplace",
-                "replace",
-                "strict",
-                "surrogateescape",
-                "surrogatepass",
-                "xmlcharrefreplace",
-            }:
+            if errors not in text_codec_error_modes:
                 raise ValueError(
                     "Python deterministic text constructor error mode is outside "
                     "the trusted allowlist"
@@ -7187,16 +6926,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             errors = (
                 argument(1, "errors", "strict")
             )
-            if errors not in {
-                "backslashreplace",
-                "ignore",
-                "namereplace",
-                "replace",
-                "strict",
-                "surrogateescape",
-                "surrogatepass",
-                "xmlcharrefreplace",
-            }:
+            if errors not in text_codec_error_modes:
                 raise ValueError(
                     "Python deterministic text codec error mode is outside the trusted allowlist"
                 )
@@ -7545,15 +7275,56 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
 
     def static_decoder_binding_sources(
         key: tuple[int, str],
+        load: ast.Name | None = None,
     ) -> list[ast.AST]:
-        sources: list[ast.AST] = []
-        for _, assigned_value, path, _ in binding_candidates.get(key, ()):
-            selected = selected_assignment_expression(assigned_value, path)
-            sources.append(selected if selected is not None else assigned_value)
-        sources.extend(ordinary_ambiguous_binding_values.get(key, ()))
-        return sources
+        return [
+            selected_assignment_expression(value, path) or value
+            for _, value, path, target in binding_candidates.get(key, ())
+            if load is None or binding_event_may_reach_load(load, key, id(target))
+        ] + list(ordinary_ambiguous_binding_values.get(key, ()))
 
-    def expression_has_static_decoder_module_origin(
+    def binding_event_statement(event_id: int) -> ast.stmt | None:
+        current = node_by_id.get(event_id)
+        while current is not None and not isinstance(current, ast.stmt):
+            current = parent_by_node_id.get(id(current))
+        return current if isinstance(current, ast.stmt) else None
+
+    def binding_event_may_reach_load(
+        load: ast.Name,
+        key: tuple[int, str],
+        event_id: int,
+    ) -> bool:
+        latest_index = -1
+        latest: set[int] = set()
+        direct_ids = direct_statement_ids_by_scope.get(key[0], set())
+        for candidate_id in binding_event_ids.get(key, ()):
+            statement = binding_event_statement(candidate_id)
+            if (
+                statement is None
+                or id(statement) not in direct_ids
+                or not statement_dominates_load(statement, load)
+            ):
+                continue
+            location = statement_membership.get(id(statement))
+            if location is None or location[1] < latest_index:
+                continue
+            if location[1] > latest_index:
+                latest.clear()
+                latest_index = location[1]
+            latest.add(candidate_id)
+        if event_id in latest:
+            return True
+        statement = binding_event_statement(event_id)
+        if statement is None:
+            return True
+        if id(statement) not in direct_ids:
+            return True
+        return bool(
+            scope_by_node_id[id(load)] != key[0]
+            and not statement_dominates_load(statement, load)
+        )
+
+    def expression_has_static_module_origin(
         node: ast.AST,
         module_names: frozenset[str],
     ) -> bool:
@@ -7575,19 +7346,26 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             ):
                 continue
             key = name_load_binding_key(current)
-            imported_name = static_binary_decoder_module_bindings.get(key)
-            if imported_name is not None and f"{imported_name}{suffix}" in module_names:
-                return True
+            for event_id, imported_name in static_module_import_bindings.get(key, ()):
+                if (
+                    f"{imported_name}{suffix}" in module_names
+                    and binding_event_may_reach_load(current, key, event_id)
+                ):
+                    return True
             binding_state = (key, suffix)
             if binding_state in observed_binding_states:
                 continue
             observed_binding_states.add(binding_state)
             pending.extend(
-                (source, suffix) for source in static_decoder_binding_sources(key)
+                (source, suffix) for source in static_decoder_binding_sources(key, current)
             )
         return False
 
-    def expression_has_static_binary_decoder_origin(node: ast.AST) -> bool:
+    def expression_has_static_callable_origin(
+        node: ast.AST,
+        qualified_names: frozenset[str],
+        builtin_names: frozenset[str] = frozenset(),
+    ) -> bool:
         pending = [node]
         observed_expression_ids: set[int] = set()
         observed_binding_keys: set[tuple[int, str]] = set()
@@ -7597,15 +7375,17 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             if id(current) in observed_expression_ids:
                 continue
             observed_expression_ids.add(id(current))
+            if unshadowed_builtin_name(current, builtin_names):
+                return True
             if isinstance(current, ast.Attribute):
-                module_names = static_binary_decoder_modules_by_method.get(
-                    current.attr
+                module_names = frozenset(
+                    qualified_name.rsplit(".", 1)[0]
+                    for qualified_name in qualified_names
+                    if qualified_name.rsplit(".", 1)[1] == current.attr
                 )
-                if module_names is not None and (
-                    expression_has_static_decoder_module_origin(
-                        current.value,
-                        module_names,
-                    )
+                if module_names and expression_has_static_module_origin(
+                    current.value,
+                    module_names,
                 ):
                     return True
                 continue
@@ -7614,73 +7394,137 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             ):
                 continue
             key = name_load_binding_key(current)
-            if key in static_binary_decoder_import_binding_keys:
-                return True
+            for event_id, qualified_name in static_callable_import_bindings.get(
+                key, ()
+            ):
+                if qualified_name in qualified_names and binding_event_may_reach_load(
+                    current, key, event_id
+                ):
+                    return True
             if key in observed_binding_keys:
                 continue
             observed_binding_keys.add(key)
-            pending.extend(static_decoder_binding_sources(key))
+            pending.extend(static_decoder_binding_sources(key, current))
         return False
+
+    def expression_has_static_binary_decoder_origin(node: ast.AST) -> bool:
+        return expression_has_static_callable_origin(
+            node,
+            static_binary_decoder_qualified_names,
+        )
+
+    def expression_has_static_dynamic_import_origin(node: ast.AST) -> bool:
+        return expression_has_static_callable_origin(
+            node,
+            import_resolver_qualified_names,
+            static_import_builtin_names,
+        )
+
+    decoder_input_operations = 0
+    decoder_input_operation_limit = min(
+        max(node_count * 8, 1),
+        BOOTSTRAP_V2_MAX_PYTHON_STATIC_DECODER_INPUT_OPERATIONS,
+    )
+    decoder_value_input_cache: dict[int, bool | None] = {}
+    decoder_expression_input_cache: dict[int, bool] = {}
+
+    def consume_static_decoder_input_operation() -> None:
+        nonlocal decoder_input_operations
+        decoder_input_operations += 1
+        if decoder_input_operations > decoder_input_operation_limit:
+            raise ValueError(
+                "Python static decoder input exceeds the trusted operation limit"
+            )
 
     def value_contains_static_decoder_input(value: Any) -> bool:
-        pending = [value]
-        observed = 0
-        while pending:
-            observed += 1
-            if observed > BOOTSTRAP_V2_MAX_PYTHON_AST_NODES:
-                raise ValueError(
-                    "Python static decoder input exceeds the trusted item limit"
-                )
-            current = pending.pop()
-            if type(current) in {str, bytes}:
-                return True
-            if type(current) in {tuple, list}:
-                pending.extend(current)
-            elif type(current) is dict:
-                for key, child in current.items():
-                    pending.extend((key, child))
-        return False
+        consume_static_decoder_input_operation()
+        if type(value) in {str, bytes}:
+            return True
+        if type(value) not in {tuple, list, dict}:
+            return False
+        value_id = id(value)
+        if value_id in decoder_value_input_cache:
+            cached = decoder_value_input_cache[value_id]
+            if cached is None:
+                raise ValueError("Python static decoder input contains a cycle")
+            return cached
+        decoder_value_input_cache[value_id] = None
+        children = value if type(value) in {tuple, list} else (
+            child for pair in value.items() for child in pair
+        )
+        result = any(value_contains_static_decoder_input(child) for child in children)
+        decoder_value_input_cache[value_id] = result
+        return result
 
     def expression_has_static_decoder_input(node: ast.AST) -> bool:
+        cached = decoder_expression_input_cache.get(id(node))
+        if cached is not None:
+            consume_static_decoder_input_operation()
+            return cached
         evaluated_value = evaluated.get(id(node), not_pure)
         if evaluated_value is not not_pure and value_contains_static_decoder_input(
             evaluated_value
         ):
-            return True
-        return any(
-            isinstance(child, ast.Constant) and type(child.value) in {str, bytes}
-            for child in ast.walk(node)
-        )
+            result = True
+        else:
+            result = False
+            for child in ast.walk(node):
+                consume_static_decoder_input_operation()
+                if isinstance(child, ast.Constant) and type(child.value) in {
+                    str,
+                    bytes,
+                }:
+                    result = True
+                    break
+        decoder_expression_input_cache[id(node)] = result
+        return result
 
     def unresolved_static_binary_decoder_call(node: ast.AST) -> bool:
-        if not isinstance(node, ast.Call) or not expression_has_static_binary_decoder_origin(
-            node.func
+        if not isinstance(node, ast.Call) or not (
+            expression_has_static_binary_decoder_origin(node.func)
         ):
             return False
-        source_nodes: list[ast.AST] = []
+        return any(
+            expression_has_static_decoder_input(source)
+            for source in call_source_nodes(node, decoder_source_keyword_names)
+        )
+
+    def call_source_nodes(
+        node: ast.Call,
+        keyword_names: frozenset[str],
+    ) -> tuple[ast.AST, ...]:
         if node.args:
-            first_argument = node.args[0]
-            source_nodes.append(
-                first_argument.value
-                if isinstance(first_argument, ast.Starred)
-                else first_argument
-            )
-        else:
-            source_keyword_names = {
-                "data",
-                "hexstr",
-                "input",
-                "obj",
-                "object",
-                "s",
-                "string",
-            }
-            source_nodes.extend(
-                keyword.value
-                for keyword in node.keywords
-                if keyword.arg in source_keyword_names
-            )
-        return any(expression_has_static_decoder_input(source) for source in source_nodes)
+            first = node.args[0]
+            return (first.value if isinstance(first, ast.Starred) else first,)
+        return tuple(
+            keyword.value
+            for keyword in node.keywords
+            if keyword.arg in keyword_names
+        )
+
+    def dynamic_code_call_uses_static_input(node: ast.Call) -> bool:
+        if not expression_has_static_callable_origin(
+            node.func, frozenset(), dynamic_code_builtin_names
+        ):
+            return False
+        return any(
+            evaluate_binding_expression(source) is not not_pure
+            or expression_is_closed_static_value(source)
+            for source in call_source_nodes(node, frozenset({"source"}))
+        )
+
+    def dynamic_import_call_uses_decoder_module(node: ast.Call) -> bool:
+        if not expression_has_static_dynamic_import_origin(node.func):
+            return False
+        for source in call_source_nodes(node, frozenset({"name"})):
+            imported_name = evaluate_binding_expression(source)
+            if isinstance(imported_name, str) and any(
+                imported_name == module_name
+                or module_name.startswith(f"{imported_name}.")
+                for module_name in static_binary_decoder_modules
+            ):
+                return True
+        return False
 
     resolved_bindings: dict[
         tuple[int, str],
@@ -7966,6 +7810,16 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         return False
 
     for node in reversed(nodes):
+        if isinstance(node, ast.Call) and dynamic_code_call_uses_static_input(node):
+            raise ValueError(
+                "Python dynamic code primitive uses static input "
+                f"at line {getattr(node, 'lineno', 0)}"
+            )
+        if isinstance(node, ast.Call) and dynamic_import_call_uses_decoder_module(node):
+            raise ValueError(
+                "Python decoder module uses a dynamic import "
+                f"at line {getattr(node, 'lineno', 0)}"
+            )
         depends_on_ambiguous_binding = id(node) in fail_closed_binding_expression_ids
         is_supported_string_constructor = (
             isinstance(node, ast.BinOp)

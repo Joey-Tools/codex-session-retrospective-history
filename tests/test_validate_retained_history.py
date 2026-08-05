@@ -10380,6 +10380,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         expected = risky_github_classic_token()
         encoded = base64.b64encode(expected.encode("ascii")).decode("ascii")
         encoded_hex = expected.encode("ascii").hex()
+        encoded_qp = "".join(f"={byte:02X}" for byte in expected.encode("ascii"))
         encoded_z85 = "xj#l>vprOMvprOMvprOMvprOMvprOMvprOMvprOMvprOMvprOM"
         cases = (
             f'import base64\nvalue = base64.b64decode("{encoded}").decode("ascii")\n',
@@ -10397,6 +10398,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "reveal = decoder_module.decodebytes\n"
             f'value = reveal(b"{encoded}")\n',
             f'import binascii\nvalue = binascii.unhexlify("{encoded_hex}").decode("ascii")\n',
+            f'import quopri\nvalue = quopri.decodestring("{encoded_qp}")\n',
+            f'import base64\nvalue = base64.b64decode("{encoded}")\nbase64 = custom_codec\n',
+            "from base64 import b64decode\n"
+            f'value = b64decode("{encoded}")\n'
+            "b64decode = custom_decode\n",
             "import codecs\n"
             f'value = codecs.decode("{encoded}", "base64").decode("ascii")\n',
             f'import base64\npayload = base64.b64decode("{encoded}")\n',
@@ -10420,12 +10426,79 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             'value = cache.decompress("public")\n',
             'value = codec.unhexlify("label")\n',
             'value = codec.b64decode("label")\n',
+            'import base64\nbase64 = custom_codec\nvalue = base64.b64decode("label")\n',
+            "from base64 import b64decode\n"
+            "b64decode = custom_decode\n"
+            'value = b64decode("label")\n',
         ):
             with self.subTest(dynamic=source.splitlines()[-1][:48]):
                 self.assertEqual(
                     MODULE.bootstrap_v2_python_privacy_risk_values(source),
                     [],
                 )
+
+        self.assert_python_privacy_layers_reject(
+            "from base64 import *\n"
+            f'value = b64decode("{encoded}")\n',
+            "decoder module uses a wildcard import",
+        )
+        for source in (
+            f'value = __import__("base64").b64decode("{encoded}")\n',
+            "import importlib\n"
+            f'value = importlib.import_module("base64").b64decode("{encoded}")\n',
+            "from importlib import import_module as load_module\n"
+            f'value = load_module("base64").b64decode("{encoded}")\n',
+        ):
+            with self.subTest(dynamic_import=source.splitlines()[-1][:48]):
+                self.assert_python_privacy_layers_reject(
+                    source,
+                    "decoder module uses a dynamic import",
+                )
+
+    def test_bootstrap_v2_python_dynamic_code_static_input_fails_closed(self) -> None:
+        expected = tuple(risky_github_classic_token().encode("ascii"))
+        sources = (
+            f'value = bytes(eval("{expected!r}")).decode("ascii")\n',
+            f'payload = "{expected!r}"\nvalue = bytearray(eval(payload))\n',
+            f'runner = eval\nvalue = bytes(runner("{expected!r}"))\n',
+            f'runner = eval\nvalue = runner("{expected!r}")\nrunner = custom_runner\n',
+            'value = compile("value = 1", "<retained>", "exec")\n',
+            'exec("value = 1")\n',
+        )
+        for source in sources:
+            with self.subTest(source=source.splitlines()[-1][:48]):
+                self.assert_python_privacy_layers_reject(
+                    source,
+                    "dynamic code primitive uses static input",
+                )
+
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "compile(source, filename, mode)\n"
+            ),
+            [],
+        )
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "runner = eval\nrunner = custom_runner\nrunner(source)\n"
+            ),
+            [],
+        )
+
+    def test_bootstrap_v2_python_static_decoder_input_budget_is_shared(self) -> None:
+        payload = ", ".join(str(index) for index in range(10))
+        source = "import base64\npayload = (" + payload + ",)\n" + "".join(
+            f"value_{index} = base64.b64decode(payload)\n" for index in range(5)
+        )
+        with mock.patch.object(
+            MODULE,
+            "BOOTSTRAP_V2_MAX_PYTHON_STATIC_DECODER_INPUT_OPERATIONS",
+            40,
+        ):
+            self.assertEqual(
+                MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                [],
+            )
 
     def test_bootstrap_v2_python_static_constructor_arithmetic_fails_closed(
         self,
