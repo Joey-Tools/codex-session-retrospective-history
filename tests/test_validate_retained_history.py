@@ -7224,6 +7224,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256",
                 "tests/test_validate_retained_history.py",
             ),
+        }
+        trusted_python_entries = {
             (
                 "BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256",
                 "scripts/validate_retained_history.py",
@@ -7233,6 +7235,20 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "tests/test_validate_retained_history.py",
             ),
         }
+
+        def assert_digest_tuple(node: ast.AST) -> None:
+            self.assertIsInstance(node, ast.Tuple)
+            assert isinstance(node, ast.Tuple)
+            self.assertEqual(len(node.elts), 32)
+            self.assertTrue(
+                all(
+                    isinstance(element, ast.Constant)
+                    and type(element.value) is int
+                    and 0 <= element.value <= 255
+                    for element in node.elts
+                )
+            )
+
         binary_value_ids: set[int] = set()
         for entry in binary_entries:
             with self.subTest(table=entry[0], relative=entry[1]):
@@ -7252,19 +7268,60 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 self.assertEqual(byte_call.func.id, "bytes")
                 self.assertEqual(len(byte_call.args), 1)
                 self.assertFalse(byte_call.keywords)
-                byte_values = byte_call.args[0]
-                self.assertIsInstance(byte_values, ast.Tuple)
-                assert isinstance(byte_values, ast.Tuple)
-                self.assertEqual(len(byte_values.elts), 32)
-                self.assertTrue(
-                    all(
-                        isinstance(element, ast.Constant)
-                        and type(element.value) is int
-                        and 0 <= element.value <= 255
-                        for element in byte_values.elts
-                    )
-                )
+                assert_digest_tuple(byte_call.args[0])
                 binary_value_ids.add(id(value))
+
+        for entry in trusted_python_entries:
+            with self.subTest(table=entry[0], relative=entry[1]):
+                value = entries[entry]
+                self.assertIsInstance(value, ast.Call)
+                assert isinstance(value, ast.Call)
+                self.assertIsInstance(value.func, ast.Name)
+                assert isinstance(value.func, ast.Name)
+                self.assertEqual(value.func.id, "_trusted_sha256_values_hex")
+                self.assertEqual(len(value.args), 1)
+                self.assertFalse(value.keywords)
+                assert_digest_tuple(value.args[0])
+
+        helper_definitions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_trusted_sha256_values_hex"
+        ]
+        self.assertEqual(len(helper_definitions), 1)
+        helper_definition = helper_definitions[0]
+        self.assertEqual(len(helper_definition.args.args), 1)
+        self.assertEqual(helper_definition.args.args[0].arg, "values")
+        self.assertFalse(helper_definition.args.defaults)
+        self.assertIsNone(helper_definition.args.vararg)
+        self.assertIsNone(helper_definition.args.kwarg)
+        helper_returns = [
+            node
+            for node in ast.walk(helper_definition)
+            if isinstance(node, ast.Return)
+        ]
+        self.assertEqual(len(helper_returns), 1)
+        helper_hex_call = helper_returns[0].value
+        self.assertIsInstance(helper_hex_call, ast.Call)
+        assert isinstance(helper_hex_call, ast.Call)
+        self.assertIsInstance(helper_hex_call.func, ast.Attribute)
+        assert isinstance(helper_hex_call.func, ast.Attribute)
+        self.assertEqual(helper_hex_call.func.attr, "hex")
+        helper_byte_call = helper_hex_call.func.value
+        self.assertIsInstance(helper_byte_call, ast.Call)
+        assert isinstance(helper_byte_call, ast.Call)
+        self.assertIsInstance(helper_byte_call.func, ast.Name)
+        assert isinstance(helper_byte_call.func, ast.Name)
+        self.assertEqual(helper_byte_call.func.id, "bytes")
+        self.assertEqual(len(helper_byte_call.args), 1)
+        self.assertIsInstance(helper_byte_call.args[0], ast.Name)
+        assert isinstance(helper_byte_call.args[0], ast.Name)
+        self.assertEqual(helper_byte_call.args[0].id, "values")
+        self.assertFalse(helper_byte_call.keywords)
+        self.assertFalse(helper_hex_call.args)
+        self.assertFalse(helper_hex_call.keywords)
+        binary_value_ids.add(id(helper_hex_call))
 
         observed_hex_call_ids = {
             id(node)
@@ -7274,6 +7331,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             and node.func.attr == "hex"
         }
         self.assertEqual(observed_hex_call_ids, binary_value_ids)
+        self.assertEqual(MODULE._trusted_sha256_values_hex((0,) * 32), "00" * 32)
+        for invalid in (
+            (0,) * 31,
+            (0,) * 33,
+            (-1,) + ((0,) * 31),
+            (256,) + ((0,) * 31),
+            (True,) + ((0,) * 31),
+        ):
+            with self.subTest(invalid_digest=invalid[:1]):
+                with self.assertRaisesRegex(RuntimeError, "SHA-256 value is invalid"):
+                    MODULE._trusted_sha256_values_hex(invalid)
 
         for relative in ("scripts/validate_retained_history.py",):
             value = entries["BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256", relative]
@@ -10064,6 +10132,18 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         relative = Path("tests/test_retrospective_history_v2.py")
         expected = risky_github_classic_token()
         escaped = "".join(f"\\x{value:02x}" for value in expected.encode("ascii"))
+        integer_sequence = ", ".join(str(value) for value in expected.encode("ascii"))
+        chr_expression = " + ".join(
+            f"chr({value})" for value in expected.encode("ascii")
+        )
+        split_index = len(expected) // 2
+        byte_fragment_expressions = tuple(
+            "bytes((" + ", ".join(str(value) for value in fragment) + "))"
+            for fragment in (
+                expected[:split_index].encode("ascii"),
+                expected[split_index:].encode("ascii"),
+            )
+        )
         cases = (
             (
                 "replace",
@@ -10096,6 +10176,28 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "fromhex",
                 f'value = bytes.fromhex("{expected.encode("ascii").hex()}").decode('
                 '"ascii")\n',
+            ),
+            (
+                "bytes iterable",
+                f"value = bytes(({integer_sequence})).decode('ascii')\n",
+            ),
+            (
+                "bytearray iterable",
+                f"value = bytearray(({integer_sequence})).decode('ascii')\n",
+            ),
+            (
+                "str decode constructor",
+                f"value = str(bytes(({integer_sequence})), 'ascii')\n",
+            ),
+            (
+                "chr composition",
+                f"value = {chr_expression}\n",
+            ),
+            (
+                "zero-length bytes join",
+                "value = bytes(0).join(("
+                + ", ".join(byte_fragment_expressions)
+                + ")).decode('ascii')\n",
             ),
         )
         for label, source in cases:
@@ -10165,6 +10267,19 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "public",
             ),
             ('value = bytes.fromhex("7075626c6963").decode("ascii")\n', "public"),
+            ('value = bytes((112, 117, 98, 108, 105, 99)).decode("ascii")\n', "public"),
+            (
+                'value = bytearray((112, 117, 98, 108, 105, 99)).decode("ascii")\n',
+                "public",
+            ),
+            (
+                'value = chr(112) + chr(117) + chr(98) + chr(108) + chr(105) + chr(99)\n',
+                "public",
+            ),
+            (
+                'value = bytes(0).join((b"pub", b"lic")).decode("ascii")\n',
+                "public",
+            ),
         )
         for source, expected in cases:
             with self.subTest(source=source):
@@ -10223,6 +10338,28 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 'value = "public".encode("rot_13")\n'
             )
 
+        self.assert_python_privacy_layers_reject(
+            'payload = bytearray((112, 117, 98, 108, 105, 99))\n'
+            'payload.extend((33,))\n'
+            'value = payload.decode("ascii")\n',
+            "bytearray text method uses a mutable aliased receiver",
+        )
+        self.assert_python_privacy_layers_reject(
+            'payload = bytearray((112, 117, 98, 108, 105, 99))\n'
+            "alias = payload\n"
+            "alias[0] = 80\n"
+            'value = payload.decode("ascii")\n',
+            "bytearray text method uses a mutable aliased receiver",
+        )
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_string_constants(
+                'changed = bytearray((112, 117, 98))\n'
+                "changed.append(33)\n"
+                'value = bytearray((112, 117, 98, 108, 105, 99)).decode("ascii")\n'
+            )[-1],
+            "public",
+        )
+
         with mock.patch.object(
             MODULE,
             "BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES",
@@ -10236,6 +10373,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 MODULE.bootstrap_v2_python_string_constants(
                     'value = "xx".translate(str.maketrans({"x": "abcde"}))\n'
                 )
+            with self.assertRaisesRegex(ValueError, "bytes allocation exceeds"):
+                MODULE.bootstrap_v2_python_string_constants("value = bytes(9)\n")
 
     def test_bootstrap_v2_python_opaque_iterables_fail_closed_without_risk_seeds(
         self,
