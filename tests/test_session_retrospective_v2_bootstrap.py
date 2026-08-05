@@ -26,7 +26,7 @@ PERMANENT_CI = (
 VALIDATOR = ROOT / "scripts/validate_retained_history.py"
 CI_HELPER = ROOT / "scripts/trusted_history_ci.py"
 EXPECTED_WORKFLOW_POLICY_SHA256 = (
-    "21fcb80f9c8c5ec3c653f042e5a3ed86e8d664c69189eaee73fedb99fa9112d3"
+    "6d980fe19b516087fbc9e87273bdce9bf57d43e758bedfe2725e2eadce789d32"
 )
 CLOSED_GIT_WORKFLOW_ENV = {
     "GIT_ALTERNATE_OBJECT_DIRECTORIES": "",
@@ -1001,7 +1001,7 @@ class MergeGroupGraph:
             base_sha=queue_base,
             queue_ref=merge_group_ref(),
             queue_sha=queue,
-            workflow_sha=queue_base,
+            workflow_sha=queue,
             pull_request_number=17,
             pull_request_node_id="PR_kwDO_bootstrap",
             pull_request_title=title,
@@ -1046,7 +1046,6 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         "edited",
                     ],
                 },
-                "merge_group": {"types": ["checks_requested"]},
             },
         )
         self.assertEqual(workflow["permissions"], {})
@@ -1056,10 +1055,14 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         )
         self.assertEqual(
             workflow["env"]["RETROSPECTIVE_HISTORY_MUTATION_MODEL"],
-            "github-protected-merge-queue-squash-only",
+            "external-admission-cas-only",
         )
-        self.assertIn("current-q", workflow["env"]["RETROSPECTIVE_HISTORY_TCB"])
+        self.assertEqual(
+            workflow["env"]["RETROSPECTIVE_HISTORY_TCB"],
+            "baseline-owned-pr-feedback_external-admission-cas",
+        )
         self.assertNotIn("pull_request", workflow["on"])
+        self.assertNotIn("merge_group", workflow["on"])
         job = workflow_job()
         self.assertEqual(job["runs-on"], "ubuntu-24.04")
         self.assertEqual(job["timeout-minutes"], 25)
@@ -1069,16 +1072,56 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             {"contents": "read", "pull-requests": "read"},
         )
         self.assertNotIn("outputs", job)
-        self.assertIn("MERGE_GROUP_SNAPSHOT", job["env"])
-        self.assertIn("QUEUE_ROOT", job["env"])
+        self.assertNotIn("MERGE_GROUP_SNAPSHOT", job["env"])
+        self.assertNotIn("QUEUE_ROOT", job["env"])
         self.assertIn("github.event.pull_request.draft == false", job["if"])
-        self.assertIn("github.event_name == 'merge_group'", job["if"])
+        self.assertNotIn("merge_group", job["if"])
+
+    def test_permanent_workflow_separates_candidate_feedback_from_push_audit(
+        self,
+    ) -> None:
+        bootstrap = load_workflow()
+        permanent = load_workflow(PERMANENT_CI)
+        self.assertEqual(
+            permanent["on"],
+            {
+                "pull_request_target": bootstrap["on"]["pull_request_target"],
+                "push": {"branches": ["master"]},
+            },
+        )
+        self.assertEqual(
+            permanent["env"]["RETROSPECTIVE_HISTORY_MUTATION_MODEL"],
+            "external-admission-cas-only",
+        )
+        self.assertEqual(
+            permanent["env"]["RETROSPECTIVE_HISTORY_S_AUDIT"],
+            "post-mutation-detection-only",
+        )
+        self.assertEqual(
+            set(permanent["jobs"]),
+            {"trusted_history_gate", "trusted_default_audit"},
+        )
+        candidate = permanent["jobs"]["trusted_history_gate"]
+        audit = permanent["jobs"]["trusted_default_audit"]
+        self.assertEqual(
+            candidate["permissions"],
+            {"contents": "read", "pull-requests": "read"},
+        )
+        self.assertEqual(audit["permissions"], {"contents": "read"})
+        self.assertEqual(audit["name"], "Post-merge default audit")
+        self.assertEqual(
+            audit["if"],
+            "${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}",
+        )
+        detector = steps_by_name(audit)["Document detector scope"]["run"]
+        self.assertIn("does not prevent that write", detector)
+        self.assertIn("never authorizes mutation", detector)
 
     def test_only_trusted_base_is_checked_out_and_actions_are_pinned(self) -> None:
         action_steps = [step for step in workflow_job()["steps"] if "uses" in step]
         self.assertEqual(len(action_steps), 2)
         checkout, setup = action_steps
-        self.assertEqual(checkout["name"], "Checkout exact trusted B0 or B1")
+        self.assertEqual(checkout["name"], "Checkout exact trusted B0")
         self.assertEqual(checkout["with"]["path"], "trusted")
         self.assertEqual(checkout["with"]["ref"], "${{ env.TRUSTED_SHA }}")
         self.assertIs(checkout["with"]["persist-credentials"], False)
@@ -1093,9 +1136,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             "Fetch bounded bootstrap graph without checkout",
             "Preflight exact signed bootstrap H",
             "Materialize only preflight-bounded blobs",
-            "Verify signature and materialize H and Q as data",
-            "Establish read-only H and Q mounts",
-            "Validate B0/H candidate or B1/Q transaction",
+            "Verify signature and materialize H as data",
+            "Establish read-only H mount",
+            "Validate B0/H candidate feedback",
         )
         offsets = [names.index(name) for name in ordered]
         self.assertEqual(offsets, sorted(offsets))
@@ -1159,7 +1202,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, run_scripts)
         validation = steps_by_name()[
-            "Validate B0/H candidate or B1/Q transaction"
+            "Validate B0/H candidate feedback"
         ]["run"]
         self.assertIn(
             'python -I "$TRUSTED_ROOT/scripts/validate_retained_history.py"',
@@ -1175,32 +1218,33 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         for name in (
             "Fetch bounded bootstrap graph without checkout",
             "Materialize only preflight-bounded blobs",
-            "Validate B0/H candidate or B1/Q transaction",
+            "Validate B0/H candidate feedback",
         ):
             script = named[name]["run"]
             self.assertIn("timeout --signal=TERM --kill-after=5s", script)
             self.assertIn("ulimit -f", script)
             self.assertIn("ulimit -n", script)
-        validation = named["Validate B0/H candidate or B1/Q transaction"]["run"]
+        validation = named["Validate B0/H candidate feedback"]["run"]
         self.assertIn("ulimit -t", validation)
         self.assertIn('>"$output" 2>&1', validation)
         self.assertIn('tail -n 120 "$output"', validation)
 
-    def test_evidence_is_queue_bound_and_has_no_commit_status(self) -> None:
+    def test_candidate_evidence_is_non_authoritative_and_has_no_commit_status(
+        self,
+    ) -> None:
         evidence = steps_by_name()["Publish bootstrap gate evidence"]
         script = evidence["run"]
-        for identity in (
-            "B0_SHA",
-            "CANDIDATE_SHA",
-            "TRUSTED_SHA",
-            "QUEUE_SHA",
-        ):
+        for identity in ("B0_SHA", "CANDIDATE_SHA"):
             self.assertIn(identity, script)
-        self.assertIn("never reused by the merge queue", script)
+        self.assertIn("candidate feedback only", script)
+        self.assertIn("external admission", script)
+        self.assertIn("history authority CAS", script)
+        self.assertNotIn("QUEUE_SHA", script)
+        self.assertNotIn("finalize-merge-group", script)
         self.assertNotIn(" status \\", script)
-        bind = steps_by_name()["Bind live PR or exact merge group"]["run"]
+        bind = steps_by_name()["Bind live PR"]["run"]
         self.assertIn("snapshot", bind)
-        self.assertIn("merge-group-snapshot", bind)
+        self.assertNotIn("merge-group-snapshot", bind)
         self.assertEqual(evidence["if"], "${{ always() }}")
 
     def test_success_summaries_report_only_event_specific_evidence(self) -> None:
@@ -1214,73 +1258,49 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 workflow["jobs"]["trusted_history_gate"]
             )[step_name]["run"]
             with self.subTest(workflow=workflow_path.name):
-                for event_kind in ("pull-request", "merge-group"):
-                    with self.subTest(event=event_kind), tempfile.TemporaryDirectory() as raw:
-                        temporary = Path(raw)
-                        summary = temporary / "summary.md"
-                        result = temporary / "result.json"
-                        result.write_text(
-                            json.dumps({"role": "publication"}) + "\n",
-                            encoding="utf-8",
+                with tempfile.TemporaryDirectory() as raw:
+                    temporary = Path(raw)
+                    summary = temporary / "summary.md"
+                    result = temporary / "result.json"
+                    result.write_text(
+                        json.dumps({"role": "publication"}) + "\n",
+                        encoding="utf-8",
+                    )
+                    environment = {
+                        **os.environ,
+                        "B0_SHA": "a" * 40,
+                        "CANDIDATE_SHA": "b" * 40,
+                        "EVENT_KIND": "candidate",
+                        "GITHUB_STEP_SUMMARY": str(summary),
+                        "PREFLIGHT_OUTCOME": "success",
+                        "RELEASE_OUTCOME": "success",
+                        "RESULT_PATH": str(result),
+                        "VALIDATION_OUTCOME": "success",
+                    }
+                    completed = subprocess.run(
+                        ["bash", "-c", script],
+                        env=environment,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(
+                        completed.returncode,
+                        0,
+                        completed.stderr,
+                    )
+                    rendered = summary.read_text(encoding="utf-8")
+                    self.assertIn("candidate feedback only", rendered)
+                    self.assertIn("external admission", rendered)
+                    self.assertIn("history authority CAS", rendered)
+                    self.assertNotIn("Queue base B1", rendered)
+                    self.assertNotIn("merge-group authority", rendered)
+                    if has_role:
+                        self.assertIn(
+                            "Validated role: `publication`",
+                            rendered,
                         )
-                        environment = {
-                            **os.environ,
-                            "B0_SHA": "a" * 40,
-                            "CANDIDATE_SHA": "b" * 40,
-                            "EVENT_KIND": event_kind,
-                            "FINAL_AUTHORITY_OUTCOME": (
-                                "success"
-                                if event_kind == "merge-group"
-                                else "skipped"
-                            ),
-                            "GITHUB_STEP_SUMMARY": str(summary),
-                            "PREFLIGHT_OUTCOME": "success",
-                            "QUEUE_SHA": "d" * 40,
-                            "RELEASE_OUTCOME": "success",
-                            "RESULT_PATH": str(result),
-                            "TRUSTED_SHA": "c" * 40,
-                            "VALIDATION_OUTCOME": "success",
-                        }
-                        completed = subprocess.run(
-                            ["bash", "-c", script],
-                            env=environment,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True,
-                            check=False,
-                        )
-                        self.assertEqual(
-                            completed.returncode,
-                            0,
-                            completed.stderr,
-                        )
-                        rendered = summary.read_text(encoding="utf-8")
-                        if event_kind == "merge-group":
-                            self.assertIn(
-                                "were re-snapshotted by the final "
-                                "merge-group authority step",
-                                rendered,
-                            )
-                            self.assertIn("Queue base B1", rendered)
-                            self.assertNotIn(
-                                "performs no final Q",
-                                rendered,
-                            )
-                        else:
-                            self.assertIn(
-                                "performs no final Q",
-                                rendered,
-                            )
-                            self.assertNotIn(
-                                "were re-snapshotted",
-                                rendered,
-                            )
-                            self.assertNotIn("Queue base B1", rendered)
-                        if has_role:
-                            self.assertIn(
-                                "Validated role: `publication`",
-                                rendered,
-                            )
 
     def test_pull_request_payload_binds_identity_lifecycle_base_and_head(self) -> None:
         snapshot = validate_pull(pull_payload())
@@ -1492,23 +1512,20 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     ):
                         reader(path)
 
-    def test_merge_queue_is_the_only_master_mutation_authority(self) -> None:
+    def test_in_repository_workflows_are_not_master_mutation_authority(self) -> None:
         for workflow_path in (WORKFLOW, PERMANENT_CI):
             workflow = load_workflow(workflow_path)
-            self.assertIn("merge_group", workflow["on"])
+            self.assertNotIn("merge_group", workflow["on"])
+            self.assertEqual(
+                workflow["env"]["RETROSPECTIVE_HISTORY_MUTATION_MODEL"],
+                "external-admission-cas-only",
+            )
             gate = workflow["jobs"]["trusted_history_gate"]
             self.assertEqual(gate["name"], CI_MODULE.REQUIRED_CHECK_CONTEXT)
             expected_permissions = {
                 "contents": "read",
                 "pull-requests": "read",
             }
-            if workflow_path == PERMANENT_CI:
-                expected_permissions.update(
-                    {
-                        "actions": "read",
-                        "checks": "read",
-                    }
-                )
             self.assertEqual(
                 gate["permissions"],
                 expected_permissions,
@@ -1518,22 +1535,25 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     any(value == "write" for value in job["permissions"].values())
                 )
 
-        combined = "\n".join(
+        workflow_text = "\n".join(
             (
                 WORKFLOW.read_text(encoding="utf-8"),
                 PERMANENT_CI.read_text(encoding="utf-8"),
-                CI_HELPER.read_text(encoding="utf-8"),
             )
         )
         for prohibited in (
             "contents: write",
+            "merge_group:",
+            "finalize-merge-group",
+            "CONFIG_READ_TOKEN",
+            "QUEUE_SHA",
             "authorize-merge",
             "consume-merge",
             "force-with-lease",
             "exact-ref-updated",
             "already-converged",
         ):
-            self.assertNotIn(prohibited, combined)
+            self.assertNotIn(prohibited, workflow_text)
         for obsolete in (
             "create_merge_authorization",
             "consume_merge_authorization",
@@ -1555,6 +1575,28 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 payload={"sha": "a" * 40},
             )
         urlopen.assert_not_called()
+
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "read_live_merge_group_snapshot",
+            ) as live_snapshot,
+            self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "in-repository merge-group authority is prohibited",
+            ),
+        ):
+            CI_MODULE.verify_live_merge_group_authority(
+                expected=mock.sentinel.snapshot,
+                event_path=Path("/synthetic/event.json"),
+                event_ref=merge_group_ref(),
+                event_sha="c" * 40,
+                workflow_sha="c" * 40,
+                policy="history-v2",
+                trusted_base_root=Path("/synthetic/trusted"),
+                token="read-only",
+            )
+        live_snapshot.assert_not_called()
 
     def test_trusted_branch_configuration_is_exact_and_fail_closed(self) -> None:
         digest = CI_MODULE.validate_trusted_branch_configuration(
@@ -1625,10 +1667,18 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 repository=TEST_REPOSITORY,
                 event_ref=merge_group_ref(),
                 event_sha=queue,
-                workflow_sha=base,
+                workflow_sha=queue,
             ),
             (17, base, queue),
         )
+        with self.assertRaisesRegex(CI_MODULE.GateError, "exact B1/Q pair"):
+            CI_MODULE.validate_merge_group_event(
+                payload,
+                repository=TEST_REPOSITORY,
+                event_ref=merge_group_ref(),
+                event_sha=queue,
+                workflow_sha=base,
+            )
         mutations = (
             ("action", lambda value: value.__setitem__("action", "destroyed")),
             (
@@ -1665,8 +1715,38 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     repository=TEST_REPOSITORY,
                     event_ref=merge_group_ref(),
                     event_sha=queue,
-                    workflow_sha=base,
+                    workflow_sha=queue,
                 )
+
+    def test_merge_group_snapshot_loader_requires_queue_workflow_sha(self) -> None:
+        snapshot = CI_MODULE.MergeGroupSnapshot(
+            repository=TEST_REPOSITORY,
+            base_ref="refs/heads/master",
+            base_sha="b" * 40,
+            queue_ref=merge_group_ref(),
+            queue_sha="c" * 40,
+            workflow_sha="c" * 40,
+            pull_request_number=17,
+            pull_request_node_id="PR_kwDO_bootstrap",
+            pull_request_title="Publish retained history",
+            candidate_ref="wip/history-publication",
+            candidate_sha="a" * 40,
+            required_check=CI_MODULE.REQUIRED_CHECK_CONTEXT,
+            tcb_sha256="d" * 64,
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "snapshot.json"
+            payload = snapshot.as_dict()
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(CI_MODULE.load_merge_group_snapshot(path), snapshot)
+
+            payload["workflow_sha"] = snapshot.base_sha
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "coordinates are invalid",
+            ):
+                CI_MODULE.load_merge_group_snapshot(path)
 
     def test_get_to_queue_mutation_lifecycle_races_fail_without_a_writer(
         self,
@@ -1750,7 +1830,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     event_path=event_path,
                     event_ref=merge_group_ref(),
                     event_sha="c" * 40,
-                    workflow_sha=base,
+                    workflow_sha="c" * 40,
                     token="read-only",
                 )
 
@@ -2099,273 +2179,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 label="synthetic pull",
             )
 
-    def test_final_publication_gate_consumes_predecessor_audit_fuse(
-        self,
-    ) -> None:
-        snapshot = CI_MODULE.MergeGroupSnapshot(
-            repository=TEST_REPOSITORY,
-            base_ref="refs/heads/master",
-            base_sha="b" * 40,
-            queue_ref=merge_group_ref(),
-            queue_sha="c" * 40,
-            workflow_sha="b" * 40,
-            pull_request_number=17,
-            pull_request_node_id="PR_kwDO_bootstrap",
-            pull_request_title="Publish retained history",
-            candidate_ref="wip/history-publication",
-            candidate_sha="a" * 40,
-            required_check=CI_MODULE.REQUIRED_CHECK_CONTEXT,
-            tcb_sha256="d" * 64,
-        )
-        evidence = CI_MODULE.PredecessorAuditEvidence(
-            base_sha=snapshot.base_sha,
-            parent_sha="e" * 40,
-            pull_request_number=16,
-            pull_request_node_id="PR_kwDO_predecessor",
-            candidate_sha="f" * 40,
-            merged_at="2026-07-15T00:00:00Z",
-            check_run_id=501,
-            check_run_node_id="CR_kwDO_predecessor",
-            check_suite_id=601,
-            workflow_run_id=701,
-            workflow_id=901,
-            workflow_run_attempt=1,
-            job_id=801,
-            started_at="2026-07-15T00:02:00Z",
-            completed_at="2026-07-15T00:04:00Z",
-            sha256="1" * 64,
-        )
-
-        class Validator:
-            BOOTSTRAP_V2_TEMPORARY_PATHS = frozenset(
-                {Path(".github/bootstrap/synthetic-marker")}
-            )
-
-            @staticmethod
-            def history_v2_bootstrap_markers(
-                _root: Path,
-                _revision: str,
-            ) -> frozenset[Path]:
-                return frozenset()
-
-            @staticmethod
-            def validate_history_v2_tree(_root: Path) -> list[str]:
-                return []
-
-        with (
-            mock.patch.object(
-                CI_MODULE,
-                "read_live_merge_group_snapshot",
-                return_value=snapshot,
-            ),
-            mock.patch.object(CI_MODULE, "_worktree_head"),
-            mock.patch.object(
-                CI_MODULE,
-                "trusted_validator_module",
-                return_value=Validator,
-            ),
-            mock.patch.object(
-                CI_MODULE,
-                "_single_worktree_parent",
-                return_value=evidence.parent_sha,
-            ),
-            mock.patch.object(
-                CI_MODULE,
-                "read_trusted_predecessor_audit_evidence",
-                return_value=evidence,
-            ) as audit,
-        ):
-            receipt = CI_MODULE.verify_live_merge_group_authority(
-                expected=snapshot,
-                event_path=Path("/synthetic/event.json"),
-                event_ref=snapshot.queue_ref,
-                event_sha=snapshot.queue_sha,
-                workflow_sha=snapshot.workflow_sha,
-                policy="history-v2",
-                trusted_base_root=Path("/synthetic/trusted"),
-                token="read-only",
-            )
-        self.assertEqual(receipt["mode"], "required")
-        self.assertEqual(receipt["audit"]["sha256"], evidence.sha256)
-        audit.assert_called_once_with(
-            repository=TEST_REPOSITORY,
-            base_sha=snapshot.base_sha,
-            parent_sha=evidence.parent_sha,
-            current_pr_number=17,
-            token="read-only",
-        )
-
-        with (
-            mock.patch.object(
-                CI_MODULE,
-                "read_live_merge_group_snapshot",
-                return_value=snapshot,
-            ),
-            mock.patch.object(CI_MODULE, "_worktree_head"),
-            mock.patch.object(
-                CI_MODULE,
-                "trusted_validator_module",
-                return_value=Validator,
-            ),
-            mock.patch.object(
-                CI_MODULE,
-                "_single_worktree_parent",
-                return_value=evidence.parent_sha,
-            ),
-            mock.patch.object(
-                CI_MODULE,
-                "read_trusted_predecessor_audit_evidence",
-                side_effect=CI_MODULE.GateError(
-                    "predecessor audit evidence is missing"
-                ),
-            ),
-            self.assertRaisesRegex(CI_MODULE.GateError, "missing"),
-        ):
-            CI_MODULE.verify_live_merge_group_authority(
-                expected=snapshot,
-                event_path=Path("/synthetic/event.json"),
-                event_ref=snapshot.queue_ref,
-                event_sha=snapshot.queue_sha,
-                workflow_sha=snapshot.workflow_sha,
-                policy="history-v2",
-                trusted_base_root=Path("/synthetic/trusted"),
-                token="read-only",
-            )
-
-    def test_final_merge_group_snapshot_rejects_live_protected_state_races(
-        self,
-    ) -> None:
-        base = "b" * 40
-        queue = "c" * 40
-        head = "a" * 40
-
-        def initial_payloads() -> dict[str, object]:
-            return {
-                "pull": merge_group_pull_payload(
-                    base_sha=base,
-                    head_sha=head,
-                    title="Publish retained history",
-                ),
-                "ref": live_merge_group_ref_payload(queue_sha=queue),
-                "repository": repository_configuration_payload(),
-                "rules": active_branch_rules_payload(),
-                "protection": branch_protection_payload(),
-                "rulesets": [],
-            }
-
-        def mutate_closed(payloads: dict[str, object]) -> None:
-            assert isinstance(payloads["pull"], dict)
-            payloads["pull"]["state"] = "closed"
-
-        def mutate_draft(payloads: dict[str, object]) -> None:
-            assert isinstance(payloads["pull"], dict)
-            payloads["pull"]["draft"] = True
-
-        def mutate_retarget(payloads: dict[str, object]) -> None:
-            assert isinstance(payloads["pull"], dict)
-            payloads["pull"]["base"]["ref"] = "release"
-
-        def mutate_head(payloads: dict[str, object]) -> None:
-            assert isinstance(payloads["pull"], dict)
-            payloads["pull"]["head"]["sha"] = "d" * 40
-
-        def mutate_queue(payloads: dict[str, object]) -> None:
-            assert isinstance(payloads["ref"], dict)
-            payloads["ref"]["object"]["sha"] = "d" * 40
-
-        def mutate_config(payloads: dict[str, object]) -> None:
-            assert isinstance(payloads["repository"], dict)
-            payloads["repository"]["allow_squash_merge"] = False
-
-        cases = (
-            ("closed", mutate_closed),
-            ("draft", mutate_draft),
-            ("retarget", mutate_retarget),
-            ("head", mutate_head),
-            ("queue", mutate_queue),
-            ("config", mutate_config),
-            ("deleted", None),
-        )
-        with tempfile.TemporaryDirectory() as raw:
-            event_path = Path(raw) / "event.json"
-            event_path.write_text(
-                json.dumps(
-                    merge_group_event_payload(
-                        base_sha=base,
-                        queue_sha=queue,
-                    )
-                ),
-                encoding="utf-8",
-            )
-            for label, mutate in cases:
-                payloads = initial_payloads()
-                deleted = False
-
-                def github_payload(
-                    _method: str,
-                    _repository: str,
-                    route: str,
-                    *,
-                    token: str,
-                ) -> object:
-                    self.assertEqual(token, "read-only")
-                    if route == "/pulls/17":
-                        if deleted:
-                            raise CI_MODULE.GateError("synthetic deleted PR")
-                        return copy.deepcopy(payloads["pull"])
-                    if route.startswith("/git/ref/"):
-                        return copy.deepcopy(payloads["ref"])
-                    if route == "":
-                        return copy.deepcopy(payloads["repository"])
-                    if route == "/rules/branches/master":
-                        return copy.deepcopy(payloads["rules"])
-                    if route == "/branches/master/protection":
-                        return copy.deepcopy(payloads["protection"])
-                    if route == "/rulesets?per_page=100&includes_parents=true":
-                        return copy.deepcopy(payloads["rulesets"])
-                    raise AssertionError(f"unexpected route: {route}")
-
-                with mock.patch.object(
-                    CI_MODULE,
-                    "github_json",
-                    side_effect=github_payload,
-                ):
-                    initial = CI_MODULE.read_live_merge_group_snapshot(
-                        repository=TEST_REPOSITORY,
-                        event_path=event_path,
-                        event_ref=merge_group_ref(),
-                        event_sha=queue,
-                        workflow_sha=base,
-                        token="read-only",
-                    )
-                    if mutate is None:
-                        deleted = True
-                    else:
-                        mutate(payloads)
-                    with (
-                        self.subTest(label=label),
-                        mock.patch.object(
-                            CI_MODULE,
-                            "_worktree_head",
-                            side_effect=AssertionError(
-                                "authority path reached after live drift"
-                            ),
-                        ) as authority,
-                        self.assertRaises(CI_MODULE.GateError),
-                    ):
-                        CI_MODULE.verify_live_merge_group_authority(
-                            expected=initial,
-                            event_path=event_path,
-                            event_ref=merge_group_ref(),
-                            event_sha=queue,
-                            workflow_sha=base,
-                            policy="history-v2",
-                            trusted_base_root=Path(raw) / "trusted",
-                            token="read-only",
-                        )
-                    authority.assert_not_called()
-
-    def test_publication_revalidates_full_current_q_after_base_advance(
+    def test_offline_projection_revalidates_full_queue_after_base_advance(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:

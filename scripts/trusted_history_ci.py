@@ -118,7 +118,7 @@ BOOTSTRAP_CI_TEMPLATE_PATH = (
     ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
 )
 LEGACY_CI_BLOB_OID = "145e8de8a055794b85af6461a69e50715913ea6f"
-PERMANENT_CI_BLOB_OID = "6f055decf600538c5d4b550f4d628546c6132a47"
+PERMANENT_CI_BLOB_OID = "e68fc53504715d1f29eb919fd4c5e13aeb69b1f0"
 _TRUSTED_VALIDATOR_MODULE: Any | None = None
 _FORBIDDEN_CANDIDATE_COMPONENTS = frozenset(
     {
@@ -1883,7 +1883,7 @@ def validate_merge_group_event(
         or match is None
         or event_ref != queue_ref
         or event_sha != queue_sha
-        or workflow_sha != base_sha
+        or workflow_sha != queue_sha
         or len({base_sha, queue_sha}) != 2
     ):
         raise GateError("merge-group event is not bound to the exact B1/Q pair")
@@ -3243,7 +3243,7 @@ def load_merge_group_snapshot(path: Path) -> MergeGroupSnapshot:
         base.get("ref") != DEFAULT_BRANCH_REF
         or match is None
         or int(match.group("number")) != number
-        or workflow_sha != base_sha
+        or workflow_sha != queue_sha
         or not isinstance(node_id, str)
         or not node_id
         or len(node_id) > 256
@@ -3483,84 +3483,17 @@ def verify_live_merge_group_authority(
     trusted_base_root: Path,
     token: str,
 ) -> dict[str, Any]:
-    if policy not in {"bootstrap-v2", "history-v2"}:
-        raise GateError("final merge-group authority policy is invalid")
-    observed = read_live_merge_group_snapshot(
-        repository=expected.repository,
-        event_path=event_path.resolve(),
-        event_ref=event_ref,
-        event_sha=event_sha,
-        workflow_sha=workflow_sha,
-        token=token,
-    )
-    if observed != expected:
-        raise GateError(
-            "merge-group configuration, lifecycle, head, base, or queue drifted "
-            "after validation"
-        )
-    trusted_base_root = trusted_base_root.resolve()
-    _worktree_head(trusted_base_root, expected.base_sha, "trusted B1")
-    validator = trusted_validator_module(
-        contract="bootstrap" if policy == "bootstrap-v2" else "permanent"
-    )
-    try:
-        markers = validator.history_v2_bootstrap_markers(
-            trusted_base_root,
-            expected.base_sha,
-        )
-    except Exception as exc:
-        raise GateError("predecessor bootstrap marker state is unavailable") from exc
-    expected_markers = getattr(
-        validator,
-        "BOOTSTRAP_V2_TEMPORARY_PATHS",
-        None,
-    )
-    if policy == "bootstrap-v2":
-        if (
-            expected.candidate_ref != BOOTSTRAP_CANDIDATE_REF
-            or not isinstance(expected_markers, frozenset)
-            or markers != expected_markers
-        ):
-            raise GateError("bootstrap predecessor audit exception is unavailable")
-        return {
-            "schema_version": 1,
-            "mode": "bootstrap-exception",
-            "base_sha": expected.base_sha,
-            "queue_sha": expected.queue_sha,
-            "pull_request_number": expected.pull_request_number,
-        }
-    if markers:
-        raise GateError("permanent predecessor unexpectedly has bootstrap markers")
-    try:
-        base_issues = validator.validate_history_v2_tree(trusted_base_root)
-    except Exception as exc:
-        raise GateError("predecessor trusted tree validation failed") from exc
-    if (
-        not isinstance(base_issues, list)
-        or any(not isinstance(issue, str) for issue in base_issues)
-    ):
-        raise GateError("predecessor trusted tree result is invalid")
-    if base_issues:
-        raise GateError("predecessor trusted tree is invalid")
-    parent_sha = _single_worktree_parent(
+    del (
+        expected,
+        event_path,
+        event_ref,
+        event_sha,
+        workflow_sha,
+        policy,
         trusted_base_root,
-        expected.base_sha,
+        token,
     )
-    evidence = read_trusted_predecessor_audit_evidence(
-        repository=expected.repository,
-        base_sha=expected.base_sha,
-        parent_sha=parent_sha,
-        current_pr_number=expected.pull_request_number,
-        token=token,
-    )
-    return {
-        "schema_version": 1,
-        "mode": "required",
-        "base_sha": expected.base_sha,
-        "queue_sha": expected.queue_sha,
-        "pull_request_number": expected.pull_request_number,
-        "audit": evidence.as_dict(),
-    }
+    raise GateError("in-repository merge-group authority is prohibited")
 
 
 def _normalized_merge_plan(plan: Any) -> dict[str, Any]:

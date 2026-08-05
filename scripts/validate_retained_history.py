@@ -98,7 +98,7 @@ BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH = Path(
     ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
 )
 BOOTSTRAP_V2_LEGACY_CI_BLOB_OID = "145e8de8a055794b85af6461a69e50715913ea6f"
-BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID = "6f055decf600538c5d4b550f4d628546c6132a47"
+BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID = "e68fc53504715d1f29eb919fd4c5e13aeb69b1f0"
 BOOTSTRAP_SECURITY_WORKFLOW_PATHS = frozenset(
     {BOOTSTRAP_WORKFLOW_PATH, BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH}
 )
@@ -119,44 +119,47 @@ def _trusted_sha256_values_hex(values: tuple[int, ...]) -> str:
 
 
 INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
+    BOOTSTRAP_V2_CI_PATH: (
+        "6d11ebf88bba274b63b4e525f6b13b876fe4d6e06430af51e7111510fcee1557"
+    ),
     Path(".github/bootstrap/session-retrospective-v2-permanent-ci.yml"): bytes(
         (
-            0x1B, 0x23, 0x35, 0xEC, 0x39, 0x13, 0xBD, 0xC6,
-            0xD7, 0x7C, 0x07, 0x01, 0x7A, 0xAC, 0x16, 0x45,
-            0x9C, 0xAD, 0x44, 0xD5, 0x11, 0x33, 0xEE, 0xE2,
-            0xC5, 0x6D, 0xEF, 0x9B, 0x4F, 0x03, 0xD6, 0x1D,
+            0x26, 0x6C, 0xDE, 0x8F, 0xBB, 0xA5, 0x6C, 0x35,
+            0x95, 0xBF, 0x12, 0xD4, 0x80, 0x04, 0xA1, 0x91,
+            0x1C, 0xB0, 0x02, 0x23, 0x4B, 0xB6, 0x09, 0xDC,
+            0xF1, 0xB2, 0xF8, 0x58, 0x0B, 0xA5, 0x3A, 0x76,
         )
     ).hex(),
     Path(".github/workflows/session-retrospective-v2-bootstrap.yml"): bytes(
         (
-            0xD7, 0x11, 0xB3, 0x9F, 0xAF, 0x96, 0x22, 0xD3,
-            0xDA, 0x2D, 0xA0, 0x7E, 0xB3, 0x64, 0x6A, 0xD0,
-            0x3D, 0x76, 0x0C, 0x75, 0x3D, 0xCF, 0x97, 0x44,
-            0xA4, 0x98, 0x1A, 0x00, 0xF5, 0x00, 0xB1, 0xA8,
+            0x49, 0xA4, 0xA1, 0x10, 0xCF, 0xE8, 0x30, 0xF4,
+            0x5D, 0xA0, 0xAB, 0xC9, 0x0D, 0x27, 0x2A, 0x97,
+            0x77, 0xA9, 0x43, 0x89, 0xF0, 0xD7, 0xB8, 0xDA,
+            0xD3, 0x18, 0x7A, 0xB3, 0xB6, 0xE9, 0xC4, 0x78,
         )
     ).hex(),
     Path("scripts/trusted_history_ci.py"): bytes(
         (
-            0xFD, 0xC6, 0x4C, 0x7E, 0x0A, 0x65, 0x4D, 0x34,
-            0x58, 0x89, 0xAD, 0xEB, 0xEA, 0xBD, 0x10, 0x5F,
-            0x14, 0xCF, 0x3A, 0xAB, 0x19, 0xA0, 0x14, 0xE9,
-            0xCD, 0x42, 0xA8, 0x72, 0x8F, 0xB6, 0x1B, 0xE3,
+            0x50, 0x59, 0x95, 0x54, 0x5C, 0x13, 0x72, 0x4A,
+            0x8C, 0x21, 0xD4, 0xA4, 0x48, 0x78, 0x28, 0xD4,
+            0xF4, 0xCB, 0x02, 0x3C, 0x5D, 0x2C, 0x4B, 0x0D,
+            0x0B, 0x56, 0x16, 0x04, 0x11, 0x7D, 0xEA, 0xE2,
         )
     ).hex(),
     Path("scripts/validate_retained_history.py"): bytes(
         (
-            0xF7, 0x8C, 0xE5, 0x19, 0xE5, 0x9E, 0x3D, 0x2A,
-            0x41, 0xF5, 0x72, 0x0D, 0xBD, 0xA2, 0xD6, 0x0F,
-            0x71, 0xEA, 0x78, 0xCC, 0x01, 0x8F, 0x74, 0x47,
-            0x86, 0xB5, 0x6E, 0x7F, 0x65, 0xF0, 0x25, 0x14,
+            0x7F, 0x6D, 0x86, 0x03, 0x61, 0xE3, 0x93, 0x9A,
+            0xBB, 0x83, 0xF9, 0x3F, 0x07, 0xB8, 0xED, 0x52,
+            0xA1, 0xE3, 0xC8, 0x97, 0xD9, 0x76, 0xFC, 0xB4,
+            0x34, 0xAF, 0xC2, 0x87, 0x15, 0x2A, 0x02, 0x5F,
         )
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
         (
-            0x03, 0x37, 0xF0, 0xD9, 0x59, 0x8A, 0x38, 0xBC,
-            0xC0, 0x3C, 0x4E, 0x1B, 0x66, 0x2A, 0x2E, 0x69,
-            0xA8, 0x5F, 0xAA, 0x26, 0x08, 0xCB, 0x18, 0x7A,
-            0x35, 0x48, 0x38, 0xF5, 0x56, 0xE9, 0x87, 0x66,
+            0x6C, 0xBB, 0xF3, 0xEB, 0x5E, 0x4E, 0xE2, 0x0C,
+            0x85, 0xFE, 0xE2, 0x5E, 0x0B, 0x7B, 0x48, 0x77,
+            0x0E, 0x81, 0x18, 0xD1, 0x5D, 0xAA, 0xE3, 0x1D,
+            0xE8, 0x98, 0x0B, 0x91, 0xF2, 0x72, 0xE7, 0xF8,
         )
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
@@ -169,7 +172,7 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
 }
 BOOTSTRAP_WORKFLOW_POLICY_SHA256 = (
-    "21fcb80f9c8c5ec3c653f042e5a3ed86e8d664c69189eaee73fedb99fa9112d3"
+    "6d980fe19b516087fbc9e87273bdce9bf57d43e758bedfe2725e2eadce789d32"
 )
 BOOTSTRAP_V2_REQUIRED_FILES = frozenset(
     Path(path)
@@ -232,8 +235,8 @@ BOOTSTRAP_V2_PUBLIC_KEY_SHA256 = {
     ),
 }
 BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256 = {
-    Path(".github/workflows/ci.yml"): (
-        "64b699ce73cab252c9958c68535226746425e003530c64ae94e4b9288c626187"
+    BOOTSTRAP_V2_CI_PATH: (
+        "734268abaf88afff9d846847bdff89d2f952e59de7baf32eaefe1959aff5baa2"
     ),
     Path("README.md"): (
         "e4ee136a3770d0ea019d7d389205ba4ed203a739ea9b2591caf8f2a2ee48e421"
@@ -299,10 +302,10 @@ BOOTSTRAP_V2_TRUSTED_DECODED_RISK_VALUES_SHA256 = {
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x90, 0x8B, 0x3C, 0xB9, 0x49, 0x60, 0x1A, 0x16,
-            0xF3, 0x04, 0x69, 0x7C, 0x66, 0xB3, 0x9E, 0x98,
-            0x8D, 0x5E, 0xD9, 0x5A, 0x3B, 0xC4, 0x54, 0x7A,
-            0x6D, 0xAD, 0xA6, 0x7A, 0x44, 0x11, 0x55, 0x87,
+            0x55, 0x67, 0xE9, 0x7E, 0x2C, 0xC5, 0x90, 0x5E,
+            0x37, 0xD3, 0xC5, 0xE9, 0x18, 0xDC, 0x96, 0x78,
+            0x1E, 0x49, 0x84, 0xB5, 0x24, 0x9E, 0x2D, 0x5B,
+            0x96, 0x4C, 0xA4, 0xDB, 0xD2, 0xFC, 0xED, 0xB7,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
@@ -5881,8 +5884,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             return cached
         selected: dict[int, ast.AST] = {}
 
-        # Intern selector paths so aliases share one bounded representation instead
-        # of copying increasingly long tuples for every candidate branch.
+        # Intern selector paths so aliases share one bounded tuple.
         overflow_selector_path_id = 1
         selector_paths: list[tuple[object | None, int, int]] = [
             (None, 0, 0),
@@ -7324,15 +7326,39 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             and not statement_dominates_load(statement, load)
         )
 
+    input_ops = 0
+    input_limit = min(
+        max(node_count * 8, 1),
+        BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS,
+    )
+
+    def charge() -> None:
+        nonlocal input_ops
+        input_ops += 1
+        if input_ops > input_limit:
+            raise ValueError(
+                "Python decoder input exceeds the trusted operation limit"
+            )
+
+    def static_input_origin(node, receiver):
+        pending = [node]
+        observed = set()
+        direct = expression_is_closed_static_value if receiver else direct_static_input
+        while pending:
+            charge()
+            current = pending.pop()
+            if id(current) in observed:
+                continue
+            observed.add(id(current))
+            if direct(current):
+                return True
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                key = name_load_binding_key(current)
+                pending.extend(decoder_binding_sources(key, current))
+        return False
+
     def static_receiver(node: ast.AST) -> bool:
-        if expression_is_closed_static_value(node):
-            return True
-        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
-            return False
-        return any(
-            expression_is_closed_static_value(source)
-            for source in decoder_binding_sources(name_load_binding_key(node), node)
-        )
+        return static_input_origin(node, True)
 
     def has_static_module_origin(
         node: ast.AST,
@@ -7430,64 +7456,45 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             static_import_builtin_names,
         )
 
-    decoder_input_ops = 0
-    decoder_input_limit = min(
-        max(node_count * 8, 1),
-        BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS,
-    )
-    decoder_value_input_cache: dict[int, bool | None] = {}
-    decoder_expression_input_cache: dict[int, bool] = {}
-
-    def charge_input() -> None:
-        nonlocal decoder_input_ops
-        decoder_input_ops += 1
-        if decoder_input_ops > decoder_input_limit:
-            raise ValueError(
-                "Python static decoder input exceeds the trusted operation limit"
-            )
+    value_input_cache: dict[int, bool | None] = {}
 
     def value_has_static_decoder_input(value: Any) -> bool:
-        charge_input()
+        charge()
         if type(value) in {str, bytes}:
-            return True
+            return bool(value)
         if type(value) not in {tuple, list, dict}:
             return False
         value_id = id(value)
-        if value_id in decoder_value_input_cache:
-            cached = decoder_value_input_cache[value_id]
+        if value_id in value_input_cache:
+            cached = value_input_cache[value_id]
             if cached is None:
                 raise ValueError("Python static decoder input contains a cycle")
             return cached
-        decoder_value_input_cache[value_id] = None
+        value_input_cache[value_id] = None
         children = value if type(value) in {tuple, list} else (
             child for pair in value.items() for child in pair
         )
         result = any(value_has_static_decoder_input(child) for child in children)
-        decoder_value_input_cache[value_id] = result
+        value_input_cache[value_id] = result
+        return result
+
+    def direct_static_input(node: ast.AST) -> bool:
+        value = evaluated.get(id(node), not_pure)
+        result = value is not not_pure and value_has_static_decoder_input(value)
+        if not result:
+            for child in ast.walk(node):
+                charge()
+                if (
+                    isinstance(child, ast.Constant)
+                    and type(child.value) in {str, bytes}
+                    and child.value
+                ):
+                    result = True
+                    break
         return result
 
     def has_static_decoder_input(node: ast.AST) -> bool:
-        cached = decoder_expression_input_cache.get(id(node))
-        if cached is not None:
-            charge_input()
-            return cached
-        evaluated_value = evaluated.get(id(node), not_pure)
-        if evaluated_value is not not_pure and value_has_static_decoder_input(
-            evaluated_value
-        ):
-            result = True
-        else:
-            result = False
-            for child in ast.walk(node):
-                charge_input()
-                if isinstance(child, ast.Constant) and type(child.value) in {
-                    str,
-                    bytes,
-                }:
-                    result = True
-                    break
-        decoder_expression_input_cache[id(node)] = result
-        return result
+        return static_input_origin(node, False)
 
     def unresolved_static_binary_decoder_call(node: ast.AST) -> bool:
         if not isinstance(node, ast.Call) or not (

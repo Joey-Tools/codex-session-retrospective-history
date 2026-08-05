@@ -10411,6 +10411,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             'import urllib.parse\nvalue = urllib.parse.unquote_to_bytes("%2FUsers%2Fuser%2F")\n',
             "from urllib import parse as decoder_module\n"
             'value = decoder_module.unquote("%2FUsers%2Fuser%2F")\n',
+            "import base64\n"
+            f'raw = memoryview(b"{encoded}")\n'
+            "payload = raw\n"
+            "value = base64.b64decode(payload)\n",
         )
         for source in cases:
             with self.subTest(source=source.splitlines()[-1][:48]):
@@ -10455,6 +10459,14 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     "decoder module uses a dynamic import",
                 )
 
+        self.assert_python_privacy_layers_reject(
+            "import base64\n"
+            f'payload = memoryview(b"{encoded}")\n'
+            "payload = get_payload()\n"
+            "value = base64.b64decode(payload)\n",
+            "unresolved binary decoder uses static text input",
+        )
+
     def test_bootstrap_v2_python_dynamic_code_static_input_fails_closed(self) -> None:
         expected = tuple(risky_github_classic_token().encode("ascii"))
         sources = (
@@ -10493,11 +10505,24 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         with mock.patch.object(
             MODULE,
             "BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS",
-            40,
+            200,
         ):
             self.assertEqual(
                 MODULE.bootstrap_v2_python_privacy_risk_values(source),
                 [],
+            )
+
+        with mock.patch.object(
+            MODULE,
+            "BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS",
+            8,
+        ), self.assertRaisesRegex(ValueError, "operation limit"):
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "import base64\n"
+                'raw = memoryview(b"cHVibGlj")\n'
+                "alias = raw\n"
+                "base64.b64decode(alias)\n"
+                "alias.decode('ascii')\n"
             )
 
     def test_bootstrap_v2_python_closed_static_method_receiver_fails_closed(
@@ -10511,6 +10536,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         for source in (
             f'value = {expression}.decode("ascii")\n',
             f'payload = {expression}\nvalue = payload.decode("ascii")\n',
+            f'raw = {expression}\npayload = raw\nvalue = payload.decode("ascii")\n',
+            f'raw = {expression}\nfirst = raw\nsecond = first\n'
+            'value = second.decode("ascii")\n',
         ):
             with self.subTest(source=source.splitlines()[-1][:48]):
                 self.assert_python_privacy_layers_reject(
@@ -10521,6 +10549,27 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(
             MODULE.bootstrap_v2_python_privacy_risk_values(
                 'payload = get_payload()\nvalue = payload.decode("ascii")\n'
+            ),
+            [],
+        )
+        self.assert_python_privacy_layers_reject(
+            f'payload = {expression}\n'
+            "payload = get_payload()\n"
+            'value = payload.decode("ascii")\n',
+            "unresolved bound string method",
+        )
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "first = second\nsecond = first\n"
+                'value = first.decode("ascii")\n'
+            ),
+            [],
+        )
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "import base64\n"
+                "parts = get_parts()\n"
+                'value = base64.b64decode("".join(parts))\n'
             ),
             [],
         )
@@ -12753,6 +12802,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_security_owned_files_are_content_scan_clean(self) -> None:
         repository_root = SCRIPT.parents[1]
         owned_files = (
+            repository_root / ".github" / "workflows" / "ci.yml",
             BOOTSTRAP_WORKFLOW,
             PERMANENT_CI_TEMPLATE,
             SCRIPT,
@@ -12772,6 +12822,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_security_owned_risk_line_fingerprints_fail_closed(self) -> None:
         repository_root = SCRIPT.parents[1]
         relatives = (
+            Path(".github/workflows/ci.yml"),
             Path(
                 ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
             ),
@@ -12787,7 +12838,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         )
         for relative in relatives:
             with self.subTest(relative=relative.as_posix()):
-                source = (repository_root / relative).read_text(encoding="utf-8")
+                source_path = (
+                    PERMANENT_CI_TEMPLATE
+                    if relative == MODULE.BOOTSTRAP_V2_CI_PATH
+                    else repository_root / relative
+                )
+                source = source_path.read_text(encoding="utf-8")
                 risky_lines = MODULE.infrastructure_risk_lines(
                     source,
                     relative=relative,
