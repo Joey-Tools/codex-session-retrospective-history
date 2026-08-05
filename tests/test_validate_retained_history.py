@@ -10380,19 +10380,31 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         expected = risky_github_classic_token()
         encoded = base64.b64encode(expected.encode("ascii")).decode("ascii")
         encoded_hex = expected.encode("ascii").hex()
+        encoded_z85 = base64.z85encode(expected.encode("ascii")).decode("ascii")
         cases = (
             f'import base64\nvalue = base64.b64decode("{encoded}").decode("ascii")\n',
+            f'import base64\nvalue = base64.standard_b64decode("{encoded}")\n',
+            f'import base64\nvalue = base64.decodebytes(b"{encoded}")\n',
+            f'import base64\nvalue = base64.z85decode("{encoded_z85}")\n',
             "from base64 import b64decode as reveal\n"
             f'value = reveal("{encoded}").decode("ascii")\n',
+            "from base64 import standard_b64decode as reveal\n"
+            f'value = reveal("{encoded}")\n',
             "import base64\n"
             "reveal = base64.b64decode\n"
             f'value = reveal("{encoded}").decode("ascii")\n',
+            "import base64 as decoder_module\n"
+            "reveal = decoder_module.decodebytes\n"
+            f'value = reveal(b"{encoded}")\n',
             f'import binascii\nvalue = binascii.unhexlify("{encoded_hex}").decode("ascii")\n',
             "import codecs\n"
             f'value = codecs.decode("{encoded}", "base64").decode("ascii")\n',
             f'import base64\npayload = base64.b64decode("{encoded}")\n',
             "from codecs import decode as reveal\n"
             f'value = reveal("{encoded}", "base64")\n',
+            'import urllib.parse\nvalue = urllib.parse.unquote_to_bytes("%2FUsers%2Fuser%2F")\n',
+            "from urllib import parse as decoder_module\n"
+            'value = decoder_module.unquote("%2FUsers%2Fuser%2F")\n',
         )
         for source in cases:
             with self.subTest(source=source.splitlines()[-1][:48]):
@@ -10405,12 +10417,59 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             'import base64\nvalue = base64.b64decode(payload).decode("ascii")\n',
             'value = match.group("name").decode("ascii")\n',
             'value = b"public".decode("ascii")\n',
+            'value = cache.decompress("public")\n',
+            'value = codec.unhexlify("label")\n',
+            'value = codec.b64decode("label")\n',
         ):
             with self.subTest(dynamic=source.splitlines()[-1][:48]):
                 self.assertEqual(
                     MODULE.bootstrap_v2_python_privacy_risk_values(source),
                     [],
                 )
+
+    def test_bootstrap_v2_python_static_constructor_arithmetic_fails_closed(
+        self,
+    ) -> None:
+        expected = risky_github_classic_token().encode("ascii")
+        chr_source = "value = " + " + ".join(
+            f"chr({value - 1} + 1)" for value in expected
+        )
+        bytes_source = "value = bytes((" + ", ".join(
+            f"{value - 1} + 1" for value in expected
+        ) + ")).decode('ascii')"
+        lowered_values = ", ".join(str(value - 1) for value in expected)
+        generator_source = (
+            "value = bytes(value + 1 for value in ("
+            f"{lowered_values})).decode('ascii')"
+        )
+        map_source = (
+            "value = bytes(map(lambda value: value + 1, ("
+            f"{lowered_values}))).decode('ascii')"
+        )
+        for source in (chr_source, bytes_source, generator_source, map_source):
+            with self.subTest(source=source[:48]):
+                self.assert_python_privacy_layers_reject(
+                    f"{source}\n",
+                    "deterministic text constructor uses an unsupported static input",
+                )
+
+    def test_bootstrap_v2_python_static_decoder_origin_graph_is_bounded(
+        self,
+    ) -> None:
+        lines = ["alias_0 = cache.decompress"]
+        for index in range(1, 80):
+            lines.extend(
+                (
+                    f"alias_{index} = alias_{index - 1}",
+                    f"alias_{index} = alias_{index - 1}",
+                )
+            )
+        lines.append('value = alias_79("public")')
+
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values("\n".join(lines) + "\n"),
+            [],
+        )
 
     def test_bootstrap_v2_python_opaque_iterables_fail_closed_without_risk_seeds(
         self,

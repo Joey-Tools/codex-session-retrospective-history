@@ -5029,28 +5029,37 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     deterministic_text_builtin_names = frozenset(
         {"bytearray", "bytes", "chr", "str"}
     )
-    static_binary_decoder_method_names = frozenset(
-        {
-            "a2b_base64",
-            "a2b_hex",
-            "a2b_qp",
-            "a2b_uu",
-            "a85decode",
-            "b16decode",
-            "b32decode",
-            "b32hexdecode",
-            "b64decode",
-            "b85decode",
-            "decode",
-            "decompress",
-            "unhexlify",
-            "unquote_to_bytes",
-            "urlsafe_b64decode",
-        }
+    static_binary_decoder_methods_by_module = {
+        "base64": frozenset(
+            "a85decode b16decode b32decode b32hexdecode b64decode b85decode "
+            "decode decodebytes standard_b64decode urlsafe_b64decode z85decode".split()
+        ),
+        "binascii": frozenset(
+            "a2b_base64 a2b_hex a2b_qp a2b_uu unhexlify".split()
+        ),
+        "bz2": {"decompress"},
+        "codecs": {"decode"},
+        "gzip": {"decompress"},
+        "lzma": {"decompress"},
+        "urllib.parse": {"unquote", "unquote_plus", "unquote_to_bytes"},
+        "zlib": {"decompress"},
+    }
+    static_binary_decoder_modules = set(static_binary_decoder_methods_by_module)
+    static_binary_decoder_method_names = set(
+        method_name
+        for method_names in static_binary_decoder_methods_by_module.values()
+        for method_name in method_names
     )
-    static_binary_decoder_modules = frozenset(
-        {"base64", "binascii", "bz2", "codecs", "gzip", "lzma", "urllib.parse", "zlib"}
-    )
+    static_binary_decoder_modules_by_method = {
+        method_name: frozenset(
+            module_name
+            for module_name, method_names in (
+                static_binary_decoder_methods_by_module.items()
+            )
+            if method_name in method_names
+        )
+        for method_name in static_binary_decoder_method_names
+    }
 
     def normalized_literal_slice(node: ast.AST) -> slice | None:
         if not isinstance(node, ast.Slice):
@@ -5135,7 +5144,10 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         if isinstance(node, ast.Call):
             if (
                 isinstance(node.func, ast.Name)
-                and node.func.id in deterministic_text_builtin_names
+                and (
+                    node.func.id in deterministic_text_builtin_names
+                    or node.func.id == "range"
+                )
             ):
                 return (
                     not any(isinstance(argument, ast.Starred) for argument in node.args)
@@ -5491,23 +5503,28 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 if alias.name not in static_binary_decoder_modules:
                     continue
                 local_name = alias.asname or alias.name.split(".", 1)[0]
+                imported_name = (
+                    alias.name if alias.asname else alias.name.split(".", 1)[0]
+                )
                 static_binary_decoder_module_bindings[
                     (binding_scope_for_name(scope, local_name), local_name)
-                ] = alias.name
+                ] = imported_name
             continue
-        if (
-            not isinstance(node, ast.ImportFrom)
-            or node.module not in static_binary_decoder_modules
-        ):
+        if not isinstance(node, ast.ImportFrom) or node.level or node.module is None:
             continue
         scope = scope_by_node_id[id(node)]
         for alias in node.names:
-            if alias.name not in static_binary_decoder_method_names:
-                continue
             local_name = alias.asname or alias.name
-            static_binary_decoder_import_binding_keys.add(
-                (binding_scope_for_name(scope, local_name), local_name)
-            )
+            key = (binding_scope_for_name(scope, local_name), local_name)
+            qualified_name = f"{node.module}.{alias.name}"
+            if qualified_name in static_binary_decoder_modules:
+                static_binary_decoder_module_bindings[key] = qualified_name
+            if (
+                node.module in static_binary_decoder_modules
+                and alias.name
+                in static_binary_decoder_methods_by_module[node.module]
+            ):
+                static_binary_decoder_import_binding_keys.add(key)
 
     bytearray_mutating_method_names = frozenset(
         {
@@ -6789,6 +6806,21 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             "str": str,
         }[node.id]
 
+    def unshadowed_static_range_builtin(node: ast.AST) -> Any:
+        if (
+            not isinstance(node, ast.Name)
+            or not isinstance(node.ctx, ast.Load)
+            or node.id != "range"
+        ):
+            return None
+        key, skipped_class_keys = name_load_binding_resolution(node)
+        if any(
+            binding_event_ids.get(candidate)
+            for candidate in (key, *skipped_class_keys)
+        ):
+            return None
+        return range
+
     def unshadowed_builtin_text_type(node: ast.AST) -> type[str] | type[bytes] | None:
         value = unshadowed_deterministic_text_builtin(node)
         return value if value is bytes or value is str else None
@@ -6864,6 +6896,55 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             )
         return result
 
+    static_constructor_analysis_operations = 0
+    static_constructor_analysis_limit = max(node_count * 8, 1)
+    static_constructor_builtin_names = set(
+        "bin bytearray bytes chr enumerate filter frozenset hex int iter len list "
+        "map max min oct ord range reversed set str sum tuple zip".split()
+    )
+
+    def consume_static_constructor_analysis_operation() -> None:
+        nonlocal static_constructor_analysis_operations
+        static_constructor_analysis_operations += 1
+        if static_constructor_analysis_operations > static_constructor_analysis_limit:
+            raise ValueError(
+                "Python static constructor analysis exceeds the trusted "
+                "operation limit"
+            )
+
+    def expression_is_closed_static_value(node: ast.AST) -> bool:
+        local_names: set[str] = set()
+        pending_local_names = [node]
+        while pending_local_names:
+            consume_static_constructor_analysis_operation()
+            current = pending_local_names.pop()
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Store):
+                local_names.add(current.id)
+            elif isinstance(current, ast.arg):
+                local_names.add(current.arg)
+            pending_local_names.extend(ast.iter_child_nodes(current))
+        pending = [node]
+        while pending:
+            consume_static_constructor_analysis_operation()
+            current = pending.pop()
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                if (
+                    current.id not in local_names
+                    and current.id not in static_constructor_builtin_names
+                ):
+                    return False
+            if isinstance(current, (ast.Await, ast.Yield, ast.YieldFrom)):
+                return False
+            pending.extend(ast.iter_child_nodes(current))
+        return True
+
+    def reject_unsupported_static_constructor_input(node: ast.AST) -> None:
+        if expression_is_closed_static_value(node):
+            raise ValueError(
+                "Python deterministic text constructor uses an unsupported "
+                f"static input at line {getattr(node, 'lineno', 0)}"
+            )
+
     def evaluate_deterministic_text_builtin_call(
         node: ast.Call,
         constructor: Any,
@@ -6875,6 +6956,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         for argument_node in node.args:
             argument = evaluate_node(argument_node)
             if argument is not_pure:
+                reject_unsupported_static_constructor_input(argument_node)
                 return not_pure
             arguments.append(argument)
         keywords: dict[str, Any] = {}
@@ -6883,8 +6965,30 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 return not_pure
             value = evaluate_node(keyword.value)
             if value is not_pure:
+                reject_unsupported_static_constructor_input(keyword.value)
                 return not_pure
             keywords[keyword.arg] = value
+
+        if constructor is range:
+            if keywords or not 1 <= len(arguments) <= 3 or any(
+                type(argument) is not int for argument in arguments
+            ):
+                return not_pure
+            try:
+                sequence = range(*arguments)
+                length = len(sequence)
+            except (OverflowError, ValueError) as exc:
+                raise ValueError(
+                    "Python deterministic range call is unsupported"
+                ) from exc
+            if length > min(
+                BOOTSTRAP_V2_MAX_PYTHON_AST_NODES,
+                BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES,
+            ):
+                raise ValueError(
+                    "Python deterministic range exceeds the trusted item limit"
+                )
+            return validate_text_method_result(tuple(sequence))
 
         if constructor is chr:
             if len(arguments) != 1 or keywords or type(arguments[0]) is not int:
@@ -7251,6 +7355,8 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 builtin = unshadowed_deterministic_text_builtin(node)
                 if builtin is not None:
                     result = builtin
+                else:
+                    result = unshadowed_static_range_builtin(node) or not_pure
         elif isinstance(node, ast.Subscript):
             container = evaluate_binding_expression(node.value)
             selector = normalized_literal_selector(node.slice)
@@ -7405,7 +7511,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             callable_value = evaluate_binding_expression(node.func)
             if any(
                 callable_value is constructor
-                for constructor in (bytearray, bytes, chr, str)
+                for constructor in (bytearray, bytes, chr, range, str)
             ):
                 result = evaluate_deterministic_text_builtin_call(
                     node,
@@ -7425,61 +7531,96 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         binding_expression_cache[id(node)] = result
         return result
 
+    static_decoder_origin_operations = 0
+    static_decoder_origin_operation_limit = max(node_count * 16, 1)
+
+    def consume_static_decoder_origin_operation() -> None:
+        nonlocal static_decoder_origin_operations
+        static_decoder_origin_operations += 1
+        if static_decoder_origin_operations > static_decoder_origin_operation_limit:
+            raise ValueError(
+                "Python static decoder origin analysis exceeds the trusted "
+                "operation limit"
+            )
+
+    def static_decoder_binding_sources(
+        key: tuple[int, str],
+    ) -> list[ast.AST]:
+        sources: list[ast.AST] = []
+        for _, assigned_value, path, _ in binding_candidates.get(key, ()):
+            selected = selected_assignment_expression(assigned_value, path)
+            sources.append(selected if selected is not None else assigned_value)
+        sources.extend(ordinary_ambiguous_binding_values.get(key, ()))
+        return sources
+
     def expression_has_static_decoder_module_origin(
         node: ast.AST,
         module_names: frozenset[str],
-        observed_keys: frozenset[tuple[int, str]] = frozenset(),
     ) -> bool:
-        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
-            return False
-        key = name_load_binding_key(node)
-        if static_binary_decoder_module_bindings.get(key) in module_names:
-            return True
-        if key in observed_keys:
-            return False
-        next_observed = observed_keys | {key}
-        sources: list[ast.AST] = []
-        for _, assigned_value, path, _ in binding_candidates.get(key, ()):
-            selected = selected_assignment_expression(assigned_value, path)
-            sources.append(selected or assigned_value)
-        sources.extend(ordinary_ambiguous_binding_values.get(key, ()))
-        return any(
-            expression_has_static_decoder_module_origin(
-                source,
-                module_names,
-                next_observed,
+        pending: list[tuple[ast.AST, str]] = [(node, "")]
+        observed_expression_states: set[tuple[int, str]] = set()
+        observed_binding_states: set[tuple[tuple[int, str], str]] = set()
+        while pending:
+            consume_static_decoder_origin_operation()
+            current, suffix = pending.pop()
+            state = (id(current), suffix)
+            if state in observed_expression_states:
+                continue
+            observed_expression_states.add(state)
+            if isinstance(current, ast.Attribute):
+                pending.append((current.value, f".{current.attr}{suffix}"))
+                continue
+            if not isinstance(current, ast.Name) or not isinstance(
+                current.ctx, ast.Load
+            ):
+                continue
+            key = name_load_binding_key(current)
+            imported_name = static_binary_decoder_module_bindings.get(key)
+            if imported_name is not None and f"{imported_name}{suffix}" in module_names:
+                return True
+            binding_state = (key, suffix)
+            if binding_state in observed_binding_states:
+                continue
+            observed_binding_states.add(binding_state)
+            pending.extend(
+                (source, suffix) for source in static_decoder_binding_sources(key)
             )
-            for source in sources
-        )
+        return False
 
-    def expression_has_static_binary_decoder_origin(
-        node: ast.AST,
-        observed_keys: frozenset[tuple[int, str]] = frozenset(),
-    ) -> bool:
-        if isinstance(node, ast.Attribute):
-            if node.attr == "decode":
-                return expression_has_static_decoder_module_origin(
-                    node.value,
-                    frozenset({"codecs"}),
+    def expression_has_static_binary_decoder_origin(node: ast.AST) -> bool:
+        pending = [node]
+        observed_expression_ids: set[int] = set()
+        observed_binding_keys: set[tuple[int, str]] = set()
+        while pending:
+            consume_static_decoder_origin_operation()
+            current = pending.pop()
+            if id(current) in observed_expression_ids:
+                continue
+            observed_expression_ids.add(id(current))
+            if isinstance(current, ast.Attribute):
+                module_names = static_binary_decoder_modules_by_method.get(
+                    current.attr
                 )
-            return node.attr in static_binary_decoder_method_names
-        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
-            return False
-        key = name_load_binding_key(node)
-        if key in static_binary_decoder_import_binding_keys:
-            return True
-        if key in observed_keys:
-            return False
-        next_observed = observed_keys | {key}
-        sources: list[ast.AST] = []
-        for _, assigned_value, path, _ in binding_candidates.get(key, ()):
-            selected = selected_assignment_expression(assigned_value, path)
-            sources.append(selected or assigned_value)
-        sources.extend(ordinary_ambiguous_binding_values.get(key, ()))
-        return any(
-            expression_has_static_binary_decoder_origin(source, next_observed)
-            for source in sources
-        )
+                if module_names is not None and (
+                    expression_has_static_decoder_module_origin(
+                        current.value,
+                        module_names,
+                    )
+                ):
+                    return True
+                continue
+            if not isinstance(current, ast.Name) or not isinstance(
+                current.ctx, ast.Load
+            ):
+                continue
+            key = name_load_binding_key(current)
+            if key in static_binary_decoder_import_binding_keys:
+                return True
+            if key in observed_binding_keys:
+                continue
+            observed_binding_keys.add(key)
+            pending.extend(static_decoder_binding_sources(key))
+        return False
 
     def value_contains_static_decoder_input(value: Any) -> bool:
         pending = [value]
@@ -7929,7 +8070,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 )
             ):
                 evaluated[id(node)] = (
-                    unshadowed_deterministic_text_builtin(node) or not_pure
+                    unshadowed_deterministic_text_builtin(node)
+                    or unshadowed_static_range_builtin(node)
+                    or not_pure
                 )
             else:
                 evaluated[id(node)] = binding[1]
@@ -8138,10 +8281,17 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             continue
 
         if isinstance(node, ast.Call) and any(
-            unshadowed_deterministic_text_builtin(node.func) is constructor
-            for constructor in (bytearray, bytes, chr, str)
+            (
+                unshadowed_deterministic_text_builtin(node.func)
+                or unshadowed_static_range_builtin(node.func)
+            )
+            is constructor
+            for constructor in (bytearray, bytes, chr, range, str)
         ):
-            constructor = unshadowed_deterministic_text_builtin(node.func)
+            constructor = (
+                unshadowed_deterministic_text_builtin(node.func)
+                or unshadowed_static_range_builtin(node.func)
+            )
             result = evaluate_deterministic_text_builtin_call(
                 node,
                 constructor,
