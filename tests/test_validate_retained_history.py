@@ -10070,6 +10070,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 f'value = {expected.replace("p", "x", 1)!r}.replace("x", "p", 1)\n',
             ),
             (
+                "replace across assignments",
+                f'seed = {expected.replace("hp", "xy", 1)!r}\n'
+                'middle = seed.replace("x", "h")\n'
+                'value = middle.replace("y", "p")\n',
+            ),
+            (
                 "reverse slice",
                 f"value = {expected[::-1]!r}[::-1]\n",
             ),
@@ -10116,11 +10122,38 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     issues,
                 )
 
+        opaque_hex = (bytes((0xFF, 0x20)) + expected.encode("ascii")).hex()
+        opaque_byte_sources = (
+            f'value = bytes.fromhex("{opaque_hex}")\n',
+            f'value = [bytes.fromhex("{opaque_hex}")]\n',
+        )
+        for source in opaque_byte_sources:
+            with self.subTest(opaque_bytes=source[:40]):
+                risky_values = MODULE.bootstrap_v2_python_privacy_risk_values(source)
+                self.assertTrue(any(expected in value for value in risky_values))
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    write_bootstrap_v2_candidate(root)
+                    (root / relative).write_text(source, encoding="utf-8")
+
+                    issues = "\n".join(validate_synthetic_bootstrap_v2_candidate(root))
+
+                self.assertIn(
+                    "infrastructure text contains raw/sensitive evidence",
+                    issues,
+                )
+
     def test_bootstrap_v2_python_literal_text_transformations_accept_benign_values(
         self,
     ) -> None:
         cases = (
             ('value = "pxblic".replace("x", "u")\n', "public"),
+            (
+                'seed = "pxblic"\n'
+                'middle = seed.replace("x", "u")\n'
+                'value = middle.upper().lower()\n',
+                "public",
+            ),
             ('value = "cilbup"[::-1]\n', "public"),
             (
                 'value = "pxblic".translate(str.maketrans({"x": "u"}))\n',
@@ -10142,6 +10175,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     [],
                 )
 
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                'value = bytes.fromhex("ff207075626c6963")\n'
+            ),
+            [],
+        )
+
     def test_bootstrap_v2_python_literal_text_transformations_fail_closed(
         self,
     ) -> None:
@@ -10149,6 +10189,34 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             'value = "g%s_ABCDEFGHIJKLMNOP".__mod__("hp")\n',
             "text method is outside the trusted policy",
         )
+
+        self.assert_python_privacy_layers_reject(
+            'seed = "gxy_ABCDEFGHIJKLMNOP"\n'
+            'if enabled:\n'
+            '    middle = seed.replace("x", "h")\n'
+            'else:\n'
+            '    middle = seed\n'
+            'alias = middle\n'
+            'value = alias.replace("y", "p")\n',
+            "string construction depends on an ambiguous name binding",
+        )
+
+        with mock.patch.object(
+            MODULE,
+            "BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_BYTES",
+            10,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "ambiguous text method results exceed the trusted byte limit",
+            ):
+                MODULE.bootstrap_v2_python_string_constants(
+                    'if enabled:\n'
+                    '    middle = "aaaa"\n'
+                    'else:\n'
+                    '    middle = "bbbb"\n'
+                    'value = middle.replace("a", "cc")\n'
+                )
 
         with self.assertRaisesRegex(ValueError, "codec is outside the trusted allowlist"):
             MODULE.bootstrap_v2_python_string_constants(

@@ -5023,6 +5023,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     node.attr in {"format", "format_map", "join"}
                     or not isinstance(node.value, ast.Name)
                     or node.value.id in {"bytes", "str"}
+                    or name_has_prior_static_text_origin(node.value)
                 )
                 and is_supported_binding_expression(node.value)
             )
@@ -5074,6 +5075,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     node.func.attr in {"format", "format_map", "join"}
                     or not isinstance(node.func.value, ast.Name)
                     or node.func.value.id in {"bytes", "str"}
+                    or name_has_prior_static_text_origin(node.func.value)
                 )
                 and is_supported_binding_expression(node.func.value)
                 and all(
@@ -5121,6 +5123,58 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     ordinary_ambiguous_binding_values: dict[tuple[int, str], list[ast.AST]] = {}
     augassign_binding_keys_by_id: dict[int, set[tuple[int, str]]] = {}
     unresolved_augassign_receiver_ids: set[int] = set()
+
+    def name_has_prior_static_text_origin(
+        node: ast.Name,
+        observed_keys: frozenset[tuple[int, str]] = frozenset(),
+    ) -> bool:
+        key = name_load_binding_key(node)
+        if key in observed_keys:
+            return False
+        next_observed = observed_keys | {key}
+        for _, source, path, _ in binding_candidates.get(key, ()):
+            selected = source
+            for index in path:
+                if not isinstance(selected, (ast.Tuple, ast.List)):
+                    selected = None
+                    break
+                if index >= len(selected.elts):
+                    selected = None
+                    break
+                selected = selected.elts[index]
+            if isinstance(selected, ast.Constant) and type(selected.value) in {
+                str,
+                bytes,
+            }:
+                return True
+            if isinstance(selected, ast.Name) and isinstance(selected.ctx, ast.Load):
+                if name_has_prior_static_text_origin(selected, next_observed):
+                    return True
+                continue
+            if isinstance(selected, ast.Call) and isinstance(
+                selected.func, ast.Attribute
+            ):
+                receiver = selected.func.value
+                if isinstance(receiver, ast.Name):
+                    if receiver.id in {"bytes", "str"} or (
+                        name_has_prior_static_text_origin(receiver, next_observed)
+                    ):
+                        return True
+                elif is_supported_binding_expression(receiver):
+                    return True
+            if isinstance(selected, (ast.Attribute, ast.Subscript)):
+                receiver = selected.value
+                if isinstance(receiver, ast.Name) and (
+                    name_has_prior_static_text_origin(receiver, next_observed)
+                ):
+                    return True
+                if not isinstance(receiver, ast.Name) and (
+                    is_supported_binding_expression(receiver)
+                ):
+                    return True
+            if isinstance(selected, (ast.BinOp, ast.JoinedStr)):
+                return True
+        return False
 
     def mutation_receiver_name(target: ast.AST) -> ast.Name | None:
         while isinstance(target, (ast.Attribute, ast.Subscript)):
@@ -7033,8 +7087,11 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             try:
                 result.decode("utf-8")
             except UnicodeDecodeError:
-                return
-            constructed[id(node)] = result
+                opaque_text = result.decode("latin-1")
+                if bootstrap_v2_privacy_risk_lines(opaque_text):
+                    constructed[id(node)] = opaque_text
+            else:
+                constructed[id(node)] = result
 
     constructed_container_values: dict[tuple[int, int], str | bytes] = {}
     recorded_constructed_result_ids: set[int] = set()
@@ -7083,8 +7140,11 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 try:
                     child.decode("utf-8")
                 except UnicodeDecodeError:
-                    continue
-                constructed_container_values[(node_id, index)] = child
+                    opaque_text = child.decode("latin-1")
+                    if bootstrap_v2_privacy_risk_lines(opaque_text):
+                        constructed_container_values[(node_id, index)] = opaque_text
+                else:
+                    constructed_container_values[(node_id, index)] = child
 
     partial_values: dict[int, str | bytes] = {}
 
@@ -7145,6 +7205,131 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             record_constructed(assignment, binding)
             recorded_literal_binding_statements.add(id(assignment))
 
+    def ambiguous_static_receiver_values(
+        expression: ast.AST,
+        observed_keys: frozenset[tuple[int, str]] = frozenset(),
+    ) -> tuple[bool, tuple[str | bytes, ...]]:
+        if isinstance(expression, ast.Name) and isinstance(expression.ctx, ast.Load):
+            key = name_load_binding_key(expression)
+            if key in observed_keys:
+                return False, ()
+            candidates = binding_candidates.get(key, ())
+            selected_sources = tuple(
+                selected_assignment_expression(candidate[1], candidate[2])
+                for candidate in candidates
+            )
+            next_observed = observed_keys | {key}
+            if key in ambiguous_binding_keys:
+                values: list[str | bytes] = []
+                for source in selected_sources:
+                    if source is None:
+                        continue
+                    value = evaluate_binding_expression(source)
+                    if type(value) in {str, bytes}:
+                        values.append(value)
+                        continue
+                    nested_ambiguous, nested_values = (
+                        ambiguous_static_receiver_values(source, next_observed)
+                    )
+                    if nested_ambiguous:
+                        values.extend(nested_values)
+                return True, tuple(values)
+            if len(selected_sources) == 1 and selected_sources[0] is not None:
+                return ambiguous_static_receiver_values(
+                    selected_sources[0],
+                    next_observed,
+                )
+            return False, ()
+        if isinstance(expression, ast.Call) and isinstance(
+            expression.func, ast.Attribute
+        ):
+            is_ambiguous, receivers = ambiguous_static_receiver_values(
+                expression.func.value,
+                observed_keys,
+            )
+            if not is_ambiguous:
+                return False, ()
+            values: list[str | bytes] = []
+            for receiver in receivers:
+                method_value = bound_string_method_value(
+                    expression.func.attr,
+                    receiver,
+                )
+                result = evaluate_bound_string_method_call(
+                    expression,
+                    method_value,
+                    evaluate_binding_expression,
+                )
+                if type(result) in {str, bytes}:
+                    values.append(result)
+            return True, tuple(values)
+        if isinstance(expression, (ast.Attribute, ast.Subscript)):
+            return ambiguous_static_receiver_values(
+                expression.value,
+                observed_keys,
+            )
+        return False, ()
+
+    def ambiguous_method_constructs_privacy_risk(node: ast.Call) -> bool:
+        if not isinstance(node.func, ast.Attribute):
+            return False
+        is_ambiguous, receivers = ambiguous_static_receiver_values(node.func.value)
+        if not is_ambiguous:
+            return False
+        observed_items = 0
+        observed_bytes = 0
+
+        def result_contains_privacy_risk(result: Any) -> bool:
+            nonlocal observed_bytes, observed_items
+            pending = [result]
+            while pending:
+                observed_items += 1
+                if observed_items > BOOTSTRAP_V2_MAX_PYTHON_AST_NODES:
+                    raise ValueError(
+                        "Python ambiguous text method result exceeds the trusted "
+                        "item limit"
+                    )
+                current = pending.pop()
+                if type(current) in {str, bytes}:
+                    payload_size = evaluated_text_payload_size(current)
+                    if payload_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
+                        raise ValueError(
+                            "Python ambiguous text method result exceeds the trusted "
+                            "byte limit"
+                        )
+                    observed_bytes += payload_size
+                    if observed_bytes > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_BYTES:
+                        raise ValueError(
+                            "Python ambiguous text method results exceed the trusted "
+                            "byte limit"
+                        )
+                    if isinstance(current, bytes):
+                        try:
+                            text = current.decode("utf-8")
+                        except UnicodeDecodeError:
+                            text = current.decode("latin-1")
+                    else:
+                        text = current
+                    if bootstrap_v2_privacy_risk_lines(text):
+                        return True
+                elif type(current) in {tuple, list}:
+                    pending.extend(current)
+                elif type(current) is dict:
+                    for key, child in current.items():
+                        pending.extend((key, child))
+            return False
+
+        for receiver in receivers:
+            method_value = bound_string_method_value(node.func.attr, receiver)
+            result = evaluate_bound_string_method_call(
+                node,
+                method_value,
+                evaluate_binding_expression,
+            )
+            if result is not not_pure and result_contains_privacy_risk(result):
+                return True
+        return False
+
     for node in reversed(nodes):
         depends_on_ambiguous_binding = id(node) in fail_closed_binding_expression_ids
         is_supported_string_constructor = (
@@ -7169,7 +7354,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             and isinstance(node.func, ast.Attribute)
             and node.func.attr not in {"format", "format_map", "join"}
         ):
-            ambiguity_sensitive_constructor = False
+            ambiguity_sensitive_constructor = ambiguous_method_constructs_privacy_risk(
+                node
+            )
         if isinstance(node, ast.Subscript):
             ambiguity_sensitive_constructor = False
         if (
