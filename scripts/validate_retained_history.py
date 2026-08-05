@@ -87,7 +87,7 @@ TEXT_ARTIFACT_SUFFIXES = frozenset({".json", ".jsonl", ".md", ".txt"})
 VALID_RETAINED_SUFFIXES = TEXT_ARTIFACT_SUFFIXES
 STRIPPABLE_ARTIFACT_SUFFIXES = TEXT_ARTIFACT_SUFFIXES | COMPRESSED_ARTIFACT_SUFFIXES
 ROOT_DOC_FILES = frozenset(
-    {".gitignore", "AGENTS.md", "README.md", "data/README.md", "reports/README.md"}
+    ".gitignore AGENTS.md README.md data/README.md reports/README.md".split()
 )
 WORKFLOW_SUFFIXES = frozenset({".yaml", ".yml"})
 BOOTSTRAP_WORKFLOW_PATH = Path(
@@ -336,7 +336,7 @@ BOOTSTRAP_V2_MAX_PYTHON_FORMAT_ANALYSIS_OPERATIONS = 1_000_000
 BOOTSTRAP_V2_MAX_PYTHON_TEXT_OUTPUT_OPERATIONS = 2_000_000
 BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_STATES = 200_000
 BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS = 1_000_000
-BOOTSTRAP_V2_MAX_PYTHON_STATIC_DECODER_INPUT_OPERATIONS = 1_000_000
+BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS = 1_000_000
 BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES = 256 * 1024
 BOOTSTRAP_V2_MAX_TREE_BYTES = 16 * 1024 * 1024
 BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES = 4096
@@ -810,11 +810,11 @@ MANIFEST_KEYS = frozenset(
 )
 WINDOW_KEYS = frozenset({"mode", "start", "end"})
 SOURCE_SUMMARY_KEYS = frozenset(
-    {"host", "root_ref", "status", "rollout_count", "summary_count"}
+    "host root_ref status rollout_count summary_count".split()
 )
-COVERAGE_GAP_KEYS = frozenset({"host", "reason", "root_ref", "bytes"})
-SOURCE_STATUSES = frozenset({"empty", "missing", "ready", "stale"})
-OUTCOMES = frozenset({"needs_review", "no_issue_observed"})
+COVERAGE_GAP_KEYS = frozenset("host reason root_ref bytes".split())
+SOURCE_STATUSES = frozenset("empty missing ready stale".split())
+OUTCOMES = frozenset("needs_review no_issue_observed".split())
 ISSUE_FLAGS = frozenset(
     "approval_auth_friction context_loss failed_command over_exploration "
     "safety_privacy_flag under_asking user_correction verification_gap".split()
@@ -7261,26 +7261,26 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         binding_expression_cache[id(node)] = result
         return result
 
-    static_decoder_origin_operations = 0
-    static_decoder_origin_operation_limit = max(node_count * 16, 1)
+    decoder_origin_ops = 0
+    decoder_origin_limit = max(node_count * 16, 1)
 
-    def consume_static_decoder_origin_operation() -> None:
-        nonlocal static_decoder_origin_operations
-        static_decoder_origin_operations += 1
-        if static_decoder_origin_operations > static_decoder_origin_operation_limit:
+    def charge_origin() -> None:
+        nonlocal decoder_origin_ops
+        decoder_origin_ops += 1
+        if decoder_origin_ops > decoder_origin_limit:
             raise ValueError(
                 "Python static decoder origin analysis exceeds the trusted "
                 "operation limit"
             )
 
-    def static_decoder_binding_sources(
+    def decoder_binding_sources(
         key: tuple[int, str],
         load: ast.Name | None = None,
     ) -> list[ast.AST]:
         return [
             selected_assignment_expression(value, path) or value
             for _, value, path, target in binding_candidates.get(key, ())
-            if load is None or binding_event_may_reach_load(load, key, id(target))
+            if load is None or event_may_reach_load(load, key, id(target))
         ] + list(ordinary_ambiguous_binding_values.get(key, ()))
 
     def binding_event_statement(event_id: int) -> ast.stmt | None:
@@ -7289,7 +7289,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             current = parent_by_node_id.get(id(current))
         return current if isinstance(current, ast.stmt) else None
 
-    def binding_event_may_reach_load(
+    def event_may_reach_load(
         load: ast.Name,
         key: tuple[int, str],
         event_id: int,
@@ -7324,7 +7324,17 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             and not statement_dominates_load(statement, load)
         )
 
-    def expression_has_static_module_origin(
+    def static_receiver(node: ast.AST) -> bool:
+        if expression_is_closed_static_value(node):
+            return True
+        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+            return False
+        return any(
+            expression_is_closed_static_value(source)
+            for source in decoder_binding_sources(name_load_binding_key(node), node)
+        )
+
+    def has_static_module_origin(
         node: ast.AST,
         module_names: frozenset[str],
     ) -> bool:
@@ -7332,7 +7342,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         observed_expression_states: set[tuple[int, str]] = set()
         observed_binding_states: set[tuple[tuple[int, str], str]] = set()
         while pending:
-            consume_static_decoder_origin_operation()
+            charge_origin()
             current, suffix = pending.pop()
             state = (id(current), suffix)
             if state in observed_expression_states:
@@ -7349,7 +7359,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             for event_id, imported_name in static_module_import_bindings.get(key, ()):
                 if (
                     f"{imported_name}{suffix}" in module_names
-                    and binding_event_may_reach_load(current, key, event_id)
+                    and event_may_reach_load(current, key, event_id)
                 ):
                     return True
             binding_state = (key, suffix)
@@ -7357,11 +7367,11 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 continue
             observed_binding_states.add(binding_state)
             pending.extend(
-                (source, suffix) for source in static_decoder_binding_sources(key, current)
+                (source, suffix) for source in decoder_binding_sources(key, current)
             )
         return False
 
-    def expression_has_static_callable_origin(
+    def has_static_callable_origin(
         node: ast.AST,
         qualified_names: frozenset[str],
         builtin_names: frozenset[str] = frozenset(),
@@ -7370,7 +7380,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         observed_expression_ids: set[int] = set()
         observed_binding_keys: set[tuple[int, str]] = set()
         while pending:
-            consume_static_decoder_origin_operation()
+            charge_origin()
             current = pending.pop()
             if id(current) in observed_expression_ids:
                 continue
@@ -7383,7 +7393,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     for qualified_name in qualified_names
                     if qualified_name.rsplit(".", 1)[1] == current.attr
                 )
-                if module_names and expression_has_static_module_origin(
+                if module_names and has_static_module_origin(
                     current.value,
                     module_names,
                 ):
@@ -7397,47 +7407,47 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             for event_id, qualified_name in static_callable_import_bindings.get(
                 key, ()
             ):
-                if qualified_name in qualified_names and binding_event_may_reach_load(
+                if qualified_name in qualified_names and event_may_reach_load(
                     current, key, event_id
                 ):
                     return True
             if key in observed_binding_keys:
                 continue
             observed_binding_keys.add(key)
-            pending.extend(static_decoder_binding_sources(key, current))
+            pending.extend(decoder_binding_sources(key, current))
         return False
 
-    def expression_has_static_binary_decoder_origin(node: ast.AST) -> bool:
-        return expression_has_static_callable_origin(
+    def has_static_binary_decoder_origin(node: ast.AST) -> bool:
+        return has_static_callable_origin(
             node,
             static_binary_decoder_qualified_names,
         )
 
-    def expression_has_static_dynamic_import_origin(node: ast.AST) -> bool:
-        return expression_has_static_callable_origin(
+    def has_static_dynamic_import_origin(node: ast.AST) -> bool:
+        return has_static_callable_origin(
             node,
             import_resolver_qualified_names,
             static_import_builtin_names,
         )
 
-    decoder_input_operations = 0
-    decoder_input_operation_limit = min(
+    decoder_input_ops = 0
+    decoder_input_limit = min(
         max(node_count * 8, 1),
-        BOOTSTRAP_V2_MAX_PYTHON_STATIC_DECODER_INPUT_OPERATIONS,
+        BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS,
     )
     decoder_value_input_cache: dict[int, bool | None] = {}
     decoder_expression_input_cache: dict[int, bool] = {}
 
-    def consume_static_decoder_input_operation() -> None:
-        nonlocal decoder_input_operations
-        decoder_input_operations += 1
-        if decoder_input_operations > decoder_input_operation_limit:
+    def charge_input() -> None:
+        nonlocal decoder_input_ops
+        decoder_input_ops += 1
+        if decoder_input_ops > decoder_input_limit:
             raise ValueError(
                 "Python static decoder input exceeds the trusted operation limit"
             )
 
-    def value_contains_static_decoder_input(value: Any) -> bool:
-        consume_static_decoder_input_operation()
+    def value_has_static_decoder_input(value: Any) -> bool:
+        charge_input()
         if type(value) in {str, bytes}:
             return True
         if type(value) not in {tuple, list, dict}:
@@ -7452,24 +7462,24 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         children = value if type(value) in {tuple, list} else (
             child for pair in value.items() for child in pair
         )
-        result = any(value_contains_static_decoder_input(child) for child in children)
+        result = any(value_has_static_decoder_input(child) for child in children)
         decoder_value_input_cache[value_id] = result
         return result
 
-    def expression_has_static_decoder_input(node: ast.AST) -> bool:
+    def has_static_decoder_input(node: ast.AST) -> bool:
         cached = decoder_expression_input_cache.get(id(node))
         if cached is not None:
-            consume_static_decoder_input_operation()
+            charge_input()
             return cached
         evaluated_value = evaluated.get(id(node), not_pure)
-        if evaluated_value is not not_pure and value_contains_static_decoder_input(
+        if evaluated_value is not not_pure and value_has_static_decoder_input(
             evaluated_value
         ):
             result = True
         else:
             result = False
             for child in ast.walk(node):
-                consume_static_decoder_input_operation()
+                charge_input()
                 if isinstance(child, ast.Constant) and type(child.value) in {
                     str,
                     bytes,
@@ -7481,11 +7491,11 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
 
     def unresolved_static_binary_decoder_call(node: ast.AST) -> bool:
         if not isinstance(node, ast.Call) or not (
-            expression_has_static_binary_decoder_origin(node.func)
+            has_static_binary_decoder_origin(node.func)
         ):
             return False
         return any(
-            expression_has_static_decoder_input(source)
+            has_static_decoder_input(source)
             for source in call_source_nodes(node, decoder_source_keyword_names)
         )
 
@@ -7503,7 +7513,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         )
 
     def dynamic_code_call_uses_static_input(node: ast.Call) -> bool:
-        if not expression_has_static_callable_origin(
+        if not has_static_callable_origin(
             node.func, frozenset(), dynamic_code_builtin_names
         ):
             return False
@@ -7514,7 +7524,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         )
 
     def dynamic_import_call_uses_decoder_module(node: ast.Call) -> bool:
-        if not expression_has_static_dynamic_import_origin(node.func):
+        if not has_static_dynamic_import_origin(node.func):
             return False
         for source in call_source_nodes(node, frozenset({"name"})):
             imported_name = evaluate_binding_expression(source)
@@ -8191,6 +8201,11 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     isinstance(node.func, ast.Attribute)
                     and node.func.attr in {"format", "format_map", "join"}
                     and id(node) in risk_text_seeded_expression_ids
+                )
+                or (
+                    direct_method_syntax
+                    and node.func.attr == "decode"
+                    and static_receiver(node.func.value)
                 )
             ):
                 raise ValueError(

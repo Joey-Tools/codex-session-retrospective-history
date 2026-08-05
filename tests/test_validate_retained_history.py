@@ -10492,13 +10492,38 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         )
         with mock.patch.object(
             MODULE,
-            "BOOTSTRAP_V2_MAX_PYTHON_STATIC_DECODER_INPUT_OPERATIONS",
+            "BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS",
             40,
         ):
             self.assertEqual(
                 MODULE.bootstrap_v2_python_privacy_risk_values(source),
                 [],
             )
+
+    def test_bootstrap_v2_python_closed_static_method_receiver_fails_closed(
+        self,
+    ) -> None:
+        expected = risky_github_classic_token()
+        encoded = expected.encode("ascii").hex()
+        expression = (
+            f'int("{encoded}", 16).to_bytes({len(expected)}, "big")'
+        )
+        for source in (
+            f'value = {expression}.decode("ascii")\n',
+            f'payload = {expression}\nvalue = payload.decode("ascii")\n',
+        ):
+            with self.subTest(source=source.splitlines()[-1][:48]):
+                self.assert_python_privacy_layers_reject(
+                    source,
+                    "unresolved bound string method",
+                )
+
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                'payload = get_payload()\nvalue = payload.decode("ascii")\n'
+            ),
+            [],
+        )
 
     def test_bootstrap_v2_python_static_constructor_arithmetic_fails_closed(
         self,
