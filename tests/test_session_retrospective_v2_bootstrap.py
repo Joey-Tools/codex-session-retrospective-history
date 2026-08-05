@@ -81,6 +81,37 @@ def load_module(name: str, path: Path) -> object:
     return module
 
 
+def linux_process_state(pid: int) -> str:
+    raw = Path(f"/proc/{pid}/stat").read_bytes()
+    try:
+        value = raw.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise AssertionError("Linux process state is not ASCII") from exc
+    command_end = value.rfind(") ")
+    if command_end < 0 or len(value) <= command_end + 2:
+        raise AssertionError("Linux process state is malformed")
+    state = value[command_end + 2 : command_end + 3]
+    if len(state) != 1 or not state.isalpha():
+        raise AssertionError("Linux process state is malformed")
+    return state
+
+
+def process_is_executing_for_test(pid: int) -> bool:
+    if sys.platform.startswith("linux"):
+        try:
+            state = linux_process_state(pid)
+        except FileNotFoundError:
+            return False
+        return state not in {"X", "Z", "x"}
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 VALIDATOR_MODULE = load_module("bootstrap_workflow_validator", VALIDATOR)
 CI_MODULE = load_module("trusted_history_ci", CI_HELPER)
 
@@ -2963,13 +2994,63 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             child_pid = int(child_pid_path.read_text(encoding="ascii"))
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
-                try:
-                    os.kill(child_pid, 0)
-                except ProcessLookupError:
+                if not process_is_executing_for_test(child_pid):
                     break
                 time.sleep(0.02)
             else:
                 self.fail("bounded command descendant remained alive")
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux") and hasattr(os, "fork"),
+        "Linux /proc process-state contract is unavailable",
+    )
+    def test_linux_process_liveness_treats_zombie_as_terminal(self) -> None:
+        child_pid = os.fork()
+        if child_pid == 0:
+            os._exit(0)
+        try:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if linux_process_state(child_pid) == "Z":
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("child did not enter the Linux zombie state")
+            self.assertFalse(process_is_executing_for_test(child_pid))
+        finally:
+            os.waitpid(child_pid, 0)
+
+    def test_linux_process_state_contract_distinguishes_terminal_state(self) -> None:
+        with (
+            mock.patch.object(sys, "platform", "linux"),
+            mock.patch.object(
+                Path,
+                "read_bytes",
+                return_value=b"123 (worker) name) Z 1 2 3\n",
+            ),
+        ):
+            self.assertEqual(linux_process_state(123), "Z")
+            self.assertFalse(process_is_executing_for_test(123))
+
+        with (
+            mock.patch.object(sys, "platform", "linux"),
+            mock.patch.object(
+                Path,
+                "read_bytes",
+                return_value=b"123 (worker) name) S 1 2 3\n",
+            ),
+        ):
+            self.assertTrue(process_is_executing_for_test(123))
+
+        with (
+            mock.patch.object(sys, "platform", "linux"),
+            mock.patch.object(Path, "read_bytes", side_effect=FileNotFoundError),
+        ):
+            self.assertFalse(process_is_executing_for_test(123))
+
+        with mock.patch.object(Path, "read_bytes", return_value=b"malformed\n"):
+            with self.assertRaisesRegex(AssertionError, "malformed"):
+                linux_process_state(123)
 
     def test_history_preflight_manifest_covers_every_new_commit_tree(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
