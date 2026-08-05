@@ -10380,7 +10380,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         expected = risky_github_classic_token()
         encoded = base64.b64encode(expected.encode("ascii")).decode("ascii")
         encoded_hex = expected.encode("ascii").hex()
-        encoded_z85 = base64.z85encode(expected.encode("ascii")).decode("ascii")
+        encoded_z85 = "xj#l>vprOMvprOMvprOMvprOMvprOMvprOMvprOMvprOMvprOM"
         cases = (
             f'import base64\nvalue = base64.b64decode("{encoded}").decode("ascii")\n',
             f'import base64\nvalue = base64.standard_b64decode("{encoded}")\n',
