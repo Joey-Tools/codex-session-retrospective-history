@@ -857,8 +857,9 @@ jobs:
           ulimit -t 600
           output="$RUNNER_TEMP/default-history-ci/tests.log"
           if ! timeout --signal=TERM --kill-after=5s 900s \
-              sudo -u nobody --chdir="$DEFAULT_EXECUTION_ROOT" -- \
-                env -i HOME="$DEFAULT_TEST_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+              sudo -u nobody -- \
+                /usr/bin/env -i -C "$DEFAULT_EXECUTION_ROOT" \
+                  HOME="$DEFAULT_TEST_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
                   PATH="$PATH" GIT_CONFIG_GLOBAL=/dev/null \
                   GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
                   PYTHONDONTWRITEBYTECODE=1 PYTHONHASHSEED=0 \
@@ -869,8 +870,9 @@ jobs:
             exit 1
           fi
           if ! timeout --signal=TERM --kill-after=5s 900s \
-              sudo -u nobody --chdir="$DEFAULT_EXECUTION_ROOT" -- \
-                env -i HOME="$DEFAULT_TEST_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+              sudo -u nobody -- \
+                /usr/bin/env -i -C "$DEFAULT_EXECUTION_ROOT" \
+                  HOME="$DEFAULT_TEST_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
                   PATH="$PATH" GIT_CONFIG_GLOBAL=/dev/null \
                   GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
                   PYTHONDONTWRITEBYTECODE=1 PYTHONHASHSEED=0 \

@@ -3914,15 +3914,16 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         sys.platform == "darwin",
         "Darwin does not provide the Linux runner UID/sudo contract",
     )
-    def test_linux_sudo_chdir_enters_nobody_owned_0700_execution_root(
+    def test_linux_sudo_env_chdir_enters_nobody_owned_0700_execution_root(
         self,
     ) -> None:
         if not sys.platform.startswith("linux"):
             self.skipTest("requires Linux UID semantics")
         sudo = shutil.which("sudo")
-        pwd_command = shutil.which("pwd")
-        if sudo is None or pwd_command is None:
-            self.skipTest("sudo and pwd are required")
+        env_command = Path("/usr/bin/env")
+        pwd_command = Path("/usr/bin/pwd")
+        if sudo is None or not env_command.is_file() or not pwd_command.is_file():
+            self.skipTest("sudo, /usr/bin/env, and /usr/bin/pwd are required")
         privilege_probe = subprocess.run(
             [sudo, "-n", "true"],
             stdout=subprocess.PIPE,
@@ -3954,9 +3955,13 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         "-n",
                         "-u",
                         "nobody",
-                        f"--chdir={execution}",
                         "--",
-                        pwd_command,
+                        str(env_command),
+                        "-i",
+                        "-C",
+                        str(execution),
+                        "PATH=/usr/bin:/bin",
+                        str(pwd_command),
                     ],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -3976,6 +3981,19 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     ],
                     check=True,
                 )
+
+    def test_permanent_ci_uses_env_chdir_after_uid_drop(self) -> None:
+        permanent_job = load_workflow(PERMANENT_CI)["jobs"][
+            "trusted_default_audit"
+        ]
+        script = steps_by_name(permanent_job)[
+            "Run tests after dropping UID and cwd"
+        ]["run"]
+        self.assertNotIn("sudo -u nobody --chdir", script)
+        self.assertEqual(
+            script.count('/usr/bin/env -i -C "$DEFAULT_EXECUTION_ROOT"'),
+            2,
+        )
 
     def test_default_branch_execution_copy_preserves_exact_authority_tree(
         self,
