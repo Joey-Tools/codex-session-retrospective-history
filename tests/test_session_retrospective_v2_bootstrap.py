@@ -1834,7 +1834,10 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         ):
             changed = copy.deepcopy(payloads["check"])
             changed[field] = replacement
-            cases.append((label, expected, [changed], [payloads["job"]]))
+            changed_job = copy.deepcopy(payloads["job"])
+            if field == "conclusion":
+                changed_job[field] = replacement
+            cases.append((label, expected, [changed], [changed_job]))
         lookalike = copy.deepcopy(payloads["check"])
         lookalike["app"]["slug"] = "lookalike-actions"
         cases.append(("lookalike", "lookalike", [lookalike], [payloads["job"]]))
@@ -1873,6 +1876,147 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     current_pr_number=17,
                     token="read-only",
                 )
+
+    def test_predecessor_audit_selects_one_exact_successful_rerun_attempt(
+        self,
+    ) -> None:
+        base = "b" * 40
+        parent = "a" * 40
+        candidate = "c" * 40
+        payloads = predecessor_audit_payloads(
+            base_sha=base,
+            parent_sha=parent,
+            candidate_sha=candidate,
+        )
+        first_check = copy.deepcopy(payloads["check"])
+        first_check["conclusion"] = "failure"
+        first_job = copy.deepcopy(payloads["job"])
+        first_job["conclusion"] = "failure"
+
+        second_check = copy.deepcopy(payloads["check"])
+        second_check.update(
+            {
+                "id": 502,
+                "node_id": "CR_kwDO_predecessor_retry",
+                "started_at": "2026-07-15T00:06:00Z",
+                "completed_at": "2026-07-15T00:08:00Z",
+                "details_url": (
+                    f"https://github.com/{TEST_REPOSITORY}/actions/"
+                    "runs/701/job/802"
+                ),
+            }
+        )
+        second_job = copy.deepcopy(payloads["job"])
+        second_job.update(
+            {
+                "id": 802,
+                "run_attempt": 2,
+                "started_at": "2026-07-15T00:06:30Z",
+                "completed_at": "2026-07-15T00:07:30Z",
+                "html_url": second_check["details_url"],
+                "check_run_url": (
+                    f"https://api.github.com/repos/{TEST_REPOSITORY}/"
+                    "check-runs/502"
+                ),
+            }
+        )
+        rerun = copy.deepcopy(payloads["run"])
+        rerun.update(
+            {
+                "run_attempt": 2,
+                "run_started_at": "2026-07-15T00:06:00Z",
+                "updated_at": "2026-07-15T00:09:00Z",
+            }
+        )
+
+        def github_payload(
+            _method: str,
+            _repository: str,
+            route: str,
+            *,
+            token: str,
+        ) -> dict:
+            self.assertEqual(token, "read-only")
+            if route == "/pulls/16":
+                return payloads["pull"]
+            if route == "/actions/runs/701":
+                return rerun
+            raise AssertionError(f"unexpected route: {route}")
+
+        def read_evidence(
+            checks: list[dict],
+            jobs: list[dict],
+        ) -> CI_MODULE.PredecessorAuditEvidence:
+            def object_inventory(**kwargs: object) -> list[dict]:
+                return checks if kwargs["item_key"] == "check_runs" else jobs
+
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_paginated_list",
+                    return_value=[payloads["associated"]],
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_paginated_object_items",
+                    side_effect=object_inventory,
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    side_effect=github_payload,
+                ),
+            ):
+                return CI_MODULE.read_trusted_predecessor_audit_evidence(
+                    repository=TEST_REPOSITORY,
+                    base_sha=base,
+                    parent_sha=parent,
+                    current_pr_number=17,
+                    token="read-only",
+                )
+
+        evidence = read_evidence(
+            [first_check, second_check],
+            [first_job, second_job],
+        )
+        self.assertEqual(evidence.workflow_run_attempt, 2)
+        self.assertEqual(evidence.check_run_id, 502)
+        self.assertEqual(evidence.job_id, 802)
+
+        duplicate_attempt = copy.deepcopy(first_job)
+        duplicate_attempt["run_attempt"] = 2
+        malformed_cases = (
+            (
+                "duplicate attempt",
+                [first_check, second_check],
+                [duplicate_attempt, second_job],
+                "ambiguous",
+            ),
+            (
+                "missing first attempt",
+                [second_check],
+                [second_job],
+                "incomplete or ambiguous",
+            ),
+            (
+                "cross-attempt association",
+                [first_check, second_check],
+                [
+                    first_job,
+                    {
+                        **second_job,
+                        "check_run_url": first_job["check_run_url"],
+                    },
+                ],
+                "ambiguous",
+            ),
+        )
+        for label, checks, jobs, expected in malformed_cases:
+            with self.subTest(label=label), self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                expected,
+            ):
+                read_evidence(checks, jobs)
 
     def test_predecessor_evidence_pagination_is_exact_and_terminal(
         self,

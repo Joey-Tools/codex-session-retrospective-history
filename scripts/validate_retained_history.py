@@ -176,10 +176,10 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
         (
-            0x10, 0xDF, 0x82, 0x8A, 0xD9, 0x06, 0xDD, 0x02,
-            0xA3, 0xEF, 0x8A, 0x4F, 0x6E, 0xC8, 0x18, 0x89,
-            0xBB, 0x64, 0x23, 0x27, 0x37, 0x9B, 0xC1, 0x44,
-            0xFC, 0x2B, 0x53, 0x1D, 0x26, 0x14, 0xB5, 0x3D,
+            0x03, 0x37, 0xF0, 0xD9, 0x59, 0x8A, 0x38, 0xBC,
+            0xC0, 0x3C, 0x4E, 0x1B, 0x66, 0x2A, 0x2E, 0x69,
+            0xA8, 0x5F, 0xAA, 0x26, 0x08, 0xCB, 0x18, 0x7A,
+            0x35, 0x48, 0x38, 0xF5, 0x56, 0xE9, 0x87, 0x66,
         )
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
@@ -350,10 +350,10 @@ BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256 = {
     ),
     Path("tests/test_validate_retained_history.py"): bytes(
         (
-            0xCA, 0x7B, 0x93, 0x77, 0x97, 0xB7, 0x9F, 0xEB,
-            0xAF, 0xE0, 0x89, 0x5D, 0x81, 0x3F, 0x6A, 0xD7,
-            0x6F, 0xB3, 0x7B, 0x30, 0x05, 0xF4, 0xAC, 0xD0,
-            0xB1, 0x16, 0xC1, 0x3F, 0x23, 0x86, 0xBC, 0x86,
+            0xD0, 0xCD, 0x7F, 0x46, 0x44, 0xB8, 0x76, 0x98,
+            0x97, 0x65, 0xDB, 0x50, 0xBE, 0x72, 0x22, 0xE2,
+            0xDE, 0x26, 0x57, 0xB8, 0xE0, 0xB2, 0x77, 0x2B,
+            0x5E, 0x56, 0xD2, 0xD0, 0xAE, 0x23, 0x39, 0xC3,
         )
     ).hex(),
 }
@@ -376,10 +376,10 @@ BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
         (
-            0xDC, 0x44, 0x56, 0xB0, 0xF8, 0x6F, 0x4D, 0x28,
-            0xC9, 0x45, 0xD5, 0xA7, 0x3D, 0x45, 0xEC, 0x48,
-            0xEA, 0x52, 0x4A, 0x02, 0x40, 0x8E, 0x06, 0x89,
-            0xE9, 0xB4, 0x74, 0x25, 0x3F, 0x55, 0x6A, 0x89,
+            0xC5, 0x04, 0x49, 0xAE, 0xC2, 0x9A, 0xF1, 0x6D,
+            0x71, 0x67, 0xEF, 0x4E, 0x7E, 0x2C, 0xD2, 0xA3,
+            0x64, 0x40, 0x57, 0x7C, 0xAA, 0xA1, 0x8F, 0x19,
+            0x01, 0x83, 0x15, 0x4E, 0x4D, 0x6F, 0x30, 0xBD,
         )
     ).hex(),
 }
@@ -9529,6 +9529,12 @@ class HistoryV2WorkBudget:
         default_factory=dict
     )
     validated_tree_oids: set[str] = field(default_factory=set)
+    domain_contracts: dict[
+        tuple[Path, str], HistoryV2DomainContract | None
+    ] = field(default_factory=dict)
+    authorized_domain_revisions: set[tuple[Path, str]] = field(
+        default_factory=set
+    )
 
     def add_path_references(self, count: int) -> None:
         if count < 0 or self.path_references + count > HISTORY_V2_MAX_PATH_REFERENCES:
@@ -9834,6 +9840,44 @@ def _history_v2_load_frozen_domain_modules(
         raise
 
 
+def _history_v2_domain_contract_from_modules(
+    *,
+    trusted_root: Path,
+    trusted_revision: str,
+    trusted_generation: str,
+    git_module: Any,
+    runtime_module: Any,
+) -> HistoryV2DomainContract:
+    max_artifact_bytes = getattr(git_module, "MAX_ARTIFACT_BYTES", None)
+    max_manifest_bytes = (
+        max_artifact_bytes.get("manifest.json")
+        if isinstance(max_artifact_bytes, dict)
+        else None
+    )
+    functions = (
+        getattr(runtime_module, "validate_v2_runs_with_inventory", None),
+        getattr(git_module, "_verify_publisher_attestation", None),
+        getattr(git_module, "build_pull_request_merge_plan", None),
+        getattr(git_module, "validate_default_branch_update", None),
+    )
+    if (
+        any(not callable(function) for function in functions)
+        or type(max_manifest_bytes) is not int
+        or not 0 < max_manifest_bytes <= HISTORY_V2_MAX_BLOB_READ_BYTES
+    ):
+        raise ValueError("trusted history-v2 domain validator contract is invalid")
+    return HistoryV2DomainContract(
+        validate_v2_runs_with_inventory=functions[0],
+        verify_publisher_attestation=functions[1],
+        build_pull_request_merge_plan=functions[2],
+        validate_default_branch_update=functions[3],
+        max_manifest_bytes=max_manifest_bytes,
+        trusted_root=trusted_root,
+        trusted_revision=trusted_revision,
+        trusted_generation=trusted_generation,
+    )
+
+
 def trusted_history_v2_domain_contract(
     *,
     expected_revision: str | None = None,
@@ -9965,33 +10009,12 @@ def trusted_history_v2_domain_contract(
             "trusted history-v2 domain validator source changed while loading"
         )
 
-    max_artifact_bytes = getattr(git_module, "MAX_ARTIFACT_BYTES", None)
-    max_manifest_bytes = (
-        max_artifact_bytes.get("manifest.json")
-        if isinstance(max_artifact_bytes, dict)
-        else None
-    )
-    functions = (
-        getattr(runtime_module, "validate_v2_runs_with_inventory", None),
-        getattr(git_module, "_verify_publisher_attestation", None),
-        getattr(git_module, "build_pull_request_merge_plan", None),
-        getattr(git_module, "validate_default_branch_update", None),
-    )
-    if (
-        any(not callable(function) for function in functions)
-        or type(max_manifest_bytes) is not int
-        or not 0 < max_manifest_bytes <= HISTORY_V2_MAX_BLOB_READ_BYTES
-    ):
-        raise ValueError("trusted history-v2 domain validator contract is invalid")
-    contract = HistoryV2DomainContract(
-        validate_v2_runs_with_inventory=functions[0],
-        verify_publisher_attestation=functions[1],
-        build_pull_request_merge_plan=functions[2],
-        validate_default_branch_update=functions[3],
-        max_manifest_bytes=max_manifest_bytes,
+    contract = _history_v2_domain_contract_from_modules(
         trusted_root=trusted_root,
         trusted_revision=observed_revision,
         trusted_generation=trusted_generation,
+        git_module=git_module,
+        runtime_module=runtime_module,
     )
     _TRUSTED_HISTORY_V2_DOMAIN = contract
     return contract
@@ -10011,6 +10034,8 @@ def validate_history_v2_domain_tree(
     visible_files: Sequence[Path] | None = None,
     file_snapshots: tuple[HistoryV2FileSnapshot, ...] | None = None,
     trusted_base_rev: str | None = None,
+    trusted_revision_domain: bool = False,
+    work_budget: HistoryV2WorkBudget | None = None,
 ) -> list[str]:
     root = root.resolve()
     if visible_files is not None and file_snapshots is not None:
@@ -10051,10 +10076,19 @@ def validate_history_v2_domain_tree(
         if history_v2_run_artifact(snapshot.relative)
     )
     try:
-        contract = trusted_history_v2_domain_contract(
-            expected_revision=trusted_base_rev,
-            candidate_root=root if trusted_base_rev is not None else None,
-        )
+        if trusted_base_rev is None:
+            contract = trusted_history_v2_domain_contract()
+        elif trusted_revision_domain:
+            contract = trusted_history_v2_domain_revision_contract(
+                root,
+                trusted_base_rev,
+                work_budget=work_budget or HistoryV2WorkBudget(),
+            )
+        else:
+            contract = trusted_history_v2_domain_contract(
+                expected_revision=trusted_base_rev,
+                candidate_root=root,
+            )
     except (OSError, UnicodeError, ValueError) as exc:
         return [safe_exception_message(exc)]
     if contract is None:
@@ -10258,6 +10292,7 @@ def validate_history_v2_tree(
     verify_head_tree: bool = True,
     work_budget: HistoryV2WorkBudget | None = None,
     trusted_base_rev: str | None = None,
+    trusted_revision_domain: bool = False,
 ) -> list[str]:
     root = root.resolve()
     file_snapshots, snapshot_issue = snapshot_bootstrap_v2_files(
@@ -10316,6 +10351,8 @@ def validate_history_v2_tree(
         root,
         file_snapshots=visible_snapshots,
         trusted_base_rev=trusted_base_rev,
+        trusted_revision_domain=trusted_revision_domain,
+        work_budget=work_budget,
     )
     if domain_issues:
         return list(dict.fromkeys(domain_issues))
@@ -11576,6 +11613,112 @@ def history_v2_read_blob(
     return value
 
 
+def trusted_history_v2_domain_revision_contract(
+    root: Path,
+    revision: str,
+    *,
+    work_budget: HistoryV2WorkBudget,
+) -> HistoryV2DomainContract | None:
+    root = root.resolve()
+    validate_history_v2_closed_object_store(root)
+    revision = canonical_history_v2_oid(
+        revision,
+        "trusted history-v2 domain base revision",
+    )
+    if (root, revision) not in work_budget.authorized_domain_revisions:
+        raise ValueError(
+            "trusted history-v2 domain revision was not authorized by the default-event barrier"
+        )
+    cache_key = (root, revision)
+    if cache_key in work_budget.domain_contracts:
+        return work_budget.domain_contracts[cache_key]
+
+    tree_oid = canonical_history_v2_oid(
+        history_v2_git_text(
+            root,
+            "rev-parse",
+            "--verify",
+            f"{revision}^{{tree}}",
+            max_bytes=128,
+        ).strip(),
+        "trusted history-v2 domain base tree",
+    )
+    entries = history_v2_tree_entries(
+        root,
+        revision,
+        tree_oid=tree_oid,
+        work_budget=work_budget,
+    )
+    by_path = {
+        entry.relative: entry
+        for entry in entries
+        if entry.object_type == "blob"
+    }
+    selected: list[HistoryV2FileSnapshot] = []
+    missing = 0
+    for index, relative in enumerate(HISTORY_V2_DOMAIN_MODULE_PATHS, 1):
+        entry = by_path.get(relative)
+        if entry is None:
+            missing += 1
+            continue
+        if (
+            entry.mode != "100644"
+            or entry.object_type != "blob"
+            or entry.size is None
+            or entry.size > BOOTSTRAP_V2_MAX_PYTHON_SOURCE_BYTES
+        ):
+            raise ValueError(
+                "trusted history-v2 domain revision source is invalid"
+            )
+        value = history_v2_read_blob(root, entry, work_budget=work_budget)
+        selected.append(
+            HistoryV2FileSnapshot(
+                relative=relative,
+                value=value,
+                mode=stat.S_IFREG | 0o444,
+                device=0,
+                inode=index,
+                uid=0,
+                gid=0,
+                size=len(value),
+                mtime_ns=0,
+            )
+        )
+    if missing == len(HISTORY_V2_DOMAIN_MODULE_PATHS):
+        work_budget.domain_contracts[cache_key] = None
+        return None
+    if missing or tuple(snapshot.relative for snapshot in selected) != (
+        HISTORY_V2_DOMAIN_MODULE_PATHS
+    ):
+        raise ValueError(
+            "trusted history-v2 domain revision source is incomplete"
+        )
+
+    trusted_generation = history_v2_trust_generation_digest(
+        root,
+        revision,
+        work_budget=work_budget,
+    )
+    try:
+        git_module, runtime_module = _history_v2_load_frozen_domain_modules(
+            root,
+            tuple(selected),
+        )
+    except Exception as exc:
+        raise ValueError(
+            "trusted history-v2 domain revision could not be loaded"
+        ) from exc
+    contract = _history_v2_domain_contract_from_modules(
+        trusted_root=root,
+        trusted_revision=revision,
+        trusted_generation=trusted_generation,
+        git_module=git_module,
+        runtime_module=runtime_module,
+    )
+    work_budget.domain_contracts[cache_key] = contract
+    return contract
+
+
 def validate_history_v2_commit_tree(
     root: Path,
     revision: str,
@@ -12282,13 +12425,15 @@ def validate_history_v2_domain_default_range(
     base_rev: str,
     head_rev: str,
     changed: list[tuple[str, Path]],
+    work_budget: HistoryV2WorkBudget,
 ) -> list[str]:
     if not any(history_v2_run_artifact(relative) for _status, relative in changed):
         return []
     try:
-        contract = trusted_history_v2_domain_contract(
-            expected_revision=base_rev,
-            candidate_root=root,
+        contract = trusted_history_v2_domain_revision_contract(
+            root,
+            base_rev,
+            work_budget=work_budget,
         )
     except (OSError, UnicodeError, ValueError) as exc:
         return [safe_exception_message(exc)]
@@ -12458,6 +12603,7 @@ def validate_append_only_event_range(
             before_rev=before_rev,
             head_rev=head_rev,
         )
+        budget.authorized_domain_revisions.add((root, before_rev))
         observed_tree_oid = canonical_history_v2_oid(
             history_v2_git_text(
                 root,
@@ -12493,6 +12639,7 @@ def validate_append_only_event_range(
                 base_rev=before_rev,
                 head_rev=head_rev,
                 changed=changed,
+                work_budget=budget,
             )
         for status, relative in changed:
             jsonl_kind = allowed_retained_jsonl_artifact(relative)
@@ -12749,6 +12896,52 @@ def history_v2_single_parent_squash_coordinates(
     return head_tree_oid, (parent,)
 
 
+def validated_history_v2_default_event_checkout(
+    root: Path,
+    *,
+    before_rev: str,
+    head_rev: str,
+    event_created: bool,
+    event_deleted: bool,
+    event_forced: bool,
+    work_budget: HistoryV2WorkBudget | None = None,
+) -> tuple[Path, str, str]:
+    if any(
+        type(value) is not bool
+        for value in (event_created, event_deleted, event_forced)
+    ):
+        raise ValueError("history-v2 push event flags are invalid")
+    before_rev = canonical_history_v2_oid(
+        before_rev,
+        "history-v2 event before",
+    )
+    head_rev = canonical_history_v2_oid(head_rev, "history-v2 event head")
+    if set(before_rev) == {"0"} or event_created:
+        raise ValueError(
+            "history-v2 zero-before branch creation/bootstrap is unsupported"
+        )
+    if set(head_rev) == {"0"} or event_deleted:
+        raise ValueError("history-v2 default-branch deletion is prohibited")
+    if event_forced:
+        raise ValueError("history-v2 force-push is prohibited")
+    if len(before_rev) != len(head_rev):
+        raise ValueError("history-v2 event object ID lengths differ")
+
+    root, before_rev, head_rev = validated_history_v2_range_checkout(
+        root,
+        base_rev=before_rev,
+        head_rev=head_rev,
+    )
+    history_v2_single_parent_squash_coordinates(
+        root,
+        before_rev=before_rev,
+        head_rev=head_rev,
+    )
+    if work_budget is not None:
+        work_budget.authorized_domain_revisions.add((root, before_rev))
+    return root, before_rev, head_rev
+
+
 def validate_history_v2_actual_squash_transaction(
     root: Path,
     *,
@@ -12767,6 +12960,7 @@ def validate_history_v2_actual_squash_transaction(
         before_rev=before_rev,
         head_rev=head_rev,
     )
+    budget.authorized_domain_revisions.add((root, before_rev))
     changed = parse_history_v2_changed_paths(
         history_v2_diff_output(
             root,
@@ -12788,6 +12982,7 @@ def validate_history_v2_actual_squash_transaction(
             base_rev=before_rev,
             head_rev=head_rev,
             changed=changed,
+            work_budget=budget,
         )
         if domain_issues:
             raise ValueError(domain_issues[0])
@@ -12844,29 +13039,17 @@ def validate_history_v2_default_transaction(
     event_forced: bool,
     work_budget: HistoryV2WorkBudget | None = None,
 ) -> dict[str, Any]:
-    if any(type(value) is not bool for value in (
-        event_created,
-        event_deleted,
-        event_forced,
-    )):
-        raise ValueError("history-v2 push event flags are invalid")
-    before_rev = canonical_history_v2_oid(
-        before_rev,
-        "history-v2 event before",
+    root, before_rev, head_rev = validated_history_v2_default_event_checkout(
+        root,
+        before_rev=before_rev,
+        head_rev=head_rev,
+        event_created=event_created,
+        event_deleted=event_deleted,
+        event_forced=event_forced,
+        work_budget=work_budget,
     )
-    head_rev = canonical_history_v2_oid(head_rev, "history-v2 event head")
-    if set(before_rev) == {"0"} or event_created:
-        raise ValueError(
-            "history-v2 zero-before branch creation/bootstrap is unsupported"
-        )
-    if set(head_rev) == {"0"} or event_deleted:
-        raise ValueError("history-v2 default-branch deletion is prohibited")
-    if event_forced:
-        raise ValueError("history-v2 force-push is prohibited")
-    if len(before_rev) != len(head_rev):
-        raise ValueError("history-v2 event object ID lengths differ")
 
-    markers = history_v2_bootstrap_markers(root.resolve(), before_rev)
+    markers = history_v2_bootstrap_markers(root, before_rev)
     if markers:
         if markers != BOOTSTRAP_V2_TEMPORARY_PATHS:
             raise ValueError("history-v2 bootstrap base marker set is incomplete")
@@ -13344,13 +13527,33 @@ def main(argv: list[str] | None = None) -> int:
             )
         root = Path(args.root or ".")
         work_budget = HistoryV2WorkBudget()
-        issues = validate_history_v2_tree(root, work_budget=work_budget)
+        try:
+            root, before_rev, head_rev = (
+                validated_history_v2_default_event_checkout(
+                    root,
+                    before_rev=args.base_rev,
+                    head_rev=args.head_rev,
+                    event_created=args.event_created == "true",
+                    event_deleted=args.event_deleted == "true",
+                    event_forced=args.event_forced == "true",
+                    work_budget=work_budget,
+                )
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            issues = [safe_exception_message(exc)]
+        else:
+            issues = validate_history_v2_tree(
+                root,
+                work_budget=work_budget,
+                trusted_base_rev=before_rev,
+                trusted_revision_domain=True,
+            )
         if not issues:
             try:
                 validate_history_v2_default_transaction(
                     root,
-                    before_rev=args.base_rev,
-                    head_rev=args.head_rev,
+                    before_rev=before_rev,
+                    head_rev=head_rev,
                     event_created=args.event_created == "true",
                     event_deleted=args.event_deleted == "true",
                     event_forced=args.event_forced == "true",

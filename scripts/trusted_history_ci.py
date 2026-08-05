@@ -43,6 +43,19 @@ PERMANENT_WORKFLOW_PATH = ".github/workflows/ci.yml"
 BOOTSTRAP_CANDIDATE_REF = "wip/session-retrospective-v2-history-bootstrap"
 GITHUB_PAGE_SIZE = 100
 MAX_GITHUB_PAGES = 10
+GITHUB_TERMINAL_CONCLUSIONS = frozenset(
+    {
+        "action_required",
+        "cancelled",
+        "failure",
+        "neutral",
+        "skipped",
+        "stale",
+        "startup_failure",
+        "success",
+        "timed_out",
+    }
+)
 MERGE_GROUP_HEAD_REF_RE = re.compile(
     r"^refs/heads/gh-readonly-queue/master/"
     r"pr-(?P<number>[1-9][0-9]*)-"
@@ -1203,62 +1216,95 @@ def read_trusted_predecessor_audit_evidence(
     )
     if not check_runs:
         raise GateError("predecessor audit evidence is missing")
-    if len(check_runs) != 1:
-        raise GateError("predecessor audit evidence is ambiguous")
-    check_run = object_value(check_runs[0], "predecessor audit check")
-    app = object_value(check_run.get("app"), "predecessor audit check app")
-    check_suite = object_value(
-        check_run.get("check_suite"),
-        "predecessor audit check suite",
-    )
-    check_run_id = canonical_positive_integer(
-        check_run.get("id"),
-        "predecessor audit check run ID",
-    )
-    check_suite_id = canonical_positive_integer(
-        check_suite.get("id"),
-        "predecessor audit check suite ID",
-    )
-    check_run_node_id = check_run.get("node_id")
-    details_url = check_run.get("details_url")
-    details_match = (
-        re.fullmatch(
-            rf"https://github\.com/{re.escape(repository)}/actions/runs/"
-            r"(?P<run_id>[1-9][0-9]*)/job/(?P<job_id>[1-9][0-9]*)",
-            details_url,
+    check_evidence: dict[int, dict[str, Any]] = {}
+    workflow_run_ids: set[int] = set()
+    check_suite_ids: set[int] = set()
+    check_node_ids: set[str] = set()
+    for raw_check_run in check_runs:
+        check_run = object_value(raw_check_run, "predecessor audit check")
+        app = object_value(check_run.get("app"), "predecessor audit check app")
+        check_suite = object_value(
+            check_run.get("check_suite"),
+            "predecessor audit check suite",
         )
-        if isinstance(details_url, str)
-        else None
-    )
-    if check_run.get("head_sha") != base_sha:
-        raise GateError("predecessor audit evidence is stale")
-    if (
-        check_run.get("name") != POST_MERGE_AUDIT_CHECK_CONTEXT
-        or app.get("id") != GITHUB_ACTIONS_APP_ID
-        or app.get("slug") != GITHUB_ACTIONS_APP_SLUG
-        or not isinstance(check_run_node_id, str)
-        or not check_run_node_id
-        or len(check_run_node_id) > 256
-        or details_match is None
-        or check_run.get("pull_requests") != []
-    ):
-        raise GateError("predecessor audit evidence is lookalike")
-    if check_run.get("status") != "completed":
-        raise GateError("predecessor audit evidence is nonterminal")
-    if check_run.get("conclusion") != "success":
-        raise GateError("predecessor audit evidence failed")
-    check_started, check_started_time = canonical_github_timestamp(
-        check_run.get("started_at"),
-        "predecessor audit check start",
-    )
-    check_completed, check_completed_time = canonical_github_timestamp(
-        check_run.get("completed_at"),
-        "predecessor audit check completion",
-    )
-    if check_started_time > check_completed_time:
-        raise GateError("predecessor audit evidence timestamps are inconsistent")
-    workflow_run_id = int(details_match.group("run_id"))
-    job_id = int(details_match.group("job_id"))
+        check_run_id = canonical_positive_integer(
+            check_run.get("id"),
+            "predecessor audit check run ID",
+        )
+        check_suite_id = canonical_positive_integer(
+            check_suite.get("id"),
+            "predecessor audit check suite ID",
+        )
+        check_run_node_id = check_run.get("node_id")
+        details_url = check_run.get("details_url")
+        details_match = (
+            re.fullmatch(
+                rf"https://github\.com/{re.escape(repository)}/actions/runs/"
+                r"(?P<run_id>[1-9][0-9]*)/job/(?P<job_id>[1-9][0-9]*)",
+                details_url,
+            )
+            if isinstance(details_url, str)
+            else None
+        )
+        if (
+            check_run_id in check_evidence
+            or (
+                isinstance(check_run_node_id, str)
+                and check_run_node_id in check_node_ids
+            )
+        ):
+            raise GateError("predecessor audit evidence is ambiguous")
+        if check_run.get("head_sha") != base_sha:
+            raise GateError("predecessor audit evidence is stale")
+        if (
+            check_run.get("name") != POST_MERGE_AUDIT_CHECK_CONTEXT
+            or app.get("id") != GITHUB_ACTIONS_APP_ID
+            or app.get("slug") != GITHUB_ACTIONS_APP_SLUG
+            or not isinstance(check_run_node_id, str)
+            or not check_run_node_id
+            or len(check_run_node_id) > 256
+            or details_match is None
+            or check_run.get("pull_requests") != []
+        ):
+            raise GateError("predecessor audit evidence is lookalike")
+        if check_run.get("status") != "completed":
+            raise GateError("predecessor audit evidence is nonterminal")
+        if check_run.get("conclusion") not in GITHUB_TERMINAL_CONCLUSIONS:
+            raise GateError("predecessor audit evidence is lookalike")
+        check_started, check_started_time = canonical_github_timestamp(
+            check_run.get("started_at"),
+            "predecessor audit check start",
+        )
+        check_completed, check_completed_time = canonical_github_timestamp(
+            check_run.get("completed_at"),
+            "predecessor audit check completion",
+        )
+        if check_started_time > check_completed_time:
+            raise GateError(
+                "predecessor audit evidence timestamps are inconsistent"
+            )
+        workflow_run_id = int(details_match.group("run_id"))
+        job_id = int(details_match.group("job_id"))
+        check_node_ids.add(check_run_node_id)
+        workflow_run_ids.add(workflow_run_id)
+        check_suite_ids.add(check_suite_id)
+        check_evidence[check_run_id] = {
+            "check_run": check_run,
+            "check_run_id": check_run_id,
+            "check_run_node_id": check_run_node_id,
+            "check_suite_id": check_suite_id,
+            "workflow_run_id": workflow_run_id,
+            "job_id": job_id,
+            "details_url": details_url,
+            "started": check_started,
+            "started_time": check_started_time,
+            "completed": check_completed,
+            "completed_time": check_completed_time,
+        }
+    if len(workflow_run_ids) != 1 or len(check_suite_ids) != 1:
+        raise GateError("predecessor audit evidence is ambiguous")
+    workflow_run_id = next(iter(workflow_run_ids))
+    check_suite_id = next(iter(check_suite_ids))
 
     workflow_run = object_value(
         github_json(
@@ -1300,6 +1346,10 @@ def read_trusted_predecessor_audit_evidence(
         f"https://api.github.com/repos/{repository}/actions/runs/"
         f"{workflow_run_id}/jobs"
     )
+    workflow_run_attempt = canonical_positive_integer(
+        workflow_run.get("run_attempt"),
+        "predecessor audit workflow attempt",
+    )
     if workflow_run.get("head_sha") != base_sha:
         raise GateError("predecessor audit workflow evidence is stale")
     if (
@@ -1310,7 +1360,6 @@ def read_trusted_predecessor_audit_evidence(
         or workflow_run.get("head_branch") != DEFAULT_BRANCH
         or workflow_run.get("status") != "completed"
         or workflow_run.get("conclusion") != "success"
-        or workflow_run.get("run_attempt") != 1
         or workflow_run.get("check_suite_id") != check_suite_id
         or workflow_run.get("html_url") != expected_run_url
         or workflow_run.get("jobs_url") != expected_jobs_url
@@ -1334,31 +1383,112 @@ def read_trusted_predecessor_audit_evidence(
     ]
     if not matching_jobs:
         raise GateError("predecessor audit job evidence is missing")
-    if len(matching_jobs) != 1:
-        raise GateError("predecessor audit job evidence is ambiguous")
-    job = object_value(matching_jobs[0], "predecessor audit job")
-    job_started, job_started_time = canonical_github_timestamp(
-        job.get("started_at"),
-        "predecessor audit job start",
+    attempts: dict[int, dict[str, Any]] = {}
+    matched_check_ids: set[int] = set()
+    check_url_re = re.compile(
+        rf"https://api\.github\.com/repos/{re.escape(repository)}/check-runs/"
+        r"(?P<check_run_id>[1-9][0-9]*)"
     )
-    job_completed, job_completed_time = canonical_github_timestamp(
-        job.get("completed_at"),
-        "predecessor audit job completion",
-    )
-    if job.get("head_sha") != base_sha:
-        raise GateError("predecessor audit job evidence is stale")
+    for raw_job in matching_jobs:
+        job = object_value(raw_job, "predecessor audit job")
+        job_id = canonical_positive_integer(
+            job.get("id"),
+            "predecessor audit job ID",
+        )
+        job_attempt = canonical_positive_integer(
+            job.get("run_attempt"),
+            "predecessor audit job attempt",
+        )
+        check_url = job.get("check_run_url")
+        check_url_match = (
+            check_url_re.fullmatch(check_url)
+            if isinstance(check_url, str)
+            else None
+        )
+        if check_url_match is None:
+            raise GateError("predecessor audit job evidence is lookalike")
+        check_run_id = int(check_url_match.group("check_run_id"))
+        check = check_evidence.get(check_run_id)
+        if job.get("head_sha") != base_sha:
+            raise GateError("predecessor audit job evidence is stale")
+        if job.get("status") != "completed":
+            raise GateError("predecessor audit job evidence is nonterminal")
+        if job.get("conclusion") not in GITHUB_TERMINAL_CONCLUSIONS:
+            raise GateError("predecessor audit job evidence is lookalike")
+        if (
+            check is None
+            or job.get("run_id") != workflow_run_id
+            or job.get("workflow_name") != PERMANENT_WORKFLOW_NAME
+            or job.get("html_url") != check["details_url"]
+            or job_id != check["job_id"]
+            or job.get("conclusion")
+            != check["check_run"].get("conclusion")
+            or job_attempt in attempts
+            or check_run_id in matched_check_ids
+        ):
+            raise GateError("predecessor audit evidence is ambiguous")
+        job_started, job_started_time = canonical_github_timestamp(
+            job.get("started_at"),
+            "predecessor audit job start",
+        )
+        job_completed, job_completed_time = canonical_github_timestamp(
+            job.get("completed_at"),
+            "predecessor audit job completion",
+        )
+        if job_started_time > job_completed_time:
+            raise GateError(
+                "predecessor audit evidence timestamps are inconsistent"
+            )
+        matched_check_ids.add(check_run_id)
+        attempts[job_attempt] = {
+            "job": job,
+            "job_id": job_id,
+            "job_started": job_started,
+            "job_started_time": job_started_time,
+            "job_completed": job_completed,
+            "job_completed_time": job_completed_time,
+            "check": check,
+        }
+    expected_attempts = set(range(1, workflow_run_attempt + 1))
     if (
-        job.get("id") != job_id
-        or job.get("run_id") != workflow_run_id
-        or job.get("run_attempt") != 1
-        or job.get("workflow_name") != PERMANENT_WORKFLOW_NAME
-        or job.get("status") != "completed"
-        or job.get("conclusion") != "success"
-        or job.get("html_url") != details_url
-        or job.get("check_run_url")
-        != f"https://api.github.com/repos/{repository}/check-runs/{check_run_id}"
+        set(attempts) != expected_attempts
+        or matched_check_ids != set(check_evidence)
+        or len(check_evidence) != workflow_run_attempt
     ):
-        raise GateError("predecessor audit job evidence is lookalike")
+        raise GateError("predecessor audit evidence is incomplete or ambiguous")
+    for earlier, later in zip(
+        range(1, workflow_run_attempt),
+        range(2, workflow_run_attempt + 1),
+    ):
+        previous = attempts[earlier]
+        current = attempts[later]
+        if (
+            previous["check"]["completed_time"]
+            > current["check"]["started_time"]
+            or previous["job_completed_time"] > current["job_started_time"]
+        ):
+            raise GateError(
+                "predecessor audit evidence timestamps are inconsistent"
+            )
+    selected = attempts[workflow_run_attempt]
+    selected_check = selected["check"]
+    if (
+        selected_check["check_run"].get("conclusion") != "success"
+        or selected["job"].get("conclusion") != "success"
+    ):
+        raise GateError("predecessor audit evidence failed")
+    check_run_id = selected_check["check_run_id"]
+    check_run_node_id = selected_check["check_run_node_id"]
+    details_url = selected_check["details_url"]
+    check_started = selected_check["started"]
+    check_started_time = selected_check["started_time"]
+    check_completed = selected_check["completed"]
+    check_completed_time = selected_check["completed_time"]
+    job_id = selected["job_id"]
+    job_started = selected["job_started"]
+    job_started_time = selected["job_started_time"]
+    job_completed = selected["job_completed"]
+    job_completed_time = selected["job_completed_time"]
 
     _merged_text, merged_time = canonical_github_timestamp(
         merged_at,
@@ -1387,7 +1517,7 @@ def read_trusted_predecessor_audit_evidence(
         "check_suite_id": check_suite_id,
         "workflow_run_id": workflow_run_id,
         "workflow_id": workflow_id,
-        "workflow_run_attempt": 1,
+        "workflow_run_attempt": workflow_run_attempt,
         "job_id": job_id,
         "workflow_created_at": workflow_created,
         "workflow_started_at": workflow_started,
@@ -1409,7 +1539,7 @@ def read_trusted_predecessor_audit_evidence(
         check_suite_id=check_suite_id,
         workflow_run_id=workflow_run_id,
         workflow_id=workflow_id,
-        workflow_run_attempt=1,
+        workflow_run_attempt=workflow_run_attempt,
         job_id=job_id,
         started_at=check_started,
         completed_at=check_completed,

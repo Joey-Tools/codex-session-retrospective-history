@@ -530,6 +530,43 @@ def write_tracked_append_only_artifact(root: Path, value: str) -> Path:
     return path
 
 
+def write_synthetic_history_v2_domain_sources(root: Path) -> None:
+    sources = {
+        Path("scripts/retrospective_history_attestation_v2.py"): (
+            'VALUE = "attestation"\n'
+        ),
+        Path("scripts/retrospective_history_credentials_v2.py"): (
+            'VALUE = "credentials"\n'
+        ),
+        Path("scripts/retrospective_history_git_v2.py"): (
+            'MAX_ARTIFACT_BYTES = {"manifest.json": 1024}\n'
+            "def _verify_publisher_attestation(_blobs):\n"
+            "    return True\n"
+            "def build_pull_request_merge_plan(*_args):\n"
+            "    return None, []\n"
+            "def validate_default_branch_update(root, _base, _head):\n"
+            "    return [] if (root / 'runs').is_dir() else ['missing runs']\n"
+        ),
+        Path("scripts/retrospective_history_privacy_v2.py"): (
+            'VALUE = "privacy"\n'
+        ),
+        Path("scripts/retrospective_history_templates_v2.py"): (
+            'VALUE = "templates"\n'
+        ),
+        Path("scripts/retrospective_history_v2.py"): (
+            "def validate_v2_runs_with_inventory(*_args):\n"
+            "    return [], ()\n"
+        ),
+    }
+    for relative in MODULE.HISTORY_V2_DOMAIN_MODULE_PATHS:
+        (root / relative).write_text(sources[relative], encoding="utf-8")
+    run_fixture_git(
+        root,
+        "add",
+        *(relative.as_posix() for relative in MODULE.HISTORY_V2_DOMAIN_MODULE_PATHS),
+    )
+
+
 def validate_synthetic_bootstrap_v2_candidate(
     root: Path,
     *,
@@ -4631,10 +4668,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             max_manifest_bytes=1024,
         )
         root = Path("/synthetic/trusted-history")
-        with mock.patch.object(
-            MODULE,
-            "trusted_history_v2_domain_contract",
-            return_value=contract,
+        with (
+            mock.patch.object(
+                MODULE,
+                "trusted_history_v2_domain_contract",
+                return_value=contract,
+            ),
+            mock.patch.object(
+                MODULE,
+                "trusted_history_v2_domain_revision_contract",
+                return_value=contract,
+            ),
         ):
             self.assertEqual(
                 MODULE.validate_history_v2_domain_candidate_range(
@@ -4654,6 +4698,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     base_rev=base,
                     head_rev=head,
                     changed=changed,
+                    work_budget=MODULE.HistoryV2WorkBudget(),
                 ),
                 [],
             )
@@ -4661,6 +4706,146 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             [call[0] for call in calls],
             ["candidate", "default"],
         )
+
+    def test_default_runs_publication_loads_domain_from_before_revision(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "repo"
+            write_bootstrap_v2_candidate(root)
+            write_synthetic_history_v2_domain_sources(root)
+            base = fixture_commit_all(root, "trusted domain base")
+            manifest = (
+                root
+                / "runs"
+                / "daily"
+                / "2026-07-15"
+                / "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+                / "manifest.json"
+            )
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text('{"schema_version":2}\n', encoding="utf-8")
+            head = fixture_commit_all(
+                root,
+                "Publish session retrospective v2 daily 2026-07-15 "
+                "run_ref_v2:aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                include_signature=False,
+            )
+
+            candidate_contract = MODULE.HistoryV2DomainContract(
+                validate_v2_runs_with_inventory=lambda *_args: ([], ()),
+                verify_publisher_attestation=lambda _blobs: True,
+                build_pull_request_merge_plan=lambda *_args: (None, []),
+                validate_default_branch_update=lambda *_args: [],
+                max_manifest_bytes=1024,
+                trusted_root=root,
+                trusted_revision=head,
+                trusted_generation="sha256:" + "f" * 64,
+            )
+            previous = MODULE._TRUSTED_HISTORY_V2_DOMAIN
+            MODULE._TRUSTED_HISTORY_V2_DOMAIN = candidate_contract
+            try:
+                transaction = MODULE.validate_history_v2_default_transaction(
+                    root,
+                    before_rev=base,
+                    head_rev=head,
+                    event_created=False,
+                    event_deleted=False,
+                    event_forced=False,
+                )
+            finally:
+                MODULE._TRUSTED_HISTORY_V2_DOMAIN = previous
+
+        self.assertEqual(transaction["transaction_role"], "publication")
+        self.assertEqual(transaction["base_sha"], base)
+        self.assertEqual(transaction["head_sha"], head)
+
+    def test_actual_default_rejects_nonparent_domain_before_execution(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "repo"
+            write_bootstrap_v2_candidate(root)
+            write_synthetic_history_v2_domain_sources(root)
+            base = fixture_commit_all(root, "trusted domain base")
+            manifest = (
+                root
+                / "runs"
+                / "daily"
+                / "2026-07-15"
+                / "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+                / "manifest.json"
+            )
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text('{"schema_version":2}\n', encoding="utf-8")
+            head = fixture_commit_all(
+                root,
+                "Publish session retrospective v2 daily 2026-07-15 "
+                "run_ref_v2:aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                include_signature=False,
+            )
+
+            marker = Path(raw) / "untrusted-domain-code-ran"
+            malicious_source = (
+                "from pathlib import Path\n"
+                f"Path({str(marker)!r}).write_text('ran', encoding='utf-8')\n"
+                'VALUE = "attestation"\n'
+            )
+            malicious_path = (
+                root / "scripts" / "retrospective_history_attestation_v2.py"
+            )
+            malicious_path.write_text(malicious_source, encoding="utf-8")
+            malicious_base = fixture_commit_all(
+                root,
+                "untrusted nonparent domain",
+                parents=(base,),
+                include_signature=False,
+            )
+            fixture_set_head(root, head)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "domain revision was not authorized by the default-event barrier",
+            ):
+                MODULE.trusted_history_v2_domain_revision_contract(
+                    root,
+                    malicious_base,
+                    work_budget=MODULE.HistoryV2WorkBudget(),
+                )
+            self.assertFalse(marker.exists())
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--root",
+                    str(root),
+                    "--mode",
+                    "history-v2-actual-default-squash",
+                    "--base-rev",
+                    malicious_base,
+                    "--head-rev",
+                    head,
+                    "--event-created",
+                    "false",
+                    "--event-deleted",
+                    "false",
+                    "--event-forced",
+                    "false",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "history-v2 head is not based on the exact authorized base",
+            result.stdout,
+        )
+        self.assertEqual(result.stderr, "")
+        self.assertFalse(marker.exists())
 
     def test_candidate_authorization_barrier_precedes_all_domain_control(
         self,
