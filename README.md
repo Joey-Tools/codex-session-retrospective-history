@@ -88,8 +88,15 @@ and successful exit codes. `admit-merge-group` recomputes the structural
 projection and rejects a missing, stale, cross-`Q`, writable-authority, failed,
 or otherwise mismatched receipt. Its required
 `--expected-python-sha256` value comes from the external service's independent
-trusted runtime configuration, never from the receipt or candidate tree. Only
-the resulting admission record may feed CAS.
+trusted runtime configuration, never from the receipt or candidate tree. After
+runtime validation, the command must reread the live pull request, queue ref,
+repository merge configuration, active branch rules, branch protection, and
+complete ruleset inventory. Every field and the resulting TCB digest must still
+equal the original snapshot. The admission record binds that live-authority
+digest and a 30-second validity window that starts before the first live read;
+the full reread must finish inside that window. The external service must
+discard an expired record and repeat admission immediately before publishing
+success or attempting CAS. Only that fresh admission record may feed CAS.
 Until that external producer and receipt flow are proven, cutover is blocked
 and the existing branch rules remain unchanged.
 

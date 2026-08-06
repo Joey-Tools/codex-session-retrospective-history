@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import datetime as dt
 import hashlib
 import importlib.util
 import json
@@ -2420,6 +2421,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertIn("`--expected-python-sha256`", readme)
         self.assertIn("parent-owned runtime receipt", readme)
         self.assertIn("exact `Q` tree", readme)
+        self.assertIn("must reread the live pull request, queue ref", readme)
+        self.assertIn("30-second validity window", readme)
+        self.assertIn("starts before the first live read", readme)
         self.assertIn("GitHub Actions App is\nexplicitly ineligible", readme)
         self.assertIn(
             "Until that external producer and receipt flow are proven, cutover is blocked",
@@ -2448,6 +2452,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         helper_text = CI_HELPER.read_text(encoding="utf-8")
         self.assertIn('subparsers.add_parser("admit-merge-group")', helper_text)
         self.assertIn('"--runtime-evidence"', helper_text)
+        self.assertIn('"--admission-app-id"', helper_text)
+        self.assertIn("revalidate_external_merge_group_authority", helper_text)
         for obsolete in (
             "create_merge_authorization",
             "consume_merge_authorization",
@@ -2826,6 +2832,235 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     admission_app_id=TEST_ADMISSION_APP_ID,
                     token="read-only",
                 )
+
+    def test_external_admission_revalidates_live_authority_after_runtime(
+        self,
+    ) -> None:
+        snapshot = CI_MODULE.MergeGroupSnapshot(
+            repository=TEST_REPOSITORY,
+            base_ref="refs/heads/master",
+            base_sha="b" * 40,
+            queue_ref=merge_group_ref(),
+            queue_sha="c" * 40,
+            workflow_sha="c" * 40,
+            pull_request_number=17,
+            pull_request_node_id="PR_kwDO_bootstrap",
+            pull_request_title="Publish retained history",
+            candidate_ref="wip/history-publication",
+            candidate_sha="a" * 40,
+            required_check=CI_MODULE.REQUIRED_CHECK_CONTEXT,
+            tcb_sha256="d" * 64,
+        )
+        observed_at = dt.datetime(2026, 8, 6, 17, 30, tzinfo=dt.timezone.utc)
+        with mock.patch.object(
+            CI_MODULE,
+            "read_live_merge_group_snapshot",
+            return_value=snapshot,
+        ) as live_snapshot:
+            evidence = CI_MODULE.revalidate_external_merge_group_authority(
+                expected=snapshot,
+                event_path=Path("/synthetic/event.json"),
+                event_ref=snapshot.queue_ref,
+                event_sha=snapshot.queue_sha,
+                workflow_sha=snapshot.workflow_sha,
+                admission_app_id=TEST_ADMISSION_APP_ID,
+                token="read-only",
+                clock=lambda: observed_at,
+            )
+        live_snapshot.assert_called_once_with(
+            repository=snapshot.repository,
+            event_path=Path("/synthetic/event.json"),
+            event_ref=snapshot.queue_ref,
+            event_sha=snapshot.queue_sha,
+            workflow_sha=snapshot.workflow_sha,
+            admission_app_id=TEST_ADMISSION_APP_ID,
+            token="read-only",
+        )
+        self.assertEqual(evidence.tcb_sha256, snapshot.tcb_sha256)
+        self.assertEqual(
+            evidence.snapshot_sha256,
+            hashlib.sha256(
+                CI_MODULE.compact_json_bytes(snapshot.as_dict())
+            ).hexdigest(),
+        )
+        _observed_text, observed_time = CI_MODULE.canonical_github_timestamp(
+            evidence.observed_at,
+            "test observation",
+        )
+        _valid_text, valid_until = CI_MODULE.canonical_github_timestamp(
+            evidence.valid_until,
+            "test expiration",
+        )
+        self.assertEqual(
+            valid_until - observed_time,
+            dt.timedelta(seconds=CI_MODULE.MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS),
+        )
+
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "read_live_merge_group_snapshot",
+                return_value=snapshot,
+            ),
+            self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "revalidation exceeded its window",
+            ),
+        ):
+            times = iter(
+                (
+                    observed_at,
+                    observed_at
+                    + dt.timedelta(
+                        seconds=CI_MODULE.MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS
+                    ),
+                )
+            )
+            CI_MODULE.revalidate_external_merge_group_authority(
+                expected=snapshot,
+                event_path=Path("/synthetic/event.json"),
+                event_ref=snapshot.queue_ref,
+                event_sha=snapshot.queue_sha,
+                workflow_sha=snapshot.workflow_sha,
+                admission_app_id=TEST_ADMISSION_APP_ID,
+                token="read-only",
+                clock=lambda: next(times),
+            )
+
+        for field, value in (
+            ("pull_request_title", "Changed after runtime"),
+            ("queue_ref", merge_group_ref().replace("queue", "changed")),
+            ("tcb_sha256", "e" * 64),
+        ):
+            with (
+                self.subTest(field=field),
+                mock.patch.object(
+                    CI_MODULE,
+                    "read_live_merge_group_snapshot",
+                    return_value=type(snapshot)(
+                        **{**snapshot.__dict__, field: value},
+                    ),
+                ),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "changed after runtime validation",
+                ),
+            ):
+                CI_MODULE.revalidate_external_merge_group_authority(
+                    expected=snapshot,
+                    event_path=Path("/synthetic/event.json"),
+                    event_ref=snapshot.queue_ref,
+                    event_sha=snapshot.queue_sha,
+                    workflow_sha=snapshot.workflow_sha,
+                    admission_app_id=TEST_ADMISSION_APP_ID,
+                    token="read-only",
+                    clock=lambda: observed_at,
+                )
+
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "read_live_merge_group_snapshot",
+                side_effect=CI_MODULE.GateError("queue ref missing"),
+            ),
+            self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "could not be revalidated after runtime",
+            ),
+        ):
+            CI_MODULE.revalidate_external_merge_group_authority(
+                expected=snapshot,
+                event_path=Path("/synthetic/event.json"),
+                event_ref=snapshot.queue_ref,
+                event_sha=snapshot.queue_sha,
+                workflow_sha=snapshot.workflow_sha,
+                admission_app_id=TEST_ADMISSION_APP_ID,
+                token="read-only",
+                clock=lambda: observed_at,
+            )
+
+    def test_external_admission_revalidates_live_authority_after_runtime_order(
+        self,
+    ) -> None:
+        snapshot = mock.sentinel.snapshot
+        projection = mock.sentinel.projection
+        runtime_evidence = mock.sentinel.runtime_evidence
+        live_authority = mock.sentinel.live_authority
+        calls: list[str] = []
+
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "load_merge_group_snapshot",
+                return_value=snapshot,
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "validate_merge_group_transaction",
+                return_value=projection,
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "load_merge_group_runtime_evidence",
+                return_value=runtime_evidence,
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "validate_merge_group_runtime_evidence",
+                side_effect=lambda **_kwargs: calls.append("runtime"),
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "revalidate_external_merge_group_authority",
+                side_effect=lambda **_kwargs: (calls.append("live") or live_authority),
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "merge_group_admission_payload",
+                side_effect=lambda **_kwargs: (
+                    calls.append("payload") or {"decision": "accepted"}
+                ),
+            ),
+            mock.patch.object(
+                CI_MODULE,
+                "write_json",
+                side_effect=lambda *_args, **_kwargs: calls.append("write"),
+            ),
+            mock.patch.dict(os.environ, {"GH_TOKEN": "read-only"}),
+        ):
+            result = CI_MODULE.main(
+                [
+                    "admit-merge-group",
+                    "--snapshot",
+                    "/synthetic/snapshot.json",
+                    "--git-dir",
+                    "/synthetic/repo.git",
+                    "--candidate-root",
+                    "/synthetic/candidate",
+                    "--queue-root",
+                    "/synthetic/queue",
+                    "--policy",
+                    "history-v2",
+                    "--runtime-evidence",
+                    "/synthetic/runtime.json",
+                    "--expected-python-sha256",
+                    "a" * 64,
+                    "--event-path",
+                    "/synthetic/event.json",
+                    "--event-ref",
+                    merge_group_ref(),
+                    "--event-sha",
+                    "c" * 40,
+                    "--workflow-sha",
+                    "c" * 40,
+                    "--admission-app-id",
+                    str(TEST_ADMISSION_APP_ID),
+                    "--output",
+                    "/synthetic/admission.json",
+                ]
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, ["runtime", "live", "payload", "write"])
 
     def test_predecessor_audit_fuse_requires_exact_external_evidence(
         self,
@@ -3342,13 +3577,59 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 evidence=evidence,
                 expected_python_executable_sha256=(evidence.python_executable_sha256),
             )
+            observed_at = dt.datetime(2026, 8, 6, 17, 30, tzinfo=dt.timezone.utc)
+            live_authority = CI_MODULE.MergeGroupLiveAuthorityEvidence(
+                snapshot_sha256=hashlib.sha256(
+                    CI_MODULE.compact_json_bytes(snapshot.as_dict())
+                ).hexdigest(),
+                tcb_sha256=snapshot.tcb_sha256,
+                observed_at=observed_at.isoformat().replace("+00:00", "Z"),
+                valid_until=(
+                    observed_at
+                    + dt.timedelta(
+                        seconds=CI_MODULE.MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS
+                    )
+                )
+                .isoformat()
+                .replace("+00:00", "Z"),
+            )
             admission = CI_MODULE.merge_group_admission_payload(
                 snapshot=snapshot,
                 projection=projection,
                 evidence=evidence,
+                live_authority=live_authority,
             )
             self.assertEqual(admission["kind"], CI_MODULE.MERGE_GROUP_ADMISSION_KIND)
             self.assertEqual(admission["decision"], "accepted")
+            self.assertEqual(
+                admission["live_authority"],
+                live_authority.as_dict(),
+            )
+            for field, value in (
+                ("snapshot_sha256", "f" * 64),
+                ("tcb_sha256", "f" * 64),
+                (
+                    "valid_until",
+                    (observed_at + dt.timedelta(seconds=31))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                ),
+            ):
+                with (
+                    self.subTest(live_authority_field=field),
+                    self.assertRaisesRegex(
+                        CI_MODULE.GateError,
+                        "live merge-group authority evidence is invalid",
+                    ),
+                ):
+                    CI_MODULE.merge_group_admission_payload(
+                        snapshot=snapshot,
+                        projection=projection,
+                        evidence=evidence,
+                        live_authority=type(live_authority)(
+                            **{**live_authority.__dict__, field: value}
+                        ),
+                    )
 
             invalid = (
                 ("queue_sha", "f" * 40, "stale or cross-transaction"),

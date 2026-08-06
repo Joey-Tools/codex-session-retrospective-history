@@ -34,6 +34,7 @@ MERGE_GROUP_SNAPSHOT_KIND = "retrospective-history-v2-merge-group-snapshot"
 MERGE_GROUP_RUNTIME_EVIDENCE_KIND = (
     "retrospective-history-v2-merge-group-runtime-evidence"
 )
+MERGE_GROUP_LIVE_AUTHORITY_KIND = "retrospective-history-v2-merge-group-live-authority"
 MERGE_GROUP_ADMISSION_KIND = "retrospective-history-v2-merge-group-admission"
 DEFAULT_AUTHORITY_RECEIPT_KIND = "retrospective-history-v2-default-authority"
 RUNTIME_AUTHORITY_RECEIPT_KIND = "retrospective-history-v2-runtime-authority"
@@ -114,6 +115,7 @@ MAX_TREE_PATH_DEPTH = 32
 GIT_TIMEOUT_SECONDS = 20.0
 HTTP_TIMEOUT_SECONDS = 20.0
 PROCESS_TERMINATE_GRACE_SECONDS = 0.5
+MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS = 30
 QUEUE_RUNTIME_PROFILE = "credential-free-nonprivileged-exact-q-v1"
 QUEUE_RUNTIME_PYTHON_VERSION = "3.13.12"
 QUEUE_RUNTIME_COMPILE_COMMAND = (
@@ -436,6 +438,21 @@ class MergeGroupRuntimeEvidence:
         return {
             "schema_version": 1,
             "kind": MERGE_GROUP_RUNTIME_EVIDENCE_KIND,
+            **asdict(self),
+        }
+
+
+@dataclass(frozen=True)
+class MergeGroupLiveAuthorityEvidence:
+    snapshot_sha256: str
+    tcb_sha256: str
+    observed_at: str
+    valid_until: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "kind": MERGE_GROUP_LIVE_AUTHORITY_KIND,
             **asdict(self),
         }
 
@@ -2506,6 +2523,73 @@ def read_live_merge_group_snapshot(
     )
 
 
+def _utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def _format_utc_timestamp(value: dt.datetime, label: str) -> str:
+    if value.tzinfo != dt.timezone.utc:
+        raise GateError(f"{label} is not UTC")
+    encoded = value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    canonical_github_timestamp(encoded, label)
+    return encoded
+
+
+def revalidate_external_merge_group_authority(
+    *,
+    expected: MergeGroupSnapshot,
+    event_path: Path,
+    event_ref: str,
+    event_sha: str,
+    workflow_sha: str,
+    admission_app_id: int,
+    token: str,
+    clock: Callable[[], dt.datetime] = _utc_now,
+) -> MergeGroupLiveAuthorityEvidence:
+    observed_at = clock()
+    observed_at_text = _format_utc_timestamp(
+        observed_at,
+        "live merge-group authority observation",
+    )
+    valid_until = observed_at + dt.timedelta(
+        seconds=MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS
+    )
+    try:
+        observed = read_live_merge_group_snapshot(
+            repository=expected.repository,
+            event_path=event_path,
+            event_ref=event_ref,
+            event_sha=event_sha,
+            workflow_sha=workflow_sha,
+            admission_app_id=admission_app_id,
+            token=token,
+        )
+    except GateError as exc:
+        raise GateError(
+            "live merge-group authority could not be revalidated after runtime"
+        ) from exc
+    completed_at = clock()
+    _format_utc_timestamp(
+        completed_at,
+        "live merge-group authority completion",
+    )
+    if completed_at < observed_at or completed_at >= valid_until:
+        raise GateError("live merge-group authority revalidation exceeded its window")
+    if observed != expected:
+        raise GateError("live merge-group authority changed after runtime validation")
+    return MergeGroupLiveAuthorityEvidence(
+        snapshot_sha256=hashlib.sha256(
+            compact_json_bytes(observed.as_dict())
+        ).hexdigest(),
+        tcb_sha256=observed.tcb_sha256,
+        observed_at=observed_at_text,
+        valid_until=_format_utc_timestamp(
+            valid_until,
+            "live merge-group authority expiration",
+        ),
+    )
+
+
 def _safe_git_path(raw_path: bytes) -> str:
     try:
         value = raw_path.decode("utf-8")
@@ -4534,7 +4618,24 @@ def merge_group_admission_payload(
     snapshot: MergeGroupSnapshot,
     projection: MergeGroupProjection,
     evidence: MergeGroupRuntimeEvidence,
+    live_authority: MergeGroupLiveAuthorityEvidence,
 ) -> dict[str, Any]:
+    snapshot_sha256 = hashlib.sha256(compact_json_bytes(snapshot.as_dict())).hexdigest()
+    observed_at_text, observed_at = canonical_github_timestamp(
+        live_authority.observed_at,
+        "live merge-group authority observation",
+    )
+    valid_until_text, valid_until = canonical_github_timestamp(
+        live_authority.valid_until,
+        "live merge-group authority expiration",
+    )
+    if (
+        live_authority.snapshot_sha256 != snapshot_sha256
+        or live_authority.tcb_sha256 != snapshot.tcb_sha256
+        or valid_until - observed_at
+        != dt.timedelta(seconds=MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS)
+    ):
+        raise GateError("live merge-group authority evidence is invalid")
     return {
         "schema_version": 1,
         "kind": MERGE_GROUP_ADMISSION_KIND,
@@ -4546,13 +4647,16 @@ def merge_group_admission_payload(
         "queue_tree_sha": projection.queue_tree_sha,
         "prospective_sha": projection.prospective_sha,
         "prospective_tree_sha": projection.prospective_tree_sha,
-        "snapshot_sha256": hashlib.sha256(
-            compact_json_bytes(snapshot.as_dict())
-        ).hexdigest(),
+        "snapshot_sha256": snapshot_sha256,
         "projection_sha256": merge_group_projection_sha256(projection),
         "runtime_evidence_sha256": hashlib.sha256(
             compact_json_bytes(evidence.as_dict())
         ).hexdigest(),
+        "live_authority": {
+            **live_authority.as_dict(),
+            "observed_at": observed_at_text,
+            "valid_until": valid_until_text,
+        },
     }
 
 
@@ -5615,6 +5719,15 @@ def main(argv: list[str] | None = None) -> int:
         "--expected-python-sha256",
         required=True,
     )
+    admit_group_parser.add_argument("--event-path", required=True, type=Path)
+    admit_group_parser.add_argument("--event-ref", required=True)
+    admit_group_parser.add_argument("--event-sha", required=True)
+    admit_group_parser.add_argument("--workflow-sha", required=True)
+    admit_group_parser.add_argument(
+        "--admission-app-id",
+        required=True,
+        type=int,
+    )
     admit_group_parser.add_argument("--output", required=True, type=Path)
 
     finalize_group_parser = subparsers.add_parser("finalize-merge-group")
@@ -5786,12 +5899,22 @@ def main(argv: list[str] | None = None) -> int:
                 evidence=evidence,
                 expected_python_executable_sha256=(args.expected_python_sha256),
             )
+            live_authority = revalidate_external_merge_group_authority(
+                expected=snapshot,
+                event_path=args.event_path.resolve(),
+                event_ref=args.event_ref,
+                event_sha=args.event_sha,
+                workflow_sha=args.workflow_sha,
+                admission_app_id=args.admission_app_id,
+                token=os.environ.get("GH_TOKEN", ""),
+            )
             write_json(
                 args.output,
                 merge_group_admission_payload(
                     snapshot=snapshot,
                     projection=projection,
                     evidence=evidence,
+                    live_authority=live_authority,
                 ),
             )
         elif args.command == "finalize-merge-group":
