@@ -66,5 +66,7 @@ Before branch policy enables the v2 merge queue and its `Trusted history gate`
 required check, an external admission service must be installed. That service
 validates the exact queue SHA from independently trusted code, publishes the
 queue check through its bound GitHub App identity, and performs the history
-authority compare-and-swap. Until that producer is proven, cutover is blocked
-and the existing branch rules remain unchanged.
+authority compare-and-swap. Its trusted configuration supplies that dedicated
+App ID to `merge-group-snapshot --admission-app-id`; the GitHub Actions App is
+explicitly ineligible. Until that producer is proven, cutover is blocked and
+the existing branch rules remain unchanged.

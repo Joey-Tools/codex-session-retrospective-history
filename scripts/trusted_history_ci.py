@@ -1627,18 +1627,30 @@ def _required_check_entries(
     raw: Any,
     *,
     integration_key: str,
+    admission_app_id: int,
 ) -> None:
     if not isinstance(raw, list) or len(raw) != 1:
         raise GateError("required status check set is not exact")
     check = object_value(raw[0], "required status check")
     if (
         check.get("context") != REQUIRED_CHECK_CONTEXT
-        or check.get(integration_key) != GITHUB_ACTIONS_APP_ID
+        or check.get(integration_key) != admission_app_id
     ):
         raise GateError("required status check is not current-Q bound")
 
 
-def validate_active_branch_rules(payload: Any) -> list[dict[str, Any]]:
+def canonical_admission_app_id(value: Any) -> int:
+    app_id = canonical_positive_integer(value, "external admission App ID")
+    if app_id == GITHUB_ACTIONS_APP_ID:
+        raise GateError("external admission App must not be GitHub Actions")
+    return app_id
+
+
+def validate_active_branch_rules(
+    payload: Any,
+    *,
+    admission_app_id: int,
+) -> list[dict[str, Any]]:
     if not isinstance(payload, list) or not payload or len(payload) > 64:
         raise GateError("active branch rule inventory is invalid")
     rules: dict[str, dict[str, Any]] = {}
@@ -1695,11 +1707,16 @@ def validate_active_branch_rules(payload: Any) -> list[dict[str, Any]]:
     _required_check_entries(
         check_parameters.get("required_status_checks"),
         integration_key="integration_id",
+        admission_app_id=admission_app_id,
     )
     return normalized
 
 
-def validate_branch_protection(payload: Any) -> dict[str, Any]:
+def validate_branch_protection(
+    payload: Any,
+    *,
+    admission_app_id: int,
+) -> dict[str, Any]:
     value = object_value(payload, "branch protection")
     required = object_value(
         value.get("required_status_checks"),
@@ -1709,7 +1726,11 @@ def validate_branch_protection(payload: Any) -> dict[str, Any]:
         raise GateError("branch required status checks are not strict")
     if required.get("contexts") != [REQUIRED_CHECK_CONTEXT]:
         raise GateError("branch required status check contexts are not exact")
-    _required_check_entries(required.get("checks"), integration_key="app_id")
+    _required_check_entries(
+        required.get("checks"),
+        integration_key="app_id",
+        admission_app_id=admission_app_id,
+    )
 
     reviews = object_value(
         value.get("required_pull_request_reviews"),
@@ -1914,14 +1935,22 @@ def validate_trusted_branch_configuration(
     ruleset_summaries: Any,
     ruleset_details: list[Any],
     repository: str,
+    admission_app_id: int,
 ) -> str:
+    admission_app_id = canonical_admission_app_id(admission_app_id)
     normalized = {
         "repository": validate_repository_merge_configuration(
             repository_payload,
             repository=repository,
         ),
-        "active_rules": validate_active_branch_rules(active_rules_payload),
-        "branch_protection": validate_branch_protection(protection_payload),
+        "active_rules": validate_active_branch_rules(
+            active_rules_payload,
+            admission_app_id=admission_app_id,
+        ),
+        "branch_protection": validate_branch_protection(
+            protection_payload,
+            admission_app_id=admission_app_id,
+        ),
         "rulesets": validate_ruleset_inventory(
             ruleset_summaries,
             ruleset_details,
@@ -1937,6 +1966,7 @@ def read_live_merge_group_snapshot(
     event_ref: str,
     event_sha: str,
     workflow_sha: str,
+    admission_app_id: int,
     token: str,
 ) -> MergeGroupSnapshot:
     repository = canonical_repository(repository)
@@ -2021,6 +2051,7 @@ def read_live_merge_group_snapshot(
         ruleset_summaries=ruleset_summaries,
         ruleset_details=ruleset_details,
         repository=repository,
+        admission_app_id=admission_app_id,
     )
     return MergeGroupSnapshot(
         repository=repository,
@@ -4493,6 +4524,11 @@ def main(argv: list[str] | None = None) -> int:
     merge_snapshot_parser.add_argument("--event-ref", required=True)
     merge_snapshot_parser.add_argument("--event-sha", required=True)
     merge_snapshot_parser.add_argument("--workflow-sha", required=True)
+    merge_snapshot_parser.add_argument(
+        "--admission-app-id",
+        required=True,
+        type=int,
+    )
     merge_snapshot_parser.add_argument("--output", required=True, type=Path)
 
     preflight_parser = subparsers.add_parser("preflight")
@@ -4583,6 +4619,7 @@ def main(argv: list[str] | None = None) -> int:
                 event_ref=args.event_ref,
                 event_sha=args.event_sha,
                 workflow_sha=args.workflow_sha,
+                admission_app_id=args.admission_app_id,
                 token=os.environ.get("GH_TOKEN", ""),
             )
             write_json(args.output, snapshot.as_dict())

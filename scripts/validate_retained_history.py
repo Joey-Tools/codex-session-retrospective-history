@@ -350,6 +350,7 @@ HISTORY_V2_GIT_TIMEOUT_SECONDS = 20.0
 HISTORY_V2_MAX_MERGE_PLAN_BYTES = 16 * 1024
 HISTORY_V2_MAX_COMMIT_BYTES = 64 * 1024
 HISTORY_V2_MAX_COMMIT_MESSAGE_BYTES = 16 * 1024
+HISTORY_V2_MAX_SQUASH_COMMIT_MESSAGE_BYTES = 257
 HISTORY_V2_MAX_COMMIT_SIGNATURE_BYTES = 16 * 1024
 HISTORY_V2_MAX_REACHABLE_BLOBS = 16 * 1024
 HISTORY_V2_MAX_REACHABLE_BLOB_BYTES = 64 * 1024 * 1024
@@ -4816,9 +4817,34 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         for method_name in method_names
     )
     static_byte_constructor_qualified_names = frozenset({"struct.pack"})
+    static_text_concatenation_qualified_names = frozenset(
+        {
+            "operator.add",
+            "operator.concat",
+            "operator.iadd",
+            "operator.iconcat",
+        }
+    )
+    static_text_repetition_qualified_names = frozenset(
+        {
+            "operator.imul",
+            "operator.irepeat",
+            "operator.mul",
+            "operator.repeat",
+        }
+    )
+    static_text_format_qualified_names = frozenset(
+        {"operator.imod", "operator.mod"}
+    )
+    static_text_operator_qualified_names = (
+        static_text_concatenation_qualified_names
+        | static_text_repetition_qualified_names
+        | static_text_format_qualified_names
+    )
     import_resolver_qualified_names = frozenset({"importlib.import_module"})
     tracked_static_import_modules = static_binary_decoder_modules | {
         "importlib",
+        "operator",
         "struct",
     }
 
@@ -5291,6 +5317,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             if qualified_name in (
                 static_binary_decoder_qualified_names
                 | static_byte_constructor_qualified_names
+                | static_text_operator_qualified_names
                 | import_resolver_qualified_names
             ):
                 static_callable_import_bindings.setdefault(key, []).append(
@@ -7246,22 +7273,27 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             else:
                 result = "".join(rendered_parts)
         elif isinstance(node, ast.Call):
-            callable_value = evaluate_binding_expression(node.func)
-            if any(
-                callable_value is constructor
-                for constructor in (bytearray, bytes, chr, range, str)
-            ):
-                result = evaluate_deterministic_text_builtin_call(
-                    node,
-                    callable_value,
-                    evaluate_binding_expression,
-                )
-            else:
-                result = evaluate_bound_string_method_call(
-                    node,
-                    callable_value,
-                    evaluate_binding_expression,
-                )
+            result = evaluate_static_text_operator_call(
+                node,
+                evaluate_binding_expression,
+            )
+            if result is not_pure:
+                callable_value = evaluate_binding_expression(node.func)
+                if any(
+                    callable_value is constructor
+                    for constructor in (bytearray, bytes, chr, range, str)
+                ):
+                    result = evaluate_deterministic_text_builtin_call(
+                        node,
+                        callable_value,
+                        evaluate_binding_expression,
+                    )
+                else:
+                    result = evaluate_bound_string_method_call(
+                        node,
+                        callable_value,
+                        evaluate_binding_expression,
+                    )
         if type(result) in {str, bytes} and not isinstance(
             node, (ast.Constant, ast.Name)
         ):
@@ -7696,6 +7728,83 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             static_import_builtin_names,
         )
 
+    def evaluate_static_text_operator_call(
+        node: ast.Call,
+        evaluate_node: Callable[[ast.AST], Any],
+    ) -> Any:
+        concatenates = has_static_callable_origin(
+            node.func,
+            static_text_concatenation_qualified_names,
+        )
+        if concatenates:
+            operation = "concatenate"
+        elif has_static_callable_origin(
+            node.func,
+            static_text_repetition_qualified_names,
+        ):
+            operation = "repeat"
+        elif has_static_callable_origin(
+            node.func,
+            static_text_format_qualified_names,
+        ):
+            operation = "format"
+        else:
+            return not_pure
+        if (
+            len(node.args) != 2
+            or any(isinstance(argument, ast.Starred) for argument in node.args)
+            or node.keywords
+        ):
+            return not_pure
+        left = evaluate_node(node.args[0])
+        right = evaluate_node(node.args[1])
+        if left is not_pure or right is not_pure:
+            return not_pure
+        if operation == "format":
+            if not isinstance(left, (str, bytes)):
+                return not_pure
+            return bootstrap_v2_python_percent_format(left, right)
+        if operation == "repeat":
+            if isinstance(left, (str, bytes)) and type(right) in {bool, int}:
+                text_value = left
+                multiplier = int(right)
+            elif type(left) in {bool, int} and isinstance(right, (str, bytes)):
+                text_value = right
+                multiplier = int(left)
+            elif isinstance(left, (str, bytes)) or isinstance(right, (str, bytes)):
+                raise ValueError(
+                    "Python static text operator uses an unsupported repeat type"
+                )
+            else:
+                return not_pure
+            repeated_size = bootstrap_v2_python_payload_size(text_value) * max(
+                multiplier,
+                0,
+            )
+            if repeated_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
+                raise ValueError(
+                    "Python static text operator exceeds the trusted byte limit"
+                )
+            return text_value * multiplier
+        if not isinstance(left, (str, bytes)) and not isinstance(
+            right, (str, bytes)
+        ):
+            return not_pure
+        if not isinstance(left, (str, bytes)) or not isinstance(
+            right, (str, bytes)
+        ):
+            raise ValueError(
+                "Python static text operator uses an unsupported literal type"
+            )
+        if type(left) is not type(right):
+            raise ValueError("Python static text operator mixes text and bytes")
+        combined_size = sum(
+            bootstrap_v2_python_payload_size(part) for part in (left, right)
+        )
+        if combined_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
+            raise ValueError("Python static text operator exceeds the trusted byte limit")
+        return left + right
+
     value_input_cache: dict[int, bool | None] = {}
 
     def value_has_static_decoder_input(value: Any) -> bool:
@@ -8111,6 +8220,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         if isinstance(node, ast.Call):
             is_supported_string_constructor = is_supported_string_constructor or bool(
                 bound_string_method_kinds(node.func)
+            ) or has_static_callable_origin(
+                node.func,
+                static_text_operator_qualified_names,
             )
             constructor = unshadowed_deterministic_text_builtin(node.func)
             if any(
@@ -8430,6 +8542,16 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             if result is not not_pure:
                 record_constructed_result(node, result)
             continue
+
+        if isinstance(node, ast.Call):
+            result = evaluate_static_text_operator_call(
+                node,
+                lambda child: evaluated.get(id(child), not_pure),
+            )
+            if result is not not_pure:
+                evaluated[id(node)] = result
+                record_constructed_result(node, result)
+                continue
 
         if isinstance(node, ast.Call) and unresolved_static_binary_decoder_call(node):
             raise ValueError(
@@ -12180,7 +12302,9 @@ def validate_history_v2_commit_message(
         or message.endswith(b"\n\n")
         or message == b"\n"
         or len(message) > (
-            256 if squash else HISTORY_V2_MAX_COMMIT_MESSAGE_BYTES
+            HISTORY_V2_MAX_SQUASH_COMMIT_MESSAGE_BYTES
+            if squash
+            else HISTORY_V2_MAX_COMMIT_MESSAGE_BYTES
         )
     ):
         raise ValueError(

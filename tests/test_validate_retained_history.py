@@ -5358,6 +5358,33 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 (tree_oid, (base,)),
             )
 
+            for subject_length in (255, 256):
+                subject = "A" * subject_length
+                message = subject.encode("ascii") + b"\n"
+                with self.subTest(subject_length=subject_length):
+                    self.assertEqual(
+                        MODULE.validate_history_v2_commit_message(
+                            message,
+                            squash=True,
+                        ),
+                        subject,
+                    )
+                    self.assertEqual(
+                        MODULE.validate_history_v2_commit_message(
+                            message,
+                            squash=False,
+                        ),
+                        subject,
+                    )
+            with self.assertRaisesRegex(
+                ValueError,
+                "squash commit message is not canonical",
+            ):
+                MODULE.validate_history_v2_commit_message(
+                    ("A" * 257).encode("ascii") + b"\n",
+                    squash=True,
+                )
+
             forbidden_messages = (
                 ("path", "Publish " + risky_local_path()),
                 ("secret", "Publish " + risky_secret_token()),
@@ -10667,6 +10694,68 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "import struct\n"
             "struct = custom_struct\n"
             f'value = struct.pack("{format_specifier}", {values}).decode("ascii")\n',
+        )
+        for source in accepted:
+            with self.subTest(source=source.splitlines()[-1][:56]):
+                self.assertEqual(
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                    [],
+                )
+
+    def test_bootstrap_v2_python_static_text_operators_are_scanned(self) -> None:
+        relative = Path("tests/test_retrospective_history_v2.py")
+        expected = risky_github_classic_token()
+        left, right = expected[:2], expected[2:]
+        rejected = tuple(
+            "import operator\n"
+            f"value = operator.{name}({left!r}, {right!r})\n"
+            for name in ("add", "concat", "iadd", "iconcat")
+        ) + tuple(
+            "import operator\n"
+            f"value = operator.add('ghp_', operator.{name}('a', 36))\n"
+            for name in ("imul", "irepeat", "mul", "repeat")
+        ) + tuple(
+            "import operator\n"
+            f"value = operator.{name}({'g%s_' + ('a' * 36)!r}, 'hp')\n"
+            for name in ("imod", "mod")
+        ) + (
+            "from operator import concat as reveal\n"
+            f"value = reveal({left!r}, {right!r})\n",
+            "import operator\n"
+            "reveal = operator.add\n"
+            f"value = reveal({left!r}, {right!r})\n",
+        )
+        for source in rejected:
+            with self.subTest(source=source.splitlines()[-1][:56]):
+                self.assertFalse(
+                    MODULE.contains_bootstrap_v2_privacy_risk_text(
+                        source,
+                        relative=relative,
+                    )
+                )
+                self.assertIn(
+                    expected,
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                )
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    write_bootstrap_v2_candidate(root)
+                    (root / relative).write_text(source, encoding="utf-8")
+
+                    issues = "\n".join(
+                        validate_synthetic_bootstrap_v2_candidate(root)
+                    )
+
+                self.assertIn(
+                    "infrastructure text contains raw/sensitive evidence",
+                    issues,
+                )
+
+        accepted = (
+            "import operator\nvalue = operator.add(prefix, suffix)\n",
+            "import operator\n"
+            "operator = custom_operator\n"
+            f"value = operator.add({left!r}, {right!r})\n",
         )
         for source in accepted:
             with self.subTest(source=source.splitlines()[-1][:56]):

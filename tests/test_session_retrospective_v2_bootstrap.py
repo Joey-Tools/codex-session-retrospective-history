@@ -662,6 +662,7 @@ def validate_pull(payload: dict) -> object:
 
 
 TEST_REPOSITORY = "Joey-Tools/codex-session-retrospective-history"
+TEST_ADMISSION_APP_ID = 424_242
 
 
 def merge_group_ref(number: int = 17) -> str:
@@ -826,7 +827,10 @@ def predecessor_audit_payloads(
     }
 
 
-def active_branch_rules_payload() -> list[dict]:
+def active_branch_rules_payload(
+    *,
+    admission_app_id: int = TEST_ADMISSION_APP_ID,
+) -> list[dict]:
     return [
         {"type": "deletion"},
         {
@@ -856,7 +860,7 @@ def active_branch_rules_payload() -> list[dict]:
                 "required_status_checks": [
                     {
                         "context": CI_MODULE.REQUIRED_CHECK_CONTEXT,
-                        "integration_id": CI_MODULE.GITHUB_ACTIONS_APP_ID,
+                        "integration_id": admission_app_id,
                     }
                 ],
             },
@@ -864,7 +868,10 @@ def active_branch_rules_payload() -> list[dict]:
     ]
 
 
-def branch_protection_payload() -> dict:
+def branch_protection_payload(
+    *,
+    admission_app_id: int = TEST_ADMISSION_APP_ID,
+) -> dict:
     return {
         "required_status_checks": {
             "strict": True,
@@ -872,7 +879,7 @@ def branch_protection_payload() -> dict:
             "checks": [
                 {
                     "context": CI_MODULE.REQUIRED_CHECK_CONTEXT,
-                    "app_id": CI_MODULE.GITHUB_ACTIONS_APP_ID,
+                    "app_id": admission_app_id,
                 }
             ],
         },
@@ -1538,6 +1545,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("must not handle `merge_group` events", readme)
         self.assertIn("an external admission service must be installed", readme)
+        self.assertIn("merge-group-snapshot --admission-app-id", readme)
+        self.assertIn("GitHub Actions App is\nexplicitly ineligible", readme)
         self.assertIn("Until that producer is proven, cutover is blocked", readme)
 
         workflow_text = "\n".join(
@@ -1611,8 +1620,27 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             ruleset_summaries=[],
             ruleset_details=[],
             repository=TEST_REPOSITORY,
+            admission_app_id=TEST_ADMISSION_APP_ID,
         )
         self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+        with self.assertRaisesRegex(
+            CI_MODULE.GateError,
+            "must not be GitHub Actions",
+        ):
+            CI_MODULE.validate_trusted_branch_configuration(
+                repository_payload=repository_configuration_payload(),
+                active_rules_payload=active_branch_rules_payload(
+                    admission_app_id=CI_MODULE.GITHUB_ACTIONS_APP_ID,
+                ),
+                protection_payload=branch_protection_payload(
+                    admission_app_id=CI_MODULE.GITHUB_ACTIONS_APP_ID,
+                ),
+                ruleset_summaries=[],
+                ruleset_details=[],
+                repository=TEST_REPOSITORY,
+                admission_app_id=CI_MODULE.GITHUB_ACTIONS_APP_ID,
+            )
 
         cases = []
         repository = repository_configuration_payload()
@@ -1660,7 +1688,22 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     ruleset_summaries=summaries,
                     ruleset_details=details,
                     repository=TEST_REPOSITORY,
+                    admission_app_id=TEST_ADMISSION_APP_ID,
                 )
+
+        with self.assertRaisesRegex(
+            CI_MODULE.GateError,
+            "required status check is not current-Q bound",
+        ):
+            CI_MODULE.validate_trusted_branch_configuration(
+                repository_payload=repository_configuration_payload(),
+                active_rules_payload=active_branch_rules_payload(),
+                protection_payload=branch_protection_payload(),
+                ruleset_summaries=[],
+                ruleset_details=[],
+                repository=TEST_REPOSITORY,
+                admission_app_id=TEST_ADMISSION_APP_ID + 1,
+            )
 
     def test_merge_group_event_proves_exact_single_pr_queue_coordinates(self) -> None:
         base = "b" * 40
@@ -1836,6 +1879,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     event_ref=merge_group_ref(),
                     event_sha="c" * 40,
                     workflow_sha="c" * 40,
+                    admission_app_id=TEST_ADMISSION_APP_ID,
                     token="read-only",
                 )
 
