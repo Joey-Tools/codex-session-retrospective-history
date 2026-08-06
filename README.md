@@ -54,3 +54,17 @@ Before committing retained artifacts, run:
 ```bash
 python scripts/validate_retained_history.py --root .
 ```
+
+## V2 Admission Boundary
+
+The repository-owned `pull_request_target` workflow provides baseline-owned
+candidate feedback only. It must not handle `merge_group` events or authorize a
+queue SHA: candidate repository code cannot be the authority that admits its
+own formal-history mutation.
+
+Before branch policy enables the v2 merge queue and its `Trusted history gate`
+required check, an external admission service must be installed. That service
+validates the exact queue SHA from independently trusted code, publishes the
+queue check through its bound GitHub App identity, and performs the history
+authority compare-and-swap. Until that producer is proven, cutover is blocked
+and the existing branch rules remain unchanged.

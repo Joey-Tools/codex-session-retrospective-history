@@ -4815,8 +4815,12 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         for module_name, method_names in static_binary_decoder_methods_by_module.items()
         for method_name in method_names
     )
+    static_byte_constructor_qualified_names = frozenset({"struct.pack"})
     import_resolver_qualified_names = frozenset({"importlib.import_module"})
-    tracked_static_import_modules = static_binary_decoder_modules | {"importlib"}
+    tracked_static_import_modules = static_binary_decoder_modules | {
+        "importlib",
+        "struct",
+    }
 
     def normalized_literal_slice(node: ast.AST) -> slice | None:
         if not isinstance(node, ast.Slice):
@@ -5285,7 +5289,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     (id(alias), qualified_name)
                 )
             if qualified_name in (
-                static_binary_decoder_qualified_names | import_resolver_qualified_names
+                static_binary_decoder_qualified_names
+                | static_byte_constructor_qualified_names
+                | import_resolver_qualified_names
             ):
                 static_callable_import_bindings.setdefault(key, []).append(
                     (id(alias), qualified_name)
@@ -7343,7 +7349,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     def static_input_origin(node, receiver):
         pending = [node]
         observed = set()
-        direct = expression_is_closed_static_value if receiver else direct_static_input
+        direct = static_receiver_input if receiver else direct_static_input
         while pending:
             charge()
             current = pending.pop()
@@ -7726,6 +7732,24 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     result = True
                     break
         return result
+
+    def static_receiver_input(node: ast.AST) -> bool:
+        if expression_is_closed_static_value(node):
+            return True
+        if not isinstance(node, ast.Call) or not has_static_callable_origin(
+            node.func,
+            static_byte_constructor_qualified_names,
+        ):
+            return False
+        sources = tuple(
+            argument.value if isinstance(argument, ast.Starred) else argument
+            for argument in node.args
+        ) + tuple(keyword.value for keyword in node.keywords)
+        return bool(sources) and all(
+            evaluate_binding_expression(source) is not not_pure
+            or expression_is_closed_static_value(source)
+            for source in sources
+        )
 
     def has_static_decoder_input(node: ast.AST) -> bool:
         return static_input_origin(node, False)

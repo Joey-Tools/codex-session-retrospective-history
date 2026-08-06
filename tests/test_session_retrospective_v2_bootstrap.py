@@ -1535,6 +1535,11 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     any(value == "write" for value in job["permissions"].values())
                 )
 
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("must not handle `merge_group` events", readme)
+        self.assertIn("an external admission service must be installed", readme)
+        self.assertIn("Until that producer is proven, cutover is blocked", readme)
+
         workflow_text = "\n".join(
             (
                 WORKFLOW.read_text(encoding="utf-8"),

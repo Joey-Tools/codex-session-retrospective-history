@@ -10641,6 +10641,40 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             [],
         )
 
+    def test_bootstrap_v2_python_static_byte_constructors_fail_closed(self) -> None:
+        expected = risky_github_classic_token()
+        values = ", ".join(str(ord(character)) for character in expected)
+        format_specifier = f"{len(expected)}B"
+        rejected = (
+            "import struct\n"
+            f'value = struct.pack("{format_specifier}", {values}).decode("ascii")\n',
+            "from struct import pack as reveal\n"
+            f'value = reveal("{format_specifier}", {values}).decode("ascii")\n',
+            "import struct\n"
+            "reveal = struct.pack\n"
+            f'payload = reveal("{format_specifier}", {values})\n'
+            'value = payload.decode("ascii")\n',
+        )
+        for source in rejected:
+            with self.subTest(source=source.splitlines()[-1][:56]):
+                self.assert_python_privacy_layers_reject(
+                    source,
+                    "unresolved bound string method",
+                )
+
+        accepted = (
+            'import struct\nvalue = struct.pack(format_string, *values).decode("ascii")\n',
+            "import struct\n"
+            "struct = custom_struct\n"
+            f'value = struct.pack("{format_specifier}", {values}).decode("ascii")\n',
+        )
+        for source in accepted:
+            with self.subTest(source=source.splitlines()[-1][:56]):
+                self.assertEqual(
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                    [],
+                )
+
     def test_bootstrap_v2_python_static_constructor_arithmetic_fails_closed(
         self,
     ) -> None:
