@@ -631,12 +631,18 @@ def pull_payload(*, base_sha: str = "b" * 40, head_sha: str = "a" * 40) -> dict:
         "base": {
             "ref": "master",
             "sha": base_sha,
-            "repo": {"full_name": "Joey-Tools/codex-session-retrospective-history"},
+            "repo": {
+                "full_name": "Joey-Tools/codex-session-retrospective-history",
+                "id": TEST_REPOSITORY_ID,
+            },
         },
         "head": {
             "ref": "wip/session-retrospective-v2-history-bootstrap",
             "sha": head_sha,
-            "repo": {"full_name": "Joey-Tools/codex-session-retrospective-history"},
+            "repo": {
+                "full_name": "Joey-Tools/codex-session-retrospective-history",
+                "id": TEST_REPOSITORY_ID,
+            },
         },
     }
 
@@ -656,6 +662,7 @@ def validate_pull(payload: dict) -> object:
 
 
 TEST_REPOSITORY = "Joey-Tools/codex-session-retrospective-history"
+TEST_REPOSITORY_ID = 1_246_526_548
 TEST_ADMISSION_APP_ID = 424_242
 
 
@@ -671,7 +678,10 @@ def merge_group_event_payload(
 ) -> dict:
     return {
         "action": "checks_requested",
-        "repository": {"full_name": TEST_REPOSITORY},
+        "repository": {
+            "full_name": TEST_REPOSITORY,
+            "id": TEST_REPOSITORY_ID,
+        },
         "merge_group": {
             "base_ref": "refs/heads/master",
             "base_sha": base_sha,
@@ -697,6 +707,7 @@ def merge_group_pull_payload(
 def repository_configuration_payload() -> dict:
     return {
         "full_name": TEST_REPOSITORY,
+        "id": TEST_REPOSITORY_ID,
         "default_branch": "master",
         "allow_squash_merge": True,
         "allow_merge_commit": False,
@@ -815,6 +826,329 @@ def predecessor_audit_payloads(
     }
 
 
+def synthetic_merge_group_projection(
+    snapshot: object,
+    *,
+    policy: str = "history-v2",
+    role: str = "publication",
+    candidate_tree_sha: str = "1" * 40,
+    queue_tree_sha: str = "2" * 40,
+) -> object:
+    return CI_MODULE.MergeGroupProjection(
+        policy=policy,
+        role=role,
+        candidate_base_sha=snapshot.base_sha,
+        queue_base_sha=snapshot.base_sha,
+        candidate_sha=snapshot.candidate_sha,
+        queue_sha=snapshot.queue_sha,
+        candidate_tree_sha=candidate_tree_sha,
+        queue_tree_sha=queue_tree_sha,
+        prospective_sha="3" * 40,
+        prospective_tree_sha=queue_tree_sha,
+        squash_subject="Publish retained history",
+        trust_generation="7" * 64,
+        changed_path_count=1,
+        delta_sha256="4" * 64,
+    )
+
+
+def synthetic_predecessor_audit(
+    *,
+    base_sha: str,
+    parent_sha: str,
+) -> object:
+    values = {
+        "base_sha": base_sha,
+        "parent_sha": parent_sha,
+        "pull_request_number": 16,
+        "pull_request_node_id": "PR_kwDO_predecessor",
+        "candidate_sha": "d" * 40,
+        "merged_at": "2026-07-15T00:00:00Z",
+        "check_run_id": 501,
+        "check_run_node_id": "CR_kwDO_predecessor",
+        "check_suite_id": 601,
+        "workflow_run_id": 701,
+        "workflow_id": 901,
+        "workflow_run_attempt": 1,
+        "job_id": 801,
+        "workflow_created_at": "2026-07-15T00:01:00Z",
+        "workflow_started_at": "2026-07-15T00:02:00Z",
+        "workflow_updated_at": "2026-07-15T00:05:00Z",
+        "started_at": "2026-07-15T00:02:00Z",
+        "completed_at": "2026-07-15T00:04:00Z",
+        "job_started_at": "2026-07-15T00:02:30Z",
+        "job_completed_at": "2026-07-15T00:03:30Z",
+        "sha256": "0" * 64,
+    }
+    evidence = CI_MODULE.PredecessorAuditEvidence(**values)
+    values["sha256"] = hashlib.sha256(
+        CI_MODULE.compact_json_bytes(
+            CI_MODULE._predecessor_audit_normalized_payload(evidence)
+        )
+    ).hexdigest()
+    return CI_MODULE.PredecessorAuditEvidence(**values)
+
+
+def synthetic_admission_check_evidence(
+    *,
+    check_name: str,
+    head_sha: str,
+    check_run_id: int,
+    check_suite_id: int,
+    node_id: str,
+    started_at: str,
+    completed_at: str,
+    admission_sha256: str,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "kind": CI_MODULE.DEFAULT_ADMISSION_CHECK_KIND,
+        "check_name": check_name,
+        "check_run_id": check_run_id,
+        "check_run_node_id": node_id,
+        "check_suite_id": check_suite_id,
+        "head_sha": head_sha,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "external_id": (
+            CI_MODULE.ADMISSION_RECORD_EXTERNAL_ID_PREFIX + admission_sha256
+        ),
+        "output_title": CI_MODULE.ADMISSION_RECORD_OUTPUT_TITLE,
+        "output_summary": (
+            CI_MODULE.ADMISSION_RECORD_OUTPUT_SUMMARY_PREFIX + admission_sha256
+        ),
+        "admission_sha256": admission_sha256,
+    }
+
+
+def synthetic_external_admission(
+    *,
+    repository: str,
+    repository_id: int,
+    base_sha: str,
+    head_sha: str,
+    candidate_sha: str,
+    candidate_tree_sha: str,
+    queue_tree_sha: str,
+    pull_request_number: int,
+    pull_request_node_id: str,
+    pull_request_title: str,
+    admission_app_id: int = TEST_ADMISSION_APP_ID,
+) -> dict[str, object]:
+    snapshot = CI_MODULE.MergeGroupSnapshot(
+        repository=repository,
+        repository_id=repository_id,
+        base_ref="refs/heads/master",
+        base_sha=base_sha,
+        queue_ref=merge_group_ref(pull_request_number),
+        queue_sha="c" * len(base_sha),
+        workflow_sha="c" * len(base_sha),
+        pull_request_number=pull_request_number,
+        pull_request_node_id=pull_request_node_id,
+        pull_request_title=pull_request_title,
+        candidate_ref="wip/session-retrospective-v2-history",
+        candidate_sha=candidate_sha,
+        required_check=CI_MODULE.REQUIRED_CHECK_CONTEXT,
+        tcb_sha256="d" * 64,
+    )
+    projection = synthetic_merge_group_projection(
+        snapshot,
+        candidate_tree_sha=candidate_tree_sha,
+        queue_tree_sha=queue_tree_sha,
+    )
+    runtime = CI_MODULE.MergeGroupRuntimeEvidence(
+        policy="history-v2",
+        queue_base_sha=base_sha,
+        candidate_sha=candidate_sha,
+        queue_sha=snapshot.queue_sha,
+        queue_tree_sha=queue_tree_sha,
+        prospective_sha=projection.prospective_sha,
+        prospective_tree_sha=queue_tree_sha,
+        projection_sha256=CI_MODULE.merge_group_projection_sha256(projection),
+        python_version=CI_MODULE.QUEUE_RUNTIME_PYTHON_VERSION,
+        python_executable_sha256="5" * 64,
+        requirements_sha256="6" * 64,
+        runtime_profile=CI_MODULE.QUEUE_RUNTIME_PROFILE,
+        compile_command_sha256=CI_MODULE.QUEUE_RUNTIME_COMPILE_COMMAND_SHA256,
+        test_command_sha256=CI_MODULE.QUEUE_RUNTIME_TEST_COMMAND_SHA256,
+        compile_exit_code=0,
+        test_exit_code=0,
+        authority_uid=501,
+        execution_uid=65534,
+        credential_environment="empty",
+        authority_write_access=False,
+        source_authority_pristine=True,
+    )
+    audit = synthetic_predecessor_audit(
+        base_sha=base_sha,
+        parent_sha="9" * len(base_sha),
+    )
+    predecessor = CI_MODULE.MergeGroupPredecessorAuthorityEvidence(
+        mode="history-v2-required",
+        base_sha=base_sha,
+        queue_sha=snapshot.queue_sha,
+        pull_request_number=pull_request_number,
+        projection_sha256=CI_MODULE.merge_group_projection_sha256(projection),
+        parent_sha=audit.parent_sha,
+        audit=audit,
+        candidate_ref=None,
+        bootstrap_markers=(),
+        bootstrap_marker_sha256=None,
+    )
+    observed_at = dt.datetime(2026, 7, 15, 0, 0, tzinfo=dt.timezone.utc)
+    live = CI_MODULE.MergeGroupLiveAuthorityEvidence(
+        snapshot_sha256=hashlib.sha256(
+            CI_MODULE.compact_json_bytes(snapshot.as_dict())
+        ).hexdigest(),
+        tcb_sha256=snapshot.tcb_sha256,
+        predecessor_authority=predecessor,
+        predecessor_authority_sha256=hashlib.sha256(
+            CI_MODULE.compact_json_bytes(predecessor.as_dict())
+        ).hexdigest(),
+        observed_at=observed_at.isoformat().replace("+00:00", "Z"),
+        valid_until=(observed_at + dt.timedelta(seconds=30))
+        .isoformat()
+        .replace("+00:00", "Z"),
+    )
+    admission = CI_MODULE.merge_group_admission_payload(
+        snapshot=snapshot,
+        projection=projection,
+        evidence=runtime,
+        live_authority=live,
+    )
+    admission_sha256 = hashlib.sha256(
+        CI_MODULE.compact_json_bytes(admission)
+    ).hexdigest()
+    merged_at = "2026-07-15T00:00:20Z"
+    title_sha256 = hashlib.sha256(pull_request_title.encode("utf-8")).hexdigest()
+    node_sha256 = hashlib.sha256(pull_request_node_id.encode("utf-8")).hexdigest()
+    candidate_ref = "wip/session-retrospective-v2-history"
+    provenance = {
+        "authority_mode": "history-v2-admission",
+        "base_ref": "master",
+        "base_repository": repository,
+        "base_repository_id": repository_id,
+        "base_sha": base_sha,
+        "head_repository": repository,
+        "head_repository_id": repository_id,
+        "head_ref": candidate_ref,
+        "candidate_sha": candidate_sha,
+        "merge_commit_sha": head_sha,
+        "merged_at": merged_at,
+        "node_identity_sha256": node_sha256,
+        "number": pull_request_number,
+        "squash_merge_commit_message": "BLANK",
+        "squash_merge_commit_title": "PR_TITLE",
+        "title_sha256": title_sha256,
+    }
+    return {
+        "schema_version": 1,
+        "kind": CI_MODULE.DEFAULT_CANDIDATE_EVIDENCE_KIND,
+        "authority_mode": "history-v2-admission",
+        "repository": repository,
+        "repository_id": repository_id,
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "pull_request_number": pull_request_number,
+        "candidate_ref": candidate_ref,
+        "candidate_sha": candidate_sha,
+        "pull_request_title_sha256": title_sha256,
+        "pull_request_node_identity_sha256": node_sha256,
+        "repository_identity_sha256": hashlib.sha256(
+            f"{repository_id}:{repository}".encode("utf-8")
+        ).hexdigest(),
+        "pull_request_provenance_sha256": hashlib.sha256(
+            json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest(),
+        "pull_request_merged_at": merged_at,
+        "admission_binding": {
+            "schema_version": 1,
+            "kind": CI_MODULE.POST_MERGE_ADMISSION_BINDING_KIND,
+            "app": {
+                "id": admission_app_id,
+                "slug": CI_MODULE.ADMISSION_RECORD_APP_SLUG,
+            },
+            "admission_sha256": admission_sha256,
+            "admission": admission,
+            "candidate_record_check": synthetic_admission_check_evidence(
+                check_name=CI_MODULE.ADMISSION_RECORD_CHECK_CONTEXT,
+                head_sha=candidate_sha,
+                check_run_id=701,
+                check_suite_id=702,
+                node_id="CR_kwDO_admission_candidate",
+                started_at="2026-07-15T00:00:05Z",
+                completed_at="2026-07-15T00:00:10Z",
+                admission_sha256=admission_sha256,
+            ),
+            "queue_gate_check": synthetic_admission_check_evidence(
+                check_name=CI_MODULE.REQUIRED_CHECK_CONTEXT,
+                head_sha=snapshot.queue_sha,
+                check_run_id=703,
+                check_suite_id=704,
+                node_id="CR_kwDO_admission_queue",
+                started_at="2026-07-15T00:00:11Z",
+                completed_at="2026-07-15T00:00:15Z",
+                admission_sha256=admission_sha256,
+            ),
+        },
+        "squash_merge_commit_title": "PR_TITLE",
+        "squash_merge_commit_message": "BLANK",
+    }
+
+
+def rebind_synthetic_external_admission(evidence: dict[str, object]) -> None:
+    binding = evidence["admission_binding"]
+    assert isinstance(binding, dict)
+    admission = binding["admission"]
+    assert isinstance(admission, dict)
+    snapshot = admission["snapshot"]
+    projection = admission["projection"]
+    runtime = admission["runtime_evidence"]
+    live = admission["live_authority"]
+    assert all(
+        isinstance(value, dict) for value in (snapshot, projection, runtime, live)
+    )
+    predecessor = live["predecessor_authority"]
+    assert isinstance(predecessor, dict)
+    projection_sha256 = hashlib.sha256(
+        CI_MODULE.compact_json_bytes(projection)
+    ).hexdigest()
+    runtime["projection_sha256"] = projection_sha256
+    predecessor["projection_sha256"] = projection_sha256
+    predecessor_sha256 = hashlib.sha256(
+        CI_MODULE.compact_json_bytes(predecessor)
+    ).hexdigest()
+    live["snapshot_sha256"] = hashlib.sha256(
+        CI_MODULE.compact_json_bytes(snapshot)
+    ).hexdigest()
+    live["predecessor_authority_sha256"] = predecessor_sha256
+    admission["snapshot_sha256"] = live["snapshot_sha256"]
+    admission["projection_sha256"] = projection_sha256
+    admission["runtime_evidence_sha256"] = hashlib.sha256(
+        CI_MODULE.compact_json_bytes(runtime)
+    ).hexdigest()
+    admission["predecessor_authority_sha256"] = predecessor_sha256
+    admission["live_authority_sha256"] = hashlib.sha256(
+        CI_MODULE.compact_json_bytes(live)
+    ).hexdigest()
+    admission_sha256 = hashlib.sha256(
+        CI_MODULE.compact_json_bytes(admission)
+    ).hexdigest()
+    binding["admission_sha256"] = admission_sha256
+    for key in ("candidate_record_check", "queue_gate_check"):
+        check = binding[key]
+        assert isinstance(check, dict)
+        check["external_id"] = (
+            CI_MODULE.ADMISSION_RECORD_EXTERNAL_ID_PREFIX + admission_sha256
+        )
+        check["output_summary"] = (
+            CI_MODULE.ADMISSION_RECORD_OUTPUT_SUMMARY_PREFIX + admission_sha256
+        )
+        check["admission_sha256"] = admission_sha256
+
+
 def active_branch_rules_payload(
     *,
     admission_app_id: int = TEST_ADMISSION_APP_ID,
@@ -825,6 +1159,7 @@ def active_branch_rules_payload(
             "type": "merge_queue",
             "parameters": {
                 "merge_method": "SQUASH",
+                "max_entries_to_build": 1,
                 "max_entries_to_merge": 1,
                 "min_entries_to_merge": 1,
             },
@@ -964,6 +1299,11 @@ class MergeGroupGraph:
             self.git_dir,
             self.base,
         )
+        candidate_delta = CI_MODULE._exact_tree_delta(
+            self.git_dir,
+            self.base,
+            candidate,
+        )
         return {
             "schema_version": 1,
             "base_oid": self.base,
@@ -978,6 +1318,10 @@ class MergeGroupGraph:
                 CI_MODULE.compact_json_bytes(entries)
             ).hexdigest(),
             "role": role,
+            "changed_path_count": len(candidate_delta),
+            "delta_sha256": hashlib.sha256(
+                CI_MODULE.compact_json_bytes(candidate_delta)
+            ).hexdigest(),
         }
 
     def snapshot(
@@ -990,6 +1334,7 @@ class MergeGroupGraph:
     ) -> object:
         return CI_MODULE.MergeGroupSnapshot(
             repository=TEST_REPOSITORY,
+            repository_id=TEST_REPOSITORY_ID,
             base_ref="refs/heads/master",
             base_sha=queue_base,
             queue_ref=merge_group_ref(),
@@ -1006,6 +1351,22 @@ class MergeGroupGraph:
 
 
 class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
+    def setUp(self) -> None:
+        app_pin = mock.patch.object(
+            CI_MODULE,
+            "ADMISSION_RECORD_APP_ID",
+            TEST_ADMISSION_APP_ID,
+        )
+        app_pin.start()
+        self.addCleanup(app_pin.stop)
+        validator_app_pin = mock.patch.object(
+            VALIDATOR_MODULE,
+            "HISTORY_V2_ADMISSION_RECORD_APP_ID",
+            TEST_ADMISSION_APP_ID,
+        )
+        validator_app_pin.start()
+        self.addCleanup(validator_app_pin.stop)
+
     def test_workflow_policy_is_duplicate_key_safe_and_exact(self) -> None:
         workflow_text = WORKFLOW.read_text(encoding="utf-8")
         workflow = load_workflow()
@@ -1103,7 +1464,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         )
         self.assertEqual(
             audit["permissions"],
-            {"contents": "read", "pull-requests": "read"},
+            {"checks": "read", "contents": "read", "pull-requests": "read"},
         )
         self.assertEqual(audit["name"], "Post-merge default audit")
         self.assertEqual(audit["timeout-minutes"], 45)
@@ -1115,6 +1476,11 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             audit["env"]["TRUSTED_BASELINE_ROOT"],
             "${{ github.workspace }}/trusted-default",
         )
+        self.assertEqual(
+            audit["env"]["ADMITTED_CANDIDATE_ROOT"],
+            "${{ github.workspace }}/admitted-candidate",
+        )
+        self.assertNotIn("ADMISSION_APP_ID", audit["env"])
         self.assertEqual(
             audit["env"]["EVENT_REPOSITORY_ID"],
             "${{ github.repository_id }}",
@@ -1161,6 +1527,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             "Checkout exact default S",
             "Checkout exact trusted B0",
             "Bind trusted control Python",
+            "Resolve exact admitted candidate H",
+            "Checkout exact admitted candidate H",
             "Verify exact GitHub squash commit",
             "Detect invalid S tree or transaction",
             "Remove temporary provider receipt",
@@ -1181,6 +1549,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
                 "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
                 "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
+                "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
             ],
         )
         self.assertFalse(any(step["uses"].startswith("./") for step in action_steps))
@@ -1195,6 +1564,21 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             control_binding,
         )
         self.assertIn('[ "$control_version" != "Python 3.13.12" ]', control_binding)
+        resolver = audit_steps["Resolve exact admitted candidate H"]
+        self.assertEqual(resolver["env"], {"GH_TOKEN": "${{ github.token }}"})
+        self.assertIn("resolve-default-admitted-candidate", resolver["run"])
+        self.assertIn(
+            '--trusted-base-root "$TRUSTED_BASELINE_ROOT"',
+            resolver["run"],
+        )
+        self.assertNotIn("--admission-app-id", resolver["run"])
+        candidate_checkout = audit_steps["Checkout exact admitted candidate H"]
+        self.assertEqual(candidate_checkout["with"]["path"], "admitted-candidate")
+        self.assertEqual(candidate_checkout["with"]["fetch-depth"], 65)
+        self.assertEqual(
+            candidate_checkout["with"]["ref"],
+            "${{ steps.resolve-admitted-candidate.outputs.candidate-sha }}",
+        )
         verification = audit_steps["Verify exact GitHub squash commit"]
         self.assertEqual(verification["env"], {"GH_TOKEN": "${{ github.token }}"})
         token_steps = [
@@ -1202,7 +1586,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             for step in audit["steps"]
             if {"GH_TOKEN", "GITHUB_TOKEN"} & set(step.get("env", {}))
         ]
-        self.assertEqual(token_steps, [verification])
+        self.assertEqual(token_steps, [resolver, verification])
         self.assertIn("verify-default-github-commit", verification["run"])
         self.assertIn("/usr/bin/env -i", verification["run"])
         self.assertIn('"$CONTROL_PYTHON" -I -B', verification["run"])
@@ -1225,6 +1609,15 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertIn('--repository-id "$EVENT_REPOSITORY_ID"', verification["run"])
         self.assertIn('--base-sha "$EVENT_BEFORE_SHA"', verification["run"])
         self.assertIn('--head-sha "$GITHUB_SHA"', verification["run"])
+        self.assertIn(
+            '--trusted-base-root "$TRUSTED_BASELINE_ROOT"',
+            verification["run"],
+        )
+        self.assertNotIn("--candidate-root", verification["run"])
+        self.assertIn(
+            '--initial-candidate-evidence "$INITIAL_CANDIDATE_EVIDENCE"',
+            verification["run"],
+        )
         self.assertIn("timeout --signal=TERM --kill-after=5s", verification["run"])
         detector_gate = audit_steps["Detect invalid S tree or transaction"]["run"]
         self.assertIn(
@@ -1232,6 +1625,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             detector_gate,
         )
         self.assertIn('--root "$DEFAULT_AUTHORITY_ROOT"', detector_gate)
+        self.assertIn('--base-root "$TRUSTED_BASELINE_ROOT"', detector_gate)
+        self.assertIn('--candidate-root "$ADMITTED_CANDIDATE_ROOT"', detector_gate)
         self.assertIn('--repository "$GITHUB_REPOSITORY"', detector_gate)
         self.assertIn('--repository-id "$EVENT_REPOSITORY_ID"', detector_gate)
         self.assertIn(
@@ -1265,6 +1660,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         cleanup = audit_steps["Remove temporary provider receipt"]
         self.assertEqual(cleanup["if"], "${{ always() }}")
         self.assertIn("github-commit-receipt.json", cleanup["run"])
+        self.assertIn("initial-candidate-evidence.json", cleanup["run"])
         self.assertIn("rm -f --", cleanup["run"])
         self.assertLess(
             step_names.index("Remove temporary provider receipt"),
@@ -1284,7 +1680,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertIn("does not prevent that write", detector)
         self.assertIn("never authorizes mutation", detector)
 
-    def test_default_github_commit_receipt_binds_exact_provider_payload(self) -> None:
+    def _legacy_provider_receipt_v2_reference(self) -> None:
         repository = "Joey-Tools/codex-session-retrospective-history"
         repository_id = 1_246_526_548
         pull_number = 4
@@ -1453,6 +1849,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 key: receipt[key]
                 for key in (
                     "pull_request_number",
+                    "candidate_ref",
                     "pull_request_title_sha256",
                     "pull_request_node_identity_sha256",
                     "repository_identity_sha256",
@@ -1902,6 +2299,523 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     base_sha=base,
                     head_sha=head,
                     token="synthetic-read-token",
+                )
+
+    def test_default_github_commit_receipt_binds_admitted_candidate_and_projection(
+        self,
+    ) -> None:
+        repository = TEST_REPOSITORY
+        repository_id = 1_246_526_548
+        pull_number = 4
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "repo"
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+            configure_git(root)
+            (root / "payload.txt").write_text("base\n", encoding="utf-8")
+            base = commit_all(root, "provider receipt base")
+            tree_oid = git(root, "rev-parse", f"{base}^{{tree}}")
+            head = fixture_raw_commit(
+                root,
+                tree_oid=tree_oid,
+                parents=(base,),
+                message=f"Publish retained history (#{pull_number})",
+                author=VALIDATOR_MODULE.HISTORY_V2_CANONICAL_IDENTITY,
+                committer="GitHub <noreply@github.com>",
+                author_timezone="+0100",
+                committer_timezone="+0100",
+                message_trailing_newline=False,
+                signature_trailing_blank_continuation=True,
+            )
+            parsed = VALIDATOR_MODULE.parse_history_v2_github_squash_commit(
+                fixture_commit_bytes(root, head),
+                expected_oid=head,
+            )
+            commit_date = CI_MODULE.dt.datetime.fromtimestamp(
+                FIXTURE_TIMESTAMP,
+                tz=CI_MODULE.dt.timezone.utc,
+            )
+            date_text = commit_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            api_payload = {
+                "sha": head,
+                "parents": [{"sha": base}],
+                "author": {"login": "SyntheticMaintainer"},
+                "committer": {"login": "web-flow"},
+                "commit": {
+                    "tree": {"sha": tree_oid},
+                    "author": {"date": date_text},
+                    "committer": {"date": date_text},
+                    "verification": {
+                        "verified": True,
+                        "reason": "valid",
+                        "signature": parsed.signature_armor.decode("ascii"),
+                        "payload": parsed.signed_payload.decode("utf-8"),
+                        "verified_at": date_text,
+                    },
+                },
+            }
+            candidate_sha = "d" * len(head)
+            external = synthetic_external_admission(
+                repository=repository,
+                repository_id=repository_id,
+                base_sha=base,
+                head_sha=head,
+                candidate_sha=candidate_sha,
+                candidate_tree_sha="e" * len(head),
+                queue_tree_sha=tree_oid,
+                pull_request_number=pull_number,
+                pull_request_node_id="PR_kwDOSyntheticReceipt",
+                pull_request_title="Publish retained history",
+            )
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "resolve_default_candidate_evidence",
+                    return_value=external,
+                ) as resolver,
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    return_value=api_payload,
+                ),
+            ):
+                receipt = CI_MODULE.verify_default_github_commit(
+                    repository=repository,
+                    repository_id=repository_id,
+                    git_dir=root / ".git",
+                    trusted_base_root=root,
+                    base_sha=base,
+                    head_sha=head,
+                    initial_candidate_evidence=external,
+                    token="synthetic-read-token",
+                )
+            self.assertEqual(resolver.call_count, 2)
+            self.assertEqual(receipt["schema_version"], 3)
+            self.assertEqual(receipt["candidate_sha"], candidate_sha)
+            self.assertEqual(receipt["candidate_evidence"], external)
+            self.assertEqual(
+                receipt["candidate_evidence_sha256"],
+                hashlib.sha256(CI_MODULE.compact_json_bytes(external)).hexdigest(),
+            )
+            self.assertEqual(receipt["tree_sha"], tree_oid)
+            with mock.patch.object(
+                VALIDATOR_MODULE,
+                "validate_history_v2_candidate_reproof",
+                return_value=("history-v2", "publication"),
+            ) as candidate_reproof:
+                self.assertEqual(
+                    VALIDATOR_MODULE.validate_history_v2_github_squash_receipt(
+                        receipt,
+                        commit=parsed,
+                        repository=repository,
+                        repository_id=repository_id,
+                        before_rev=base,
+                        head_rev=head,
+                        base_root=root,
+                        candidate_root=root,
+                    ),
+                    ("history-v2", "publication"),
+                )
+            candidate_reproof.assert_called_once()
+
+            for label, mutate in (
+                (
+                    "signed payload",
+                    lambda value: value["commit"]["verification"].__setitem__(
+                        "payload",
+                        "mismatch",
+                    ),
+                ),
+                (
+                    "provider",
+                    lambda value: value["committer"].__setitem__(
+                        "login",
+                        "not-web-flow",
+                    ),
+                ),
+            ):
+                changed_payload = copy.deepcopy(api_payload)
+                mutate(changed_payload)
+                with (
+                    self.subTest(label=label),
+                    mock.patch.object(
+                        CI_MODULE,
+                        "resolve_default_candidate_evidence",
+                        return_value=external,
+                    ),
+                    mock.patch.object(
+                        CI_MODULE,
+                        "github_json",
+                        return_value=changed_payload,
+                    ),
+                    self.assertRaises(CI_MODULE.GateError),
+                ):
+                    CI_MODULE.verify_default_github_commit(
+                        repository=repository,
+                        repository_id=repository_id,
+                        git_dir=root / ".git",
+                        trusted_base_root=root,
+                        base_sha=base,
+                        head_sha=head,
+                        initial_candidate_evidence=external,
+                        token="synthetic-read-token",
+                    )
+
+            changed = copy.deepcopy(external)
+            changed["candidate_sha"] = "f" * len(candidate_sha)
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "resolve_default_candidate_evidence",
+                    return_value=changed,
+                ),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "changed before final validation",
+                ),
+            ):
+                CI_MODULE.verify_default_github_commit(
+                    repository=repository,
+                    repository_id=repository_id,
+                    git_dir=root / ".git",
+                    trusted_base_root=root,
+                    base_sha=base,
+                    head_sha=head,
+                    initial_candidate_evidence=external,
+                    token="synthetic-read-token",
+                )
+
+    def test_bootstrap_default_candidate_binds_the_designated_head_ref(self) -> None:
+        repository = TEST_REPOSITORY
+        repository_id = 1_246_526_548
+        base_sha = "b" * 40
+        head_sha = "a" * 40
+        candidate_sha = "d" * 40
+        number = 4
+        node_id = "PR_kwDOSyntheticBootstrap"
+        associated = [{"number": number, "node_id": node_id}]
+        pull = {
+            "number": number,
+            "node_id": node_id,
+            "title": "Publish retained history",
+            "state": "closed",
+            "merged": True,
+            "merged_at": "2026-07-15T00:00:20Z",
+            "draft": False,
+            "merge_commit_sha": head_sha,
+            "base": {
+                "ref": CI_MODULE.DEFAULT_BRANCH,
+                "sha": base_sha,
+                "repo": {"full_name": repository, "id": repository_id},
+            },
+            "head": {
+                "ref": CI_MODULE.BOOTSTRAP_CANDIDATE_REF,
+                "sha": candidate_sha,
+                "repo": {"full_name": repository, "id": repository_id},
+            },
+        }
+        squash = {
+            "squash_merge_commit_title": "PR_TITLE",
+            "squash_merge_commit_message": "BLANK",
+        }
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "github_paginated_list",
+                side_effect=[associated, associated],
+            ),
+            mock.patch.object(CI_MODULE, "github_json", return_value=pull),
+        ):
+            evidence = CI_MODULE.verify_default_merged_pull_request(
+                repository=repository,
+                repository_id=repository_id,
+                base_sha=base_sha,
+                head_sha=head_sha,
+                squash_configuration=squash,
+                authority_mode="bootstrap-v2-migration",
+                token="synthetic-read-token",
+            )
+        self.assertEqual(evidence["candidate_ref"], CI_MODULE.BOOTSTRAP_CANDIDATE_REF)
+
+        wrong_ref = copy.deepcopy(pull)
+        wrong_ref["head"]["ref"] = "wip/unrelated-history-migration"
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "github_paginated_list",
+                side_effect=[associated, associated],
+            ),
+            mock.patch.object(CI_MODULE, "github_json", return_value=wrong_ref),
+            self.assertRaisesRegex(CI_MODULE.GateError, "stale or lookalike"),
+        ):
+            CI_MODULE.verify_default_merged_pull_request(
+                repository=repository,
+                repository_id=repository_id,
+                base_sha=base_sha,
+                head_sha=head_sha,
+                squash_configuration=squash,
+                authority_mode="bootstrap-v2-migration",
+                token="synthetic-read-token",
+            )
+
+    def test_candidate_admission_check_is_unique_canonical_and_exact(self) -> None:
+        repository = TEST_REPOSITORY
+        repository_id = 1_246_526_548
+        base_sha = "b" * 40
+        head_sha = "a" * 40
+        candidate_sha = "d" * 40
+        node_id = "PR_kwDOSyntheticReceipt"
+        external = synthetic_external_admission(
+            repository=repository,
+            repository_id=repository_id,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            candidate_sha=candidate_sha,
+            candidate_tree_sha="e" * 40,
+            queue_tree_sha="f" * 40,
+            pull_request_number=4,
+            pull_request_node_id=node_id,
+            pull_request_title="Publish retained history",
+        )
+        expected = external["admission_binding"]
+        admission = expected["admission"]
+
+        def api_check(check: dict[str, object]) -> dict[str, object]:
+            return {
+                "id": check["check_run_id"],
+                "node_id": check["check_run_node_id"],
+                "name": check["check_name"],
+                "head_sha": check["head_sha"],
+                "status": "completed",
+                "conclusion": "success",
+                "started_at": check["started_at"],
+                "completed_at": check["completed_at"],
+                "external_id": check["external_id"],
+                "app": expected["app"],
+                "check_suite": {"id": check["check_suite_id"]},
+                "output": {
+                    "title": check["output_title"],
+                    "summary": check["output_summary"],
+                    "text": CI_MODULE.compact_json_bytes(admission).decode("utf-8"),
+                    "annotations_count": 0,
+                },
+            }
+
+        candidate_api_check = api_check(expected["candidate_record_check"])
+        queue_api_check = api_check(expected["queue_gate_check"])
+        with mock.patch.object(
+            CI_MODULE,
+            "github_paginated_object_items",
+            side_effect=[[candidate_api_check], [queue_api_check]],
+        ):
+            observed = CI_MODULE.read_post_merge_admission_binding(
+                repository=repository,
+                repository_id=TEST_REPOSITORY_ID,
+                candidate_sha=candidate_sha,
+                candidate_ref="wip/session-retrospective-v2-history",
+                base_sha=base_sha,
+                pull_request_number=4,
+                pull_request_node_id=node_id,
+                merged_at=external["pull_request_merged_at"],
+                token="synthetic-read-token",
+            )
+        self.assertEqual(observed, expected)
+
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "github_paginated_object_items",
+                side_effect=[[candidate_api_check], [queue_api_check]],
+            ),
+            self.assertRaisesRegex(CI_MODULE.GateError, "stale or inconsistent"),
+        ):
+            CI_MODULE.read_post_merge_admission_binding(
+                repository=repository,
+                repository_id=TEST_REPOSITORY_ID + 1,
+                candidate_sha=candidate_sha,
+                candidate_ref="wip/session-retrospective-v2-history",
+                base_sha=base_sha,
+                pull_request_number=4,
+                pull_request_node_id=node_id,
+                merged_at=external["pull_request_merged_at"],
+                token="synthetic-read-token",
+            )
+
+        ref_drift = copy.deepcopy(external)
+        ref_binding = ref_drift["admission_binding"]
+        assert isinstance(ref_binding, dict)
+        ref_admission = ref_binding["admission"]
+        assert isinstance(ref_admission, dict)
+        ref_admission["snapshot"]["pull_request"]["head_ref"] = (
+            "wip/different-history-candidate"
+        )
+        rebind_synthetic_external_admission(ref_drift)
+        ref_candidate_check = api_check(ref_binding["candidate_record_check"])
+        ref_queue_check = api_check(ref_binding["queue_gate_check"])
+        for check in (ref_candidate_check, ref_queue_check):
+            check["output"]["text"] = CI_MODULE.compact_json_bytes(
+                ref_admission
+            ).decode("utf-8")
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "github_paginated_object_items",
+                side_effect=[
+                    [ref_candidate_check],
+                    [ref_queue_check],
+                ],
+            ),
+            self.assertRaisesRegex(CI_MODULE.GateError, "stale or inconsistent"),
+        ):
+            CI_MODULE.read_post_merge_admission_binding(
+                repository=repository,
+                repository_id=TEST_REPOSITORY_ID,
+                candidate_sha=candidate_sha,
+                candidate_ref="wip/session-retrospective-v2-history",
+                base_sha=base_sha,
+                pull_request_number=4,
+                pull_request_node_id=node_id,
+                merged_at=external["pull_request_merged_at"],
+                token="synthetic-read-token",
+            )
+
+        mutations = (
+            ("app", lambda value: value["app"].__setitem__("id", 999)),
+            (
+                "candidate",
+                lambda value: value.__setitem__("head_sha", "0" * 40),
+            ),
+            (
+                "record",
+                lambda value: value["output"].__setitem__(
+                    "text", value["output"]["text"] + " "
+                ),
+            ),
+        )
+        for label, mutate in mutations:
+            changed = copy.deepcopy(candidate_api_check)
+            mutate(changed)
+            with (
+                self.subTest(label=label),
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_paginated_object_items",
+                    side_effect=[[changed], [queue_api_check]],
+                ),
+                self.assertRaises(CI_MODULE.GateError),
+            ):
+                CI_MODULE.read_post_merge_admission_binding(
+                    repository=repository,
+                    repository_id=TEST_REPOSITORY_ID,
+                    candidate_sha=candidate_sha,
+                    candidate_ref="wip/session-retrospective-v2-history",
+                    base_sha=base_sha,
+                    pull_request_number=4,
+                    pull_request_node_id=node_id,
+                    merged_at=external["pull_request_merged_at"],
+                    token="synthetic-read-token",
+                )
+
+        non_integer_schema = copy.deepcopy(queue_api_check)
+        non_integer_admission = copy.deepcopy(admission)
+        non_integer_admission["schema_version"] = 2.0
+        non_integer_bytes = CI_MODULE.compact_json_bytes(non_integer_admission)
+        non_integer_sha256 = hashlib.sha256(non_integer_bytes).hexdigest()
+        non_integer_schema["external_id"] = (
+            CI_MODULE.ADMISSION_RECORD_EXTERNAL_ID_PREFIX + non_integer_sha256
+        )
+        non_integer_schema["output"].update(
+            {
+                "summary": (
+                    CI_MODULE.ADMISSION_RECORD_OUTPUT_SUMMARY_PREFIX
+                    + non_integer_sha256
+                ),
+                "text": non_integer_bytes.decode("utf-8"),
+            }
+        )
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "github_paginated_object_items",
+                side_effect=[[candidate_api_check], [non_integer_schema]],
+            ),
+            self.assertRaisesRegex(CI_MODULE.GateError, "schema|identity"),
+        ):
+            CI_MODULE.read_post_merge_admission_binding(
+                repository=repository,
+                repository_id=TEST_REPOSITORY_ID,
+                candidate_sha=candidate_sha,
+                candidate_ref="wip/session-retrospective-v2-history",
+                base_sha=base_sha,
+                pull_request_number=4,
+                pull_request_node_id=node_id,
+                merged_at=external["pull_request_merged_at"],
+                token="synthetic-read-token",
+            )
+
+    def test_offline_admission_rejects_self_consistent_ref_and_title_drift(
+        self,
+    ) -> None:
+        repository = TEST_REPOSITORY
+        repository_id = TEST_REPOSITORY_ID
+        base_sha = "b" * 40
+        head_sha = "a" * 40
+        candidate_sha = "d" * 40
+        original = synthetic_external_admission(
+            repository=repository,
+            repository_id=repository_id,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            candidate_sha=candidate_sha,
+            candidate_tree_sha="e" * 40,
+            queue_tree_sha="f" * 40,
+            pull_request_number=4,
+            pull_request_node_id="PR_kwDOSyntheticReceipt",
+            pull_request_title="Publish retained history",
+        )
+        mutations = (
+            (
+                "candidate ref",
+                lambda admission: admission["snapshot"]["pull_request"].__setitem__(
+                    "head_ref",
+                    "wip/different-history-candidate",
+                ),
+            ),
+            (
+                "pull request title",
+                lambda admission: admission["snapshot"]["pull_request"].__setitem__(
+                    "title",
+                    "Different retained history",
+                ),
+            ),
+            (
+                "projection subject",
+                lambda admission: admission["projection"].__setitem__(
+                    "squash_subject",
+                    "Different retained history",
+                ),
+            ),
+        )
+        for label, mutate in mutations:
+            changed = copy.deepcopy(original)
+            binding = changed["admission_binding"]
+            assert isinstance(binding, dict)
+            admission = binding["admission"]
+            assert isinstance(admission, dict)
+            mutate(admission)
+            rebind_synthetic_external_admission(changed)
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "transaction timing or scope differs",
+                ),
+            ):
+                VALIDATOR_MODULE.validate_history_v2_candidate_evidence(
+                    changed,
+                    repository=repository,
+                    repository_id=repository_id,
+                    before_rev=base_sha,
+                    head_rev=head_sha,
                 )
 
     def test_only_trusted_base_is_checked_out_and_actions_are_pinned(self) -> None:
@@ -2416,15 +3330,17 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("must not handle `merge_group` events", readme)
         self.assertIn("an external admission service must be installed", readme)
-        self.assertIn("merge-group-snapshot --admission-app-id", readme)
+        self.assertIn("merge-group-snapshot --repository-id", readme)
+        self.assertIn("--admission-app-id", readme)
         self.assertIn("`admit-merge-group`", readme)
         self.assertIn("`--expected-python-sha256`", readme)
         self.assertIn("parent-owned runtime receipt", readme)
         self.assertIn("exact `Q` tree", readme)
         self.assertIn("must reread the live pull request, queue ref", readme)
-        self.assertIn("30-second validity window", readme)
+        self.assertIn("30-second validity", readme)
+        self.assertIn("full response bodies", readme)
         self.assertIn("starts before the first live read", readme)
-        self.assertIn("GitHub Actions App is\nexplicitly ineligible", readme)
+        self.assertIn("GitHub Actions App is explicitly ineligible", readme)
         self.assertIn(
             "Until that external producer and receipt flow are proven, cutover is blocked",
             readme.replace("\n", " "),
@@ -2528,13 +3444,21 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             ruleset_summaries=[],
             ruleset_details=[],
             repository=TEST_REPOSITORY,
+            repository_id=TEST_REPOSITORY_ID,
             admission_app_id=TEST_ADMISSION_APP_ID,
         )
         self.assertRegex(digest, r"^[0-9a-f]{64}$")
 
-        with self.assertRaisesRegex(
-            CI_MODULE.GateError,
-            "must not be GitHub Actions",
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "ADMISSION_RECORD_APP_ID",
+                CI_MODULE.GITHUB_ACTIONS_APP_ID,
+            ),
+            self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "must not be GitHub Actions",
+            ),
         ):
             CI_MODULE.validate_trusted_branch_configuration(
                 repository_payload=repository_configuration_payload(),
@@ -2547,10 +3471,23 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 ruleset_summaries=[],
                 ruleset_details=[],
                 repository=TEST_REPOSITORY,
+                repository_id=TEST_REPOSITORY_ID,
                 admission_app_id=CI_MODULE.GITHUB_ACTIONS_APP_ID,
             )
 
         cases = []
+        repository_identity = repository_configuration_payload()
+        repository_identity["id"] = TEST_REPOSITORY_ID + 1
+        cases.append(
+            (
+                "repository identity",
+                repository_identity,
+                active_branch_rules_payload(),
+                branch_protection_payload(),
+                [],
+                [],
+            )
+        )
         repository = repository_configuration_payload()
         repository["allow_merge_commit"] = True
         cases.append(
@@ -2571,6 +3508,21 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         cases.append(
             (
                 "multi-PR queue",
+                repository_configuration_payload(),
+                rules,
+                branch_protection_payload(),
+                [],
+                [],
+            )
+        )
+
+        rules = active_branch_rules_payload()
+        next(rule for rule in rules if rule["type"] == "merge_queue")["parameters"][
+            "max_entries_to_build"
+        ] = 2
+        cases.append(
+            (
+                "multi-PR queue build",
                 repository_configuration_payload(),
                 rules,
                 branch_protection_payload(),
@@ -2632,12 +3584,20 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     ruleset_summaries=summaries,
                     ruleset_details=details,
                     repository=TEST_REPOSITORY,
+                    repository_id=TEST_REPOSITORY_ID,
                     admission_app_id=TEST_ADMISSION_APP_ID,
                 )
 
-        with self.assertRaisesRegex(
-            CI_MODULE.GateError,
-            "required status check is not current-Q bound",
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "ADMISSION_RECORD_APP_ID",
+                TEST_ADMISSION_APP_ID + 1,
+            ),
+            self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "required status check is not current-Q bound",
+            ),
         ):
             CI_MODULE.validate_trusted_branch_configuration(
                 repository_payload=repository_configuration_payload(),
@@ -2646,8 +3606,246 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 ruleset_summaries=[],
                 ruleset_details=[],
                 repository=TEST_REPOSITORY,
+                repository_id=TEST_REPOSITORY_ID,
                 admission_app_id=TEST_ADMISSION_APP_ID + 1,
             )
+
+    def test_github_server_clock_is_repository_bound_and_second_precision(
+        self,
+    ) -> None:
+        class Response:
+            def __init__(
+                self,
+                *,
+                date: str | None,
+                full_name: str = TEST_REPOSITORY,
+                repository_id: int = TEST_REPOSITORY_ID,
+            ) -> None:
+                self.status = 200
+                self.headers = {} if date is None else {"Date": date}
+                self._value = json.dumps(
+                    {"full_name": full_name, "id": repository_id}
+                ).encode("utf-8")
+                self._socket = mock.Mock()
+                self.fp = mock.Mock()
+                self.fp.raw._sock = self._socket
+
+            def __enter__(self) -> object:
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self, size: int) -> bytes:
+                value, self._value = self._value[:size], self._value[size:]
+                return value
+
+        server_date = "Thu, 06 Aug 2026 17:30:00 GMT"
+        with mock.patch.object(
+            CI_MODULE.request,
+            "urlopen",
+            return_value=Response(date=server_date),
+        ) as urlopen:
+            observed = CI_MODULE.github_server_time(
+                repository=TEST_REPOSITORY,
+                repository_id=TEST_REPOSITORY_ID,
+                token="synthetic-read-token",
+            )
+        self.assertEqual(
+            observed,
+            dt.datetime(2026, 8, 6, 17, 30, tzinfo=dt.timezone.utc),
+        )
+        request_value = urlopen.call_args.args[0]
+        self.assertEqual(
+            request_value.full_url,
+            f"https://api.github.com/repos/{TEST_REPOSITORY}/",
+        )
+        self.assertEqual(request_value.get_method(), "GET")
+
+        with (
+            mock.patch.object(
+                CI_MODULE.request,
+                "urlopen",
+                return_value=Response(date=None),
+            ),
+            self.assertRaisesRegex(CI_MODULE.GateError, "Date header"),
+        ):
+            CI_MODULE.github_server_time(
+                repository=TEST_REPOSITORY,
+                repository_id=TEST_REPOSITORY_ID,
+                token="synthetic-read-token",
+            )
+
+        for response in (
+            Response(
+                date=server_date,
+                full_name="Joey-Tools/lookalike-history",
+            ),
+            Response(
+                date=server_date,
+                repository_id=TEST_REPOSITORY_ID + 1,
+            ),
+        ):
+            with (
+                mock.patch.object(
+                    CI_MODULE.request,
+                    "urlopen",
+                    return_value=response,
+                ),
+                self.assertRaisesRegex(CI_MODULE.GateError, "stale or lookalike"),
+            ):
+                CI_MODULE.github_server_time(
+                    repository=TEST_REPOSITORY,
+                    repository_id=TEST_REPOSITORY_ID,
+                    token="synthetic-read-token",
+                )
+
+    def test_live_github_reads_share_request_byte_and_deadline_budgets(self) -> None:
+        class Response:
+            def __init__(
+                self,
+                value: bytes,
+                *,
+                clock: list[float] | None = None,
+                clock_step: float | None = None,
+                max_chunk: int | None = None,
+            ) -> None:
+                self.status = 200
+                self.headers = {"Date": "Thu, 06 Aug 2026 17:30:00 GMT"}
+                self._value = value
+                self._clock = clock
+                self._clock_step = clock_step
+                self._max_chunk = max_chunk
+                self.read_sizes: list[int] = []
+                self._socket = mock.Mock()
+                self.fp = mock.Mock()
+                self.fp.raw._sock = self._socket
+
+            def __enter__(self) -> object:
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self, size: int) -> bytes:
+                self.read_sizes.append(size)
+                if self._max_chunk is not None:
+                    size = min(size, self._max_chunk)
+                value, self._value = self._value[:size], self._value[size:]
+                if value and self._clock is not None:
+                    if self._clock_step is None:
+                        self._clock[0] = 30.0
+                    else:
+                        self._clock[0] += self._clock_step
+                return value
+
+        monotonic = [0.0]
+        deadline_budget = CI_MODULE.GitHubReadBudget(
+            deadline=30.0,
+            clock=lambda: monotonic[0],
+        )
+        with (
+            mock.patch.object(
+                CI_MODULE.request,
+                "urlopen",
+                return_value=Response(b"{}", clock=monotonic),
+            ),
+            CI_MODULE.github_read_budget_scope(deadline_budget),
+            self.assertRaisesRegex(CI_MODULE.GateError, "deadline"),
+        ):
+            CI_MODULE.github_json(
+                "GET",
+                TEST_REPOSITORY,
+                "/",
+                token="synthetic-read-token",
+            )
+
+        request_budget = CI_MODULE.GitHubReadBudget(
+            deadline=30.0,
+            clock=lambda: 0.0,
+            remaining_requests=1,
+        )
+        with (
+            mock.patch.object(
+                CI_MODULE.request,
+                "urlopen",
+                side_effect=[Response(b"{}")],
+            ) as urlopen,
+            CI_MODULE.github_read_budget_scope(request_budget),
+        ):
+            self.assertEqual(
+                CI_MODULE.github_json(
+                    "GET",
+                    TEST_REPOSITORY,
+                    "/",
+                    token="synthetic-read-token",
+                ),
+                {},
+            )
+            with self.assertRaisesRegex(CI_MODULE.GateError, "request budget"):
+                CI_MODULE.github_json(
+                    "GET",
+                    TEST_REPOSITORY,
+                    "/rulesets/1",
+                    token="synthetic-read-token",
+                )
+        self.assertEqual(urlopen.call_count, 1)
+
+        slow_clock = [0.0]
+        slow_response = Response(
+            b"{}",
+            clock=slow_clock,
+            clock_step=11.0,
+            max_chunk=1,
+        )
+        slow_budget = CI_MODULE.GitHubReadBudget(
+            deadline=30.0,
+            clock=lambda: slow_clock[0],
+        )
+        with (
+            mock.patch.object(
+                CI_MODULE.request,
+                "urlopen",
+                return_value=slow_response,
+            ),
+            CI_MODULE.github_read_budget_scope(slow_budget),
+        ):
+            self.assertEqual(
+                CI_MODULE.github_json(
+                    "GET",
+                    TEST_REPOSITORY,
+                    "/",
+                    token="synthetic-read-token",
+                ),
+                {},
+            )
+        self.assertEqual(
+            [call.args[0] for call in slow_response._socket.settimeout.call_args_list],
+            [20.0, 19.0, 8.0],
+        )
+
+        byte_budget = CI_MODULE.GitHubReadBudget(
+            deadline=30.0,
+            clock=lambda: 0.0,
+            remaining_bytes=1,
+        )
+        byte_response = Response(b"{}")
+        with (
+            mock.patch.object(
+                CI_MODULE.request,
+                "urlopen",
+                return_value=byte_response,
+            ),
+            CI_MODULE.github_read_budget_scope(byte_budget),
+            self.assertRaisesRegex(CI_MODULE.GateError, "byte budget"),
+        ):
+            CI_MODULE.github_json(
+                "GET",
+                TEST_REPOSITORY,
+                "/",
+                token="synthetic-read-token",
+            )
+        self.assertEqual(byte_response.read_sizes, [2])
 
     def test_merge_group_event_proves_exact_single_pr_queue_coordinates(self) -> None:
         base = "b" * 40
@@ -2657,6 +3855,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             CI_MODULE.validate_merge_group_event(
                 payload,
                 repository=TEST_REPOSITORY,
+                repository_id=TEST_REPOSITORY_ID,
                 event_ref=merge_group_ref(),
                 event_sha=queue,
                 workflow_sha=queue,
@@ -2667,12 +3866,20 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             CI_MODULE.validate_merge_group_event(
                 payload,
                 repository=TEST_REPOSITORY,
+                repository_id=TEST_REPOSITORY_ID,
                 event_ref=merge_group_ref(),
                 event_sha=queue,
                 workflow_sha=base,
             )
         mutations = (
             ("action", lambda value: value.__setitem__("action", "destroyed")),
+            (
+                "repository identity",
+                lambda value: value["repository"].__setitem__(
+                    "id",
+                    TEST_REPOSITORY_ID + 1,
+                ),
+            ),
             (
                 "base ref",
                 lambda value: value["merge_group"].__setitem__(
@@ -2708,6 +3915,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 CI_MODULE.validate_merge_group_event(
                     changed,
                     repository=TEST_REPOSITORY,
+                    repository_id=TEST_REPOSITORY_ID,
                     event_ref=merge_group_ref(),
                     event_sha=queue,
                     workflow_sha=queue,
@@ -2716,6 +3924,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
     def test_merge_group_snapshot_loader_requires_queue_workflow_sha(self) -> None:
         snapshot = CI_MODULE.MergeGroupSnapshot(
             repository=TEST_REPOSITORY,
+            repository_id=TEST_REPOSITORY_ID,
             base_ref="refs/heads/master",
             base_sha="b" * 40,
             queue_ref=merge_group_ref(),
@@ -2756,6 +3965,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         CI_MODULE.validate_merge_group_pull_request(
             valid,
             repository=TEST_REPOSITORY,
+            repository_id=TEST_REPOSITORY_ID,
             number=17,
             base_sha=base,
         )
@@ -2783,6 +3993,22 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     "Joey-Tools/other",
                 ),
             ),
+            (
+                "base repository identity changed",
+                "base changed",
+                lambda value: value["base"]["repo"].__setitem__(
+                    "id",
+                    TEST_REPOSITORY_ID + 1,
+                ),
+            ),
+            (
+                "head repository identity changed",
+                "head changed",
+                lambda value: value["head"]["repo"].__setitem__(
+                    "id",
+                    TEST_REPOSITORY_ID + 1,
+                ),
+            ),
         )
         for label, expected, mutate in mutations:
             changed = copy.deepcopy(valid)
@@ -2797,6 +4023,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 CI_MODULE.validate_merge_group_pull_request(
                     changed,
                     repository=TEST_REPOSITORY,
+                    repository_id=TEST_REPOSITORY_ID,
                     number=17,
                     base_sha=base,
                 )
@@ -2812,6 +4039,34 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            with mock.patch.object(
+                CI_MODULE,
+                "github_json",
+                side_effect=[
+                    valid,
+                    live_merge_group_ref_payload(queue_sha="c" * 40),
+                    repository_configuration_payload(),
+                    active_branch_rules_payload(),
+                    branch_protection_payload(),
+                    [],
+                ],
+            ) as github_api:
+                observed = CI_MODULE.read_live_merge_group_snapshot(
+                    repository=TEST_REPOSITORY,
+                    repository_id=TEST_REPOSITORY_ID,
+                    event_path=event_path,
+                    event_ref=merge_group_ref(),
+                    event_sha="c" * 40,
+                    workflow_sha="c" * 40,
+                    admission_app_id=TEST_ADMISSION_APP_ID,
+                    token="read-only",
+                )
+            self.assertEqual(observed.repository_id, TEST_REPOSITORY_ID)
+            self.assertEqual(observed.pull_request_number, 17)
+            self.assertEqual(
+                github_api.call_args_list[2],
+                mock.call("GET", TEST_REPOSITORY, "/", token="read-only"),
+            )
             with (
                 mock.patch.object(
                     CI_MODULE,
@@ -2825,6 +4080,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             ):
                 CI_MODULE.read_live_merge_group_snapshot(
                     repository=TEST_REPOSITORY,
+                    repository_id=TEST_REPOSITORY_ID,
                     event_path=event_path,
                     event_ref=merge_group_ref(),
                     event_sha="c" * 40,
@@ -2838,6 +4094,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
     ) -> None:
         snapshot = CI_MODULE.MergeGroupSnapshot(
             repository=TEST_REPOSITORY,
+            repository_id=TEST_REPOSITORY_ID,
             base_ref="refs/heads/master",
             base_sha="b" * 40,
             queue_ref=merge_group_ref(),
@@ -2851,24 +4108,64 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             required_check=CI_MODULE.REQUIRED_CHECK_CONTEXT,
             tcb_sha256="d" * 64,
         )
+        projection = synthetic_merge_group_projection(snapshot)
+        parent_sha = "9" * 40
+        audit = synthetic_predecessor_audit(
+            base_sha=snapshot.base_sha,
+            parent_sha=parent_sha,
+        )
         observed_at = dt.datetime(2026, 8, 6, 17, 30, tzinfo=dt.timezone.utc)
-        with mock.patch.object(
-            CI_MODULE,
-            "read_live_merge_group_snapshot",
-            return_value=snapshot,
-        ) as live_snapshot:
-            evidence = CI_MODULE.revalidate_external_merge_group_authority(
-                expected=snapshot,
-                event_path=Path("/synthetic/event.json"),
-                event_ref=snapshot.queue_ref,
-                event_sha=snapshot.queue_sha,
-                workflow_sha=snapshot.workflow_sha,
-                admission_app_id=TEST_ADMISSION_APP_ID,
-                token="read-only",
-                clock=lambda: observed_at,
-            )
+
+        def invoke(
+            *,
+            live_result: object = snapshot,
+            live_error: Exception | None = None,
+            audit_error: Exception | None = None,
+            times: tuple[dt.datetime, ...] = (observed_at, observed_at),
+            monotonic_times: tuple[float, ...] = (0.0, 0.0),
+        ) -> tuple[object, object, object]:
+            clock_values = iter(times)
+            monotonic_values = iter(monotonic_times)
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "_predecessor_authority_context",
+                    return_value=(parent_sha, (), None),
+                ),
+                mock.patch.object(CI_MODULE, "_worktree_head"),
+                mock.patch.object(
+                    CI_MODULE,
+                    "read_live_merge_group_snapshot",
+                    return_value=live_result,
+                    side_effect=live_error,
+                ) as live_snapshot,
+                mock.patch.object(
+                    CI_MODULE,
+                    "read_trusted_predecessor_audit_evidence",
+                    return_value=audit,
+                    side_effect=audit_error,
+                ) as predecessor_audit,
+            ):
+                evidence = CI_MODULE.revalidate_external_merge_group_authority(
+                    expected=snapshot,
+                    projection=projection,
+                    policy="history-v2",
+                    trusted_base_root=Path("/synthetic/trusted-base"),
+                    event_path=Path("/synthetic/event.json"),
+                    event_ref=snapshot.queue_ref,
+                    event_sha=snapshot.queue_sha,
+                    workflow_sha=snapshot.workflow_sha,
+                    admission_app_id=TEST_ADMISSION_APP_ID,
+                    token="read-only",
+                    clock=lambda: next(clock_values),
+                    monotonic_clock=lambda: next(monotonic_values),
+                )
+            return evidence, live_snapshot, predecessor_audit
+
+        evidence, live_snapshot, predecessor_audit = invoke()
         live_snapshot.assert_called_once_with(
             repository=snapshot.repository,
+            repository_id=snapshot.repository_id,
             event_path=Path("/synthetic/event.json"),
             event_ref=snapshot.queue_ref,
             event_sha=snapshot.queue_sha,
@@ -2876,7 +4173,18 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             admission_app_id=TEST_ADMISSION_APP_ID,
             token="read-only",
         )
+        predecessor_audit.assert_called_once_with(
+            repository=snapshot.repository,
+            base_sha=snapshot.base_sha,
+            parent_sha=parent_sha,
+            current_pr_number=snapshot.pull_request_number,
+            token="read-only",
+        )
         self.assertEqual(evidence.tcb_sha256, snapshot.tcb_sha256)
+        self.assertEqual(
+            evidence.predecessor_authority.audit,
+            audit,
+        )
         self.assertEqual(
             evidence.snapshot_sha256,
             hashlib.sha256(
@@ -2896,36 +4204,37 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             dt.timedelta(seconds=CI_MODULE.MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS),
         )
 
-        with (
-            mock.patch.object(
-                CI_MODULE,
-                "read_live_merge_group_snapshot",
-                return_value=snapshot,
-            ),
-            self.assertRaisesRegex(
-                CI_MODULE.GateError,
-                "revalidation exceeded its window",
-            ),
+        fractional = observed_at.replace(microsecond=800_000)
+        fractional_evidence, _live_snapshot, _predecessor_audit = invoke(
+            times=(fractional, fractional.replace(microsecond=900_000)),
+        )
+        self.assertEqual(
+            fractional_evidence.observed_at,
+            observed_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        )
+        noncanonical_time = fractional_evidence.as_dict()
+        noncanonical_time["observed_at"] = noncanonical_time["observed_at"].replace(
+            "Z", ".0Z"
+        )
+        with self.assertRaisesRegex(CI_MODULE.GateError, "precision"):
+            CI_MODULE.parse_merge_group_live_authority(noncanonical_time)
+
+        with self.assertRaisesRegex(
+            CI_MODULE.GateError,
+            "revalidation exceeded its window",
         ):
-            times = iter(
-                (
+            invoke(
+                times=(
                     observed_at,
                     observed_at
                     + dt.timedelta(
                         seconds=CI_MODULE.MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS
                     ),
-                )
+                ),
             )
-            CI_MODULE.revalidate_external_merge_group_authority(
-                expected=snapshot,
-                event_path=Path("/synthetic/event.json"),
-                event_ref=snapshot.queue_ref,
-                event_sha=snapshot.queue_sha,
-                workflow_sha=snapshot.workflow_sha,
-                admission_app_id=TEST_ADMISSION_APP_ID,
-                token="read-only",
-                clock=lambda: next(times),
-            )
+
+        with self.assertRaisesRegex(CI_MODULE.GateError, "deadline"):
+            invoke(monotonic_times=(0.0, 30.0))
 
         for field, value in (
             ("pull_request_title", "Changed after runtime"),
@@ -2934,49 +4243,142 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         ):
             with (
                 self.subTest(field=field),
-                mock.patch.object(
-                    CI_MODULE,
-                    "read_live_merge_group_snapshot",
-                    return_value=type(snapshot)(
-                        **{**snapshot.__dict__, field: value},
-                    ),
-                ),
                 self.assertRaisesRegex(
                     CI_MODULE.GateError,
                     "changed after runtime validation",
                 ),
             ):
-                CI_MODULE.revalidate_external_merge_group_authority(
-                    expected=snapshot,
-                    event_path=Path("/synthetic/event.json"),
-                    event_ref=snapshot.queue_ref,
-                    event_sha=snapshot.queue_sha,
-                    workflow_sha=snapshot.workflow_sha,
-                    admission_app_id=TEST_ADMISSION_APP_ID,
-                    token="read-only",
-                    clock=lambda: observed_at,
+                invoke(
+                    live_result=type(snapshot)(
+                        **{**snapshot.__dict__, field: value},
+                    )
                 )
 
+        with self.assertRaisesRegex(
+            CI_MODULE.GateError,
+            "could not be revalidated after runtime",
+        ):
+            invoke(
+                live_error=CI_MODULE.GateError("queue ref missing"),
+                times=(observed_at,),
+            )
+
+        with self.assertRaisesRegex(
+            CI_MODULE.GateError,
+            "predecessor audit evidence is missing",
+        ):
+            invoke(
+                audit_error=CI_MODULE.GateError(
+                    "predecessor audit evidence is missing"
+                ),
+                times=(observed_at,),
+            )
+
+    def test_predecessor_authority_context_allows_only_closed_migration_exception(
+        self,
+    ) -> None:
+        snapshot = CI_MODULE.MergeGroupSnapshot(
+            repository=TEST_REPOSITORY,
+            repository_id=TEST_REPOSITORY_ID,
+            base_ref="refs/heads/master",
+            base_sha="b" * 40,
+            queue_ref=merge_group_ref(),
+            queue_sha="c" * 40,
+            workflow_sha="c" * 40,
+            pull_request_number=17,
+            pull_request_node_id="PR_kwDO_bootstrap",
+            pull_request_title="Publish retained history",
+            candidate_ref="wip/history-publication",
+            candidate_sha="a" * 40,
+            required_check=CI_MODULE.REQUIRED_CHECK_CONTEXT,
+            tcb_sha256="d" * 64,
+        )
+        projection = synthetic_merge_group_projection(snapshot)
+        validator = mock.Mock()
+        validator.history_v2_bootstrap_markers.return_value = frozenset()
         with (
             mock.patch.object(
                 CI_MODULE,
-                "read_live_merge_group_snapshot",
-                side_effect=CI_MODULE.GateError("queue ref missing"),
+                "trusted_validator_module",
+                return_value=validator,
+            ) as trusted_validator,
+            mock.patch.object(CI_MODULE, "_worktree_head") as worktree_head,
+            mock.patch.object(
+                CI_MODULE,
+                "_single_worktree_parent",
+                return_value="9" * 40,
+            ) as single_parent,
+        ):
+            self.assertEqual(
+                CI_MODULE._predecessor_authority_context(
+                    expected=snapshot,
+                    projection=projection,
+                    policy="history-v2",
+                    trusted_base_root=Path("/synthetic/trusted-base"),
+                ),
+                ("9" * 40, (), None),
+            )
+        trusted_validator.assert_called_once_with(contract="permanent")
+        worktree_head.assert_called_once()
+        single_parent.assert_called_once()
+
+        bootstrap_snapshot = type(snapshot)(
+            **{
+                **snapshot.__dict__,
+                "candidate_ref": CI_MODULE.BOOTSTRAP_CANDIDATE_REF,
+            }
+        )
+        bootstrap_projection = synthetic_merge_group_projection(
+            bootstrap_snapshot,
+            policy="bootstrap-v2",
+            role="admin",
+        )
+        validator.history_v2_bootstrap_markers.return_value = frozenset(
+            Path(path) for path in CI_MODULE.BOOTSTRAP_TEMPORARY_PATHS
+        )
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "trusted_validator_module",
+                return_value=validator,
             ),
+            mock.patch.object(CI_MODULE, "_worktree_head"),
+            mock.patch.object(CI_MODULE, "_single_worktree_parent") as single_parent,
+        ):
+            parent, markers, marker_sha256 = CI_MODULE._predecessor_authority_context(
+                expected=bootstrap_snapshot,
+                projection=bootstrap_projection,
+                policy="bootstrap-v2",
+                trusted_base_root=Path("/synthetic/trusted-base"),
+            )
+        self.assertIsNone(parent)
+        self.assertEqual(markers, tuple(sorted(CI_MODULE.BOOTSTRAP_TEMPORARY_PATHS)))
+        self.assertRegex(marker_sha256, r"^[0-9a-f]{64}$")
+        single_parent.assert_not_called()
+
+        invalid_bootstrap_snapshot = type(bootstrap_snapshot)(
+            **{
+                **bootstrap_snapshot.__dict__,
+                "candidate_ref": "wip/lookalike-bootstrap",
+            }
+        )
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "trusted_validator_module",
+                return_value=validator,
+            ),
+            mock.patch.object(CI_MODULE, "_worktree_head"),
             self.assertRaisesRegex(
                 CI_MODULE.GateError,
-                "could not be revalidated after runtime",
+                "migration exception is invalid",
             ),
         ):
-            CI_MODULE.revalidate_external_merge_group_authority(
-                expected=snapshot,
-                event_path=Path("/synthetic/event.json"),
-                event_ref=snapshot.queue_ref,
-                event_sha=snapshot.queue_sha,
-                workflow_sha=snapshot.workflow_sha,
-                admission_app_id=TEST_ADMISSION_APP_ID,
-                token="read-only",
-                clock=lambda: observed_at,
+            CI_MODULE._predecessor_authority_context(
+                expected=invalid_bootstrap_snapshot,
+                projection=bootstrap_projection,
+                policy="bootstrap-v2",
+                trusted_base_root=Path("/synthetic/trusted-base"),
             )
 
     def test_external_admission_revalidates_live_authority_after_runtime_order(
@@ -3041,6 +4443,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     "/synthetic/queue",
                     "--policy",
                     "history-v2",
+                    "--trusted-base-root",
+                    "/synthetic/trusted-base",
                     "--runtime-evidence",
                     "/synthetic/runtime.json",
                     "--expected-python-sha256",
@@ -3528,6 +4932,23 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             self.assertEqual(projection.candidate_base_sha, graph.base)
             self.assertEqual(projection.queue_base_sha, queue_base)
             self.assertNotEqual(projection.prospective_sha, candidate)
+            for field, value in (
+                ("changed_path_count", plan["changed_path_count"] + 1),
+                ("delta_sha256", "0" * 64),
+            ):
+                with (
+                    self.subTest(plan_field=field),
+                    self.assertRaisesRegex(
+                        CI_MODULE.GateError,
+                        "does not bind the exact delta",
+                    ),
+                ):
+                    CI_MODULE._validate_merge_group_graph(
+                        graph.git_dir,
+                        snapshot,
+                        policy="history-v2",
+                        plan={**plan, field: value},
+                    )
             self.assertEqual(
                 [call[0] for call in calls],
                 ["candidate", "fixed-q", "prospective"],
@@ -3578,11 +4999,31 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 expected_python_executable_sha256=(evidence.python_executable_sha256),
             )
             observed_at = dt.datetime(2026, 8, 6, 17, 30, tzinfo=dt.timezone.utc)
+            predecessor_audit = synthetic_predecessor_audit(
+                base_sha=snapshot.base_sha,
+                parent_sha="9" * 40,
+            )
+            predecessor_authority = CI_MODULE.MergeGroupPredecessorAuthorityEvidence(
+                mode="history-v2-required",
+                base_sha=snapshot.base_sha,
+                queue_sha=snapshot.queue_sha,
+                pull_request_number=snapshot.pull_request_number,
+                projection_sha256=(CI_MODULE.merge_group_projection_sha256(projection)),
+                parent_sha=predecessor_audit.parent_sha,
+                audit=predecessor_audit,
+                candidate_ref=None,
+                bootstrap_markers=(),
+                bootstrap_marker_sha256=None,
+            )
             live_authority = CI_MODULE.MergeGroupLiveAuthorityEvidence(
                 snapshot_sha256=hashlib.sha256(
                     CI_MODULE.compact_json_bytes(snapshot.as_dict())
                 ).hexdigest(),
                 tcb_sha256=snapshot.tcb_sha256,
+                predecessor_authority=predecessor_authority,
+                predecessor_authority_sha256=hashlib.sha256(
+                    CI_MODULE.compact_json_bytes(predecessor_authority.as_dict())
+                ).hexdigest(),
                 observed_at=observed_at.isoformat().replace("+00:00", "Z"),
                 valid_until=(
                     observed_at

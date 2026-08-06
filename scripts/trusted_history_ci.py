@@ -4,8 +4,11 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, fields
 import datetime as dt
+from email import utils as email_utils
 import hashlib
 import importlib.util
 import json
@@ -19,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Iterator
 import unicodedata
 from urllib import error, parse, request
 
@@ -35,13 +38,27 @@ MERGE_GROUP_RUNTIME_EVIDENCE_KIND = (
     "retrospective-history-v2-merge-group-runtime-evidence"
 )
 MERGE_GROUP_LIVE_AUTHORITY_KIND = "retrospective-history-v2-merge-group-live-authority"
+MERGE_GROUP_PREDECESSOR_AUTHORITY_KIND = (
+    "retrospective-history-v2-merge-group-predecessor-authority"
+)
 MERGE_GROUP_ADMISSION_KIND = "retrospective-history-v2-merge-group-admission"
 DEFAULT_AUTHORITY_RECEIPT_KIND = "retrospective-history-v2-default-authority"
 RUNTIME_AUTHORITY_RECEIPT_KIND = "retrospective-history-v2-runtime-authority"
 GITHUB_SQUASH_RECEIPT_KIND = "retrospective-history-v2-github-squash-verification"
+DEFAULT_CANDIDATE_EVIDENCE_KIND = "retrospective-history-v2-default-candidate-evidence"
+DEFAULT_ADMISSION_CHECK_KIND = "retrospective-history-v2-admission-check"
+POST_MERGE_ADMISSION_BINDING_KIND = (
+    "retrospective-history-v2-post-merge-admission-binding"
+)
 DEFAULT_BRANCH = "master"
 DEFAULT_BRANCH_REF = f"refs/heads/{DEFAULT_BRANCH}"
 REQUIRED_CHECK_CONTEXT = "Trusted history gate"
+ADMISSION_RECORD_CHECK_CONTEXT = "Trusted history admission record"
+ADMISSION_RECORD_OUTPUT_TITLE = "Retrospective history v2 admission"
+ADMISSION_RECORD_EXTERNAL_ID_PREFIX = "retrospective-history-v2-admission:"
+ADMISSION_RECORD_OUTPUT_SUMMARY_PREFIX = "Admission record SHA-256: "
+ADMISSION_RECORD_APP_ID: int | None = None
+ADMISSION_RECORD_APP_SLUG = "retrospective-history-admission"
 POST_MERGE_AUDIT_CHECK_CONTEXT = "Post-merge default audit"
 GITHUB_ACTIONS_APP_ID = 15368
 GITHUB_ACTIONS_APP_SLUG = "github-actions"
@@ -101,9 +118,12 @@ PERMANENT_TRUST_GENERATION_PATHS = (
     "tests/test_validate_retained_history.py",
 )
 MAX_POLICY_JSON_BYTES = 64 * 1024
+MAX_GITHUB_SQUASH_RECEIPT_BYTES = 128 * 1024
 MAX_PREFLIGHT_MANIFEST_BYTES = 32 * 1024 * 1024
 MAX_GIT_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_HTTP_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_LIVE_GITHUB_RESPONSE_BYTES = 32 * 1024 * 1024
+MAX_LIVE_GITHUB_REQUESTS = 160
 MAX_COMMIT_BYTES = 64 * 1024
 MAX_TREE_ENTRIES = 8192
 MAX_RANGE_TREE_ENTRIES = 65_536
@@ -163,7 +183,7 @@ BOOTSTRAP_CI_TEMPLATE_PATH = (
     ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
 )
 LEGACY_CI_BLOB_OID = "145e8de8a055794b85af6461a69e50715913ea6f"
-PERMANENT_CI_BLOB_OID = "08fce9a00fd907b65771cc4a1bcf5d6edfd096b0"
+PERMANENT_CI_BLOB_OID = "ad0c20778d6e9c66e8537e5412554a1ff26b663c"
 _TRUSTED_VALIDATOR_MODULE: Any | None = None
 _FORBIDDEN_CANDIDATE_COMPONENTS = frozenset(
     {
@@ -206,6 +226,54 @@ _FORBIDDEN_CANDIDATE_COMPACT_PARTS = frozenset(
 
 class GateError(RuntimeError):
     pass
+
+
+@dataclass
+class GitHubReadBudget:
+    deadline: float
+    clock: Callable[[], float]
+    remaining_requests: int = MAX_LIVE_GITHUB_REQUESTS
+    remaining_bytes: int = MAX_LIVE_GITHUB_RESPONSE_BYTES
+
+    def checkpoint(self) -> None:
+        if self.clock() >= self.deadline:
+            raise GateError("GitHub live revalidation exceeded its deadline")
+
+    def begin_request(self) -> float:
+        self.checkpoint()
+        if self.remaining_requests <= 0:
+            raise GateError("GitHub live revalidation request budget exceeded")
+        self.remaining_requests -= 1
+        return self.operation_timeout()
+
+    def operation_timeout(self) -> float:
+        remaining_seconds = self.deadline - self.clock()
+        if remaining_seconds <= 0:
+            raise GateError("GitHub live revalidation exceeded its deadline")
+        return min(HTTP_TIMEOUT_SECONDS, remaining_seconds)
+
+    def consume_bytes(self, count: int) -> None:
+        if count < 0 or count > self.remaining_bytes:
+            raise GateError("GitHub live revalidation byte budget exceeded")
+        self.remaining_bytes -= count
+        self.checkpoint()
+
+
+_ACTIVE_GITHUB_READ_BUDGET: ContextVar[GitHubReadBudget | None] = ContextVar(
+    "active_github_read_budget",
+    default=None,
+)
+
+
+@contextmanager
+def github_read_budget_scope(budget: GitHubReadBudget) -> Iterator[None]:
+    if _ACTIVE_GITHUB_READ_BUDGET.get() is not None:
+        raise GateError("GitHub live revalidation budget scope is nested")
+    token = _ACTIVE_GITHUB_READ_BUDGET.set(budget)
+    try:
+        yield
+    finally:
+        _ACTIVE_GITHUB_READ_BUDGET.reset(token)
 
 
 @dataclass(frozen=True)
@@ -307,6 +375,7 @@ class RuntimeAuthoritySnapshot:
 @dataclass(frozen=True)
 class MergeGroupSnapshot:
     repository: str
+    repository_id: int
     base_ref: str
     base_sha: str
     queue_ref: str
@@ -322,9 +391,10 @@ class MergeGroupSnapshot:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": MERGE_GROUP_SNAPSHOT_KIND,
             "repository": self.repository,
+            "repository_id": self.repository_id,
             "base": {
                 "ref": self.base_ref,
                 "sha": self.base_sha,
@@ -363,8 +433,13 @@ class PredecessorAuditEvidence:
     workflow_id: int
     workflow_run_attempt: int
     job_id: int
+    workflow_created_at: str
+    workflow_started_at: str
+    workflow_updated_at: str
     started_at: str
     completed_at: str
+    job_started_at: str
+    job_completed_at: str
     sha256: str
 
     def as_dict(self) -> dict[str, Any]:
@@ -443,9 +518,41 @@ class MergeGroupRuntimeEvidence:
 
 
 @dataclass(frozen=True)
+class MergeGroupPredecessorAuthorityEvidence:
+    mode: str
+    base_sha: str
+    queue_sha: str
+    pull_request_number: int
+    projection_sha256: str
+    parent_sha: str | None
+    audit: PredecessorAuditEvidence | None
+    candidate_ref: str | None
+    bootstrap_markers: tuple[str, ...]
+    bootstrap_marker_sha256: str | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "kind": MERGE_GROUP_PREDECESSOR_AUTHORITY_KIND,
+            "mode": self.mode,
+            "base_sha": self.base_sha,
+            "queue_sha": self.queue_sha,
+            "pull_request_number": self.pull_request_number,
+            "projection_sha256": self.projection_sha256,
+            "parent_sha": self.parent_sha,
+            "audit": self.audit.as_dict() if self.audit is not None else None,
+            "candidate_ref": self.candidate_ref,
+            "bootstrap_markers": list(self.bootstrap_markers),
+            "bootstrap_marker_sha256": self.bootstrap_marker_sha256,
+        }
+
+
+@dataclass(frozen=True)
 class MergeGroupLiveAuthorityEvidence:
     snapshot_sha256: str
     tcb_sha256: str
+    predecessor_authority: MergeGroupPredecessorAuthorityEvidence
+    predecessor_authority_sha256: str
     observed_at: str
     valid_until: str
 
@@ -453,7 +560,12 @@ class MergeGroupLiveAuthorityEvidence:
         return {
             "schema_version": 1,
             "kind": MERGE_GROUP_LIVE_AUTHORITY_KIND,
-            **asdict(self),
+            "snapshot_sha256": self.snapshot_sha256,
+            "tcb_sha256": self.tcb_sha256,
+            "predecessor_authority": self.predecessor_authority.as_dict(),
+            "predecessor_authority_sha256": self.predecessor_authority_sha256,
+            "observed_at": self.observed_at,
+            "valid_until": self.valid_until,
         }
 
 
@@ -1065,18 +1177,118 @@ def expected_pull_request_snapshot(
     )
 
 
-def _read_bounded_response(response: Any, *, max_bytes: int) -> bytes:
+def _read_bounded_response(
+    response: Any,
+    *,
+    max_bytes: int,
+    shared_budget: GitHubReadBudget | None = None,
+) -> bytes:
     chunks: list[bytes] = []
     total = 0
     while True:
-        chunk = response.read(min(64 * 1024, max_bytes - total + 1))
+        if shared_budget is not None:
+            _set_github_response_read_timeout(
+                response,
+                shared_budget.operation_timeout(),
+            )
+        read_limit = min(64 * 1024, max_bytes - total + 1)
+        if shared_budget is not None:
+            read_limit = min(read_limit, shared_budget.remaining_bytes + 1)
+        chunk = response.read(read_limit)
         if not chunk:
             break
         total += len(chunk)
         if total > max_bytes:
             raise GateError("GitHub response exceeded the trusted byte limit")
+        if shared_budget is not None:
+            shared_budget.consume_bytes(len(chunk))
         chunks.append(chunk)
+    if shared_budget is not None:
+        shared_budget.checkpoint()
     return b"".join(chunks)
+
+
+def _set_github_response_read_timeout(response: Any, timeout: float) -> None:
+    fp = getattr(response, "fp", None)
+    raw = getattr(fp, "raw", None)
+    transport = getattr(raw, "_sock", None)
+    setter = getattr(transport, "settimeout", None)
+    if not callable(setter):
+        raise GateError("GitHub response transport timeout is unavailable")
+    try:
+        setter(timeout)
+    except (OSError, TypeError, ValueError) as exc:
+        raise GateError("GitHub response transport timeout failed closed") from exc
+
+
+def _canonical_github_http_date(value: Any) -> dt.datetime:
+    if not isinstance(value, str) or not value or len(value) > 128:
+        raise GateError("GitHub response Date header is invalid")
+    try:
+        parsed = email_utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError) as exc:
+        raise GateError("GitHub response Date header is invalid") from exc
+    if parsed.tzinfo is None:
+        raise GateError("GitHub response Date header is not UTC")
+    normalized = parsed.astimezone(dt.timezone.utc)
+    if normalized.microsecond != 0:
+        raise GateError("GitHub response Date header precision is invalid")
+    return normalized
+
+
+def _github_api_response(
+    method: str,
+    repository: str,
+    route: str,
+    *,
+    token: str,
+    payload: dict[str, Any] | None = None,
+    max_bytes: int = MAX_HTTP_RESPONSE_BYTES,
+) -> tuple[bytes, dt.datetime]:
+    repository = canonical_repository(repository)
+    if method != "GET" or payload is not None:
+        raise GateError("GitHub API mutation is prohibited")
+    if not token or any(character in token for character in "\r\n"):
+        raise GateError("GitHub token is unavailable")
+    if route and not route.startswith("/"):
+        raise GateError("GitHub route is invalid")
+    data = None
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "trusted-history-ci",
+    }
+    url = f"https://api.github.com/repos/{repository}{route}"
+    api_request = request.Request(url, data=data, headers=headers, method=method)
+    shared_budget = _ACTIVE_GITHUB_READ_BUDGET.get()
+    timeout = (
+        shared_budget.begin_request()
+        if shared_budget is not None
+        else HTTP_TIMEOUT_SECONDS
+    )
+    try:
+        with request.urlopen(api_request, timeout=timeout) as response:
+            if response.status < 200 or response.status >= 300:
+                raise GateError("GitHub API rejected the trusted request")
+            server_time = _canonical_github_http_date(response.headers.get("Date"))
+            raw = _read_bounded_response(
+                response,
+                max_bytes=max_bytes,
+                shared_budget=shared_budget,
+            )
+    except (error.HTTPError, error.URLError, TimeoutError, OSError) as exc:
+        raise GateError("GitHub API request failed closed") from exc
+    if shared_budget is not None:
+        shared_budget.checkpoint()
+    return raw, server_time
+
+
+def _decode_github_json(raw: bytes) -> Any:
+    try:
+        return json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GateError("GitHub API response is not valid JSON") from exc
 
 
 def github_json(
@@ -1088,33 +1300,43 @@ def github_json(
     payload: dict[str, Any] | None = None,
     max_bytes: int = MAX_HTTP_RESPONSE_BYTES,
 ) -> Any:
-    repository = canonical_repository(repository)
-    if method != "GET" or payload is not None:
-        raise GateError("GitHub API mutation is prohibited")
-    if not token or any(character in token for character in "\r\n"):
-        raise GateError("GitHub token is unavailable")
     if not route.startswith("/"):
         raise GateError("GitHub route is invalid")
-    data = None
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {token}",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "trusted-history-ci",
-    }
-    url = f"https://api.github.com/repos/{repository}{route}"
-    api_request = request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with request.urlopen(api_request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-            if response.status < 200 or response.status >= 300:
-                raise GateError("GitHub API rejected the trusted request")
-            raw = _read_bounded_response(response, max_bytes=max_bytes)
-    except (error.HTTPError, error.URLError, TimeoutError, OSError) as exc:
-        raise GateError("GitHub API request failed closed") from exc
-    try:
-        return json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GateError("GitHub API response is not valid JSON") from exc
+    raw, _server_time = _github_api_response(
+        method,
+        repository,
+        route,
+        token=token,
+        payload=payload,
+        max_bytes=max_bytes,
+    )
+    return _decode_github_json(raw)
+
+
+def github_server_time(
+    *,
+    repository: str,
+    repository_id: int,
+    token: str,
+) -> dt.datetime:
+    repository_id = canonical_positive_integer(
+        repository_id,
+        "GitHub repository clock identity",
+    )
+    raw, server_time = _github_api_response(
+        "GET",
+        repository,
+        "/",
+        token=token,
+        max_bytes=MAX_HTTP_RESPONSE_BYTES,
+    )
+    payload = object_value(_decode_github_json(raw), "GitHub repository clock response")
+    if (
+        payload.get("full_name") != canonical_repository(repository)
+        or payload.get("id") != repository_id
+    ):
+        raise GateError("GitHub repository clock response is stale or lookalike")
+    return server_time
 
 
 def canonical_github_timestamp(value: Any, label: str) -> tuple[str, dt.datetime]:
@@ -1129,13 +1351,26 @@ def canonical_github_timestamp(value: Any, label: str) -> tuple[str, dt.datetime
     return value, parsed
 
 
+def canonical_github_second_timestamp(
+    value: Any,
+    label: str,
+) -> tuple[str, dt.datetime]:
+    text, parsed = canonical_github_timestamp(value, label)
+    expected = parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
+    if text != expected:
+        raise GateError(f"{label} timestamp precision is invalid")
+    return text, parsed
+
+
 def verify_default_github_commit(
     *,
     repository: str,
     repository_id: int,
     git_dir: Path,
+    trusted_base_root: Path,
     base_sha: str,
     head_sha: str,
+    initial_candidate_evidence: dict[str, Any],
     token: str,
 ) -> dict[str, Any]:
     repository = canonical_repository(repository)
@@ -1153,10 +1388,22 @@ def verify_default_github_commit(
         != GITHUB_SQUASH_RECEIPT_KIND
     ):
         raise GateError("trusted GitHub squash receipt contract is unavailable")
-    squash_configuration = read_default_squash_configuration(
+    candidate_evidence = resolve_default_candidate_evidence(
         repository=repository,
+        repository_id=repository_id,
+        trusted_base_root=trusted_base_root,
+        base_sha=base_sha,
+        head_sha=head_sha,
         token=token,
     )
+    if candidate_evidence != initial_candidate_evidence:
+        raise GateError("default candidate evidence changed before final validation")
+    squash_configuration = {
+        "squash_merge_commit_title": candidate_evidence["squash_merge_commit_title"],
+        "squash_merge_commit_message": candidate_evidence[
+            "squash_merge_commit_message"
+        ],
+    }
     raw_commit = git_output(
         git_dir.resolve(),
         "cat-file",
@@ -1257,35 +1504,37 @@ def verify_default_github_commit(
     )
     if committer_login != "web-flow":
         raise GateError("GitHub default commit provider identity is invalid")
-    pull_evidence = verify_default_merged_pull_request(
-        repository=repository,
-        repository_id=repository_id,
-        base_sha=base_sha,
-        head_sha=head_sha,
-        squash_configuration=squash_configuration,
-        token=token,
-    )
     if (
         parsed.pull_request_number is not None
-        and parsed.pull_request_number != pull_evidence["pull_request_number"]
+        and parsed.pull_request_number != candidate_evidence["pull_request_number"]
     ):
         raise GateError(
             "GitHub squash subject pull request differs from the associated pull request"
         )
-    if parsed.pull_request_title_sha256 != pull_evidence["pull_request_title_sha256"]:
+    if (
+        parsed.pull_request_title_sha256
+        != candidate_evidence["pull_request_title_sha256"]
+    ):
         raise GateError(
             "GitHub squash subject differs from the associated pull request"
         )
     if (
-        read_default_squash_configuration(
+        resolve_default_candidate_evidence(
             repository=repository,
+            repository_id=repository_id,
+            trusted_base_root=trusted_base_root,
+            base_sha=base_sha,
+            head_sha=head_sha,
             token=token,
         )
-        != squash_configuration
+        != candidate_evidence
     ):
-        raise GateError("repository squash configuration changed during collection")
+        raise GateError("default candidate evidence changed during final validation")
+    candidate_evidence_sha256 = hashlib.sha256(
+        compact_json_bytes(candidate_evidence)
+    ).hexdigest()
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": GITHUB_SQUASH_RECEIPT_KIND,
         "repository": repository,
         "base_sha": base_sha,
@@ -1298,7 +1547,20 @@ def verify_default_github_commit(
         "github_committer_login": committer_login,
         "verification_reason": "valid",
         "verified_at": verified_at_text,
-        **pull_evidence,
+        "pull_request_number": candidate_evidence["pull_request_number"],
+        "pull_request_title_sha256": candidate_evidence["pull_request_title_sha256"],
+        "pull_request_node_identity_sha256": candidate_evidence[
+            "pull_request_node_identity_sha256"
+        ],
+        "repository_identity_sha256": candidate_evidence["repository_identity_sha256"],
+        "pull_request_provenance_sha256": candidate_evidence[
+            "pull_request_provenance_sha256"
+        ],
+        "pull_request_merged_at": candidate_evidence["pull_request_merged_at"],
+        **squash_configuration,
+        "candidate_sha": candidate_evidence["candidate_sha"],
+        "candidate_evidence_sha256": candidate_evidence_sha256,
+        "candidate_evidence": candidate_evidence,
     }
 
 
@@ -1471,6 +1733,203 @@ def read_default_squash_configuration(
     }
 
 
+def _read_exact_admission_check(
+    *,
+    repository: str,
+    head_sha: str,
+    check_name: str,
+    token: str,
+    label: str,
+) -> tuple[dict[str, Any], dict[str, Any], dt.datetime]:
+    app_id = canonical_admission_app_id(ADMISSION_RECORD_APP_ID)
+    head_sha = canonical_oid(head_sha, f"{label} head")
+    encoded_sha = parse.quote(head_sha, safe="")
+    encoded_name = parse.quote(check_name, safe="")
+    checks = github_paginated_object_items(
+        repository=repository,
+        route=(
+            f"/commits/{encoded_sha}/check-runs?check_name={encoded_name}&filter=all"
+        ),
+        item_key="check_runs",
+        token=token,
+        label=label,
+    )
+    if len(checks) != 1:
+        raise GateError(f"{label} is missing or ambiguous")
+    check = object_value(checks[0], label)
+    app = object_value(check.get("app"), f"{label} App")
+    suite = object_value(check.get("check_suite"), f"{label} suite")
+    output = object_value(check.get("output"), f"{label} output")
+    check_run_id = canonical_positive_integer(check.get("id"), f"{label} ID")
+    check_suite_id = canonical_positive_integer(
+        suite.get("id"),
+        f"{label} suite ID",
+    )
+    node_id = check.get("node_id")
+    external_id = check.get("external_id")
+    raw_record = output.get("text")
+    started_at, started_time = canonical_github_timestamp(
+        check.get("started_at"),
+        f"{label} start",
+    )
+    completed_at, completed_time = canonical_github_timestamp(
+        check.get("completed_at"),
+        f"{label} completion",
+    )
+    if (
+        check.get("name") != check_name
+        or check.get("head_sha") != head_sha
+        or check.get("status") != "completed"
+        or check.get("conclusion") != "success"
+        or app.get("id") != app_id
+        or app.get("slug") != ADMISSION_RECORD_APP_SLUG
+        or not isinstance(node_id, str)
+        or not node_id
+        or len(node_id.encode("ascii", errors="ignore")) != len(node_id)
+        or len(node_id) > 256
+        or not isinstance(external_id, str)
+        or not isinstance(raw_record, str)
+        or output.get("title") != ADMISSION_RECORD_OUTPUT_TITLE
+        or output.get("annotations_count") != 0
+        or started_time > completed_time
+    ):
+        raise GateError(f"{label} is stale or lookalike")
+    try:
+        record_bytes = raw_record.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise GateError(f"{label} record is not UTF-8") from exc
+    if len(record_bytes) > MAX_POLICY_JSON_BYTES:
+        raise GateError(f"{label} record exceeds the trusted byte limit")
+    try:
+        admission = json.loads(
+            record_bytes,
+            object_pairs_hook=reject_duplicate_object,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GateError(f"{label} record is not valid JSON") from exc
+    admission = object_value(admission, f"{label} record")
+    if compact_json_bytes(admission) != record_bytes:
+        raise GateError(f"{label} record is not canonical")
+    parse_merge_group_admission_payload(admission)
+    admission_sha256 = hashlib.sha256(record_bytes).hexdigest()
+    if (
+        external_id != ADMISSION_RECORD_EXTERNAL_ID_PREFIX + admission_sha256
+        or output.get("summary")
+        != ADMISSION_RECORD_OUTPUT_SUMMARY_PREFIX + admission_sha256
+    ):
+        raise GateError(f"{label} output binding differs")
+    return (
+        {
+            "schema_version": 1,
+            "kind": DEFAULT_ADMISSION_CHECK_KIND,
+            "check_name": check_name,
+            "check_run_id": check_run_id,
+            "check_run_node_id": node_id,
+            "check_suite_id": check_suite_id,
+            "head_sha": head_sha,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "external_id": external_id,
+            "output_title": ADMISSION_RECORD_OUTPUT_TITLE,
+            "output_summary": (
+                ADMISSION_RECORD_OUTPUT_SUMMARY_PREFIX + admission_sha256
+            ),
+            "admission_sha256": admission_sha256,
+        },
+        admission,
+        completed_time,
+    )
+
+
+def read_post_merge_admission_binding(
+    *,
+    repository: str,
+    repository_id: int,
+    base_sha: str,
+    candidate_sha: str,
+    candidate_ref: str,
+    pull_request_number: int,
+    pull_request_node_id: str,
+    merged_at: str,
+    token: str,
+) -> dict[str, Any]:
+    repository = canonical_repository(repository)
+    repository_id = canonical_positive_integer(
+        repository_id,
+        "post-merge admission repository identity",
+    )
+    base_sha = canonical_oid(base_sha, "post-merge admission base")
+    candidate_sha = canonical_oid(candidate_sha, "post-merge admission candidate")
+    if (
+        not isinstance(candidate_ref, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}", candidate_ref) is None
+        or ".." in candidate_ref
+        or "@{" in candidate_ref
+        or candidate_ref.endswith(".lock")
+    ):
+        raise GateError("post-merge admission candidate ref is invalid")
+    candidate_check, admission, candidate_completed = _read_exact_admission_check(
+        repository=repository,
+        head_sha=candidate_sha,
+        check_name=ADMISSION_RECORD_CHECK_CONTEXT,
+        token=token,
+        label="candidate admission record check",
+    )
+    snapshot, projection, _runtime, live_authority = (
+        parse_merge_group_admission_payload(admission)
+    )
+    queue_check, queue_admission, queue_completed = _read_exact_admission_check(
+        repository=repository,
+        head_sha=snapshot.queue_sha,
+        check_name=REQUIRED_CHECK_CONTEXT,
+        token=token,
+        label="queue admission gate check",
+    )
+    if queue_check["admission_sha256"] != candidate_check["admission_sha256"]:
+        raise GateError("candidate and queue checks do not bind the same admission")
+    _observed_text, observed_time = canonical_github_timestamp(
+        live_authority.observed_at,
+        "post-merge admission live observation",
+    )
+    _valid_text, valid_until = canonical_github_timestamp(
+        live_authority.valid_until,
+        "post-merge admission live expiration",
+    )
+    _merged_text, merged_time = canonical_github_timestamp(
+        merged_at,
+        "post-merge admission merge",
+    )
+    if (
+        snapshot.repository != repository
+        or snapshot.repository_id != repository_id
+        or snapshot.base_sha != base_sha
+        or snapshot.candidate_sha != candidate_sha
+        or snapshot.candidate_ref != candidate_ref
+        or snapshot.pull_request_number != pull_request_number
+        or snapshot.pull_request_node_id != pull_request_node_id
+        or projection.queue_base_sha != base_sha
+        or projection.candidate_sha != candidate_sha
+        or projection.queue_sha != snapshot.queue_sha
+        or projection.prospective_tree_sha != projection.queue_tree_sha
+        or not (observed_time <= candidate_completed <= queue_completed < valid_until)
+        or queue_completed > merged_time
+    ):
+        raise GateError("post-merge admission binding is stale or inconsistent")
+    admission_sha256 = candidate_check["admission_sha256"]
+    return {
+        "schema_version": 1,
+        "kind": POST_MERGE_ADMISSION_BINDING_KIND,
+        "app": {
+            "id": canonical_admission_app_id(ADMISSION_RECORD_APP_ID),
+            "slug": ADMISSION_RECORD_APP_SLUG,
+        },
+        "admission_sha256": admission_sha256,
+        "admission": admission,
+        "candidate_record_check": candidate_check,
+        "queue_gate_check": queue_check,
+    }
+
+
 def verify_default_merged_pull_request(
     *,
     repository: str,
@@ -1478,8 +1937,11 @@ def verify_default_merged_pull_request(
     base_sha: str,
     head_sha: str,
     squash_configuration: dict[str, str],
+    authority_mode: str,
     token: str,
 ) -> dict[str, Any]:
+    if authority_mode not in {"bootstrap-v2-migration", "history-v2-admission"}:
+        raise GateError("default candidate authority mode is invalid")
     encoded_sha = parse.quote(head_sha, safe="")
     associated_before = github_paginated_list(
         repository=repository,
@@ -1512,6 +1974,11 @@ def verify_default_merged_pull_request(
         pull.get("merged_at"),
         "default squash pull request merge",
     )
+    candidate_sha = canonical_oid(
+        head.get("sha"),
+        "default squash candidate head",
+    )
+    candidate_ref = head.get("ref")
     title = pull.get("title")
     if (
         pull.get("number") != number
@@ -1526,6 +1993,17 @@ def verify_default_merged_pull_request(
         or base.get("sha") != base_sha
         or head_repository.get("full_name") != repository
         or head_repository.get("id") != repository_id
+        or not isinstance(candidate_ref, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}", candidate_ref) is None
+        or ".." in candidate_ref
+        or "@{" in candidate_ref
+        or candidate_ref.endswith(".lock")
+        or (
+            authority_mode == "bootstrap-v2-migration"
+            and candidate_ref != BOOTSTRAP_CANDIDATE_REF
+        )
+        or candidate_sha in {base_sha, head_sha}
+        or len(candidate_sha) != len(head_sha)
         or not isinstance(title, str)
         or not title
         or len(title.encode("utf-8")) > 256
@@ -1537,6 +2015,19 @@ def verify_default_merged_pull_request(
         }
     ):
         raise GateError("default squash pull request provenance is stale or lookalike")
+    admission_binding = None
+    if authority_mode == "history-v2-admission":
+        admission_binding = read_post_merge_admission_binding(
+            repository=repository,
+            repository_id=repository_id,
+            candidate_sha=candidate_sha,
+            candidate_ref=candidate_ref,
+            base_sha=base_sha,
+            pull_request_number=number,
+            pull_request_node_id=node_id,
+            merged_at=merged_at,
+            token=token,
+        )
     associated_after = github_paginated_list(
         repository=repository,
         route=f"/commits/{encoded_sha}/pulls",
@@ -1551,12 +2042,15 @@ def verify_default_merged_pull_request(
     node_identity_sha256 = hashlib.sha256(node_id.encode("utf-8")).hexdigest()
     title_sha256 = hashlib.sha256(title.encode("utf-8")).hexdigest()
     provenance = {
+        "authority_mode": authority_mode,
         "base_ref": DEFAULT_BRANCH,
         "base_repository": repository,
         "base_repository_id": repository_id,
         "base_sha": base_sha,
         "head_repository": repository,
         "head_repository_id": repository_id,
+        "head_ref": candidate_ref,
+        "candidate_sha": candidate_sha,
         "merge_commit_sha": head_sha,
         "merged_at": merged_at,
         "node_identity_sha256": node_identity_sha256,
@@ -1570,7 +2064,10 @@ def verify_default_merged_pull_request(
         separators=(",", ":"),
     ).encode("utf-8")
     return {
+        "authority_mode": authority_mode,
         "pull_request_number": number,
+        "candidate_ref": candidate_ref,
+        "candidate_sha": candidate_sha,
         "pull_request_title_sha256": title_sha256,
         "pull_request_node_identity_sha256": node_identity_sha256,
         "repository_identity_sha256": hashlib.sha256(
@@ -1578,8 +2075,97 @@ def verify_default_merged_pull_request(
         ).hexdigest(),
         "pull_request_provenance_sha256": hashlib.sha256(provenance_bytes).hexdigest(),
         "pull_request_merged_at": merged_at,
+        "admission_binding": admission_binding,
         **squash_configuration,
     }
+
+
+def default_candidate_authority_mode(
+    trusted_base_root: Path,
+    base_sha: str,
+) -> str:
+    base_sha = canonical_oid(base_sha, "default candidate trusted base")
+    trusted_base_root = trusted_base_root.resolve()
+    _worktree_head(trusted_base_root, base_sha, "trusted default predecessor")
+    validator = trusted_validator_module(contract="github-squash")
+    try:
+        markers = validator.history_v2_bootstrap_markers(
+            trusted_base_root,
+            base_sha,
+        )
+    except Exception as exc:
+        raise GateError("trusted predecessor marker classification failed") from exc
+    expected_markers = frozenset(Path(value) for value in BOOTSTRAP_TEMPORARY_PATHS)
+    if markers:
+        if markers != expected_markers:
+            raise GateError("trusted predecessor bootstrap markers are incomplete")
+        return "bootstrap-v2-migration"
+    return "history-v2-admission"
+
+
+def resolve_default_candidate_evidence(
+    *,
+    repository: str,
+    repository_id: int,
+    trusted_base_root: Path,
+    base_sha: str,
+    head_sha: str,
+    token: str,
+) -> dict[str, Any]:
+    repository = canonical_repository(repository)
+    repository_id = canonical_positive_integer(
+        repository_id,
+        "default event repository ID",
+    )
+    base_sha = canonical_oid(base_sha, "default event base")
+    head_sha = canonical_oid(head_sha, "default event head")
+    authority_mode = default_candidate_authority_mode(
+        trusted_base_root,
+        base_sha,
+    )
+    squash_configuration = read_default_squash_configuration(
+        repository=repository,
+        token=token,
+    )
+    pull_evidence = verify_default_merged_pull_request(
+        repository=repository,
+        repository_id=repository_id,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        squash_configuration=squash_configuration,
+        authority_mode=authority_mode,
+        token=token,
+    )
+    if (
+        read_default_squash_configuration(
+            repository=repository,
+            token=token,
+        )
+        != squash_configuration
+    ):
+        raise GateError("repository squash configuration changed during collection")
+    return {
+        "schema_version": 1,
+        "kind": DEFAULT_CANDIDATE_EVIDENCE_KIND,
+        "authority_mode": authority_mode,
+        "repository": repository,
+        "repository_id": repository_id,
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        **pull_evidence,
+    }
+
+
+def load_default_candidate_evidence(path: Path) -> dict[str, Any]:
+    payload, raw = read_bounded_json_file(
+        path,
+        "default candidate evidence",
+        max_bytes=MAX_POLICY_JSON_BYTES,
+        expected_owner_uid=os.geteuid(),
+    )
+    if raw != compact_json_bytes(payload):
+        raise GateError("default candidate evidence is not canonical")
+    return payload
 
 
 def _validate_predecessor_pull_request(
@@ -1997,8 +2583,13 @@ def read_trusted_predecessor_audit_evidence(
         workflow_id=workflow_id,
         workflow_run_attempt=workflow_run_attempt,
         job_id=job_id,
+        workflow_created_at=workflow_created,
+        workflow_started_at=workflow_started,
+        workflow_updated_at=workflow_updated,
         started_at=check_started,
         completed_at=check_completed,
+        job_started_at=job_started,
+        job_completed_at=job_completed,
         sha256=hashlib.sha256(compact_json_bytes(normalized)).hexdigest(),
     )
 
@@ -2061,11 +2652,18 @@ def validate_repository_merge_configuration(
     payload: Any,
     *,
     repository: str,
+    repository_id: int | None = None,
 ) -> dict[str, Any]:
     repository = canonical_repository(repository)
+    if repository_id is not None:
+        repository_id = canonical_positive_integer(
+            repository_id,
+            "repository configuration identity",
+        )
     value = object_value(payload, "repository configuration")
     if (
         value.get("full_name") != repository
+        or (repository_id is not None and value.get("id") != repository_id)
         or value.get("default_branch") != DEFAULT_BRANCH
         or value.get("allow_squash_merge") is not True
         or value.get("allow_merge_commit") is not False
@@ -2095,6 +2693,10 @@ def _required_check_entries(
 
 def canonical_admission_app_id(value: Any) -> int:
     app_id = canonical_positive_integer(value, "external admission App ID")
+    if ADMISSION_RECORD_APP_ID is None:
+        raise GateError("external admission App identity is not pinned")
+    if app_id != ADMISSION_RECORD_APP_ID:
+        raise GateError("external admission App differs from the pinned identity")
     if app_id == GITHUB_ACTIONS_APP_ID:
         raise GateError("external admission App must not be GitHub Actions")
     return app_id
@@ -2147,6 +2749,7 @@ def validate_active_branch_rules(
     )
     if (
         queue_parameters.get("merge_method") != "SQUASH"
+        or queue_parameters.get("max_entries_to_build") != 1
         or queue_parameters.get("max_entries_to_merge") != 1
         or queue_parameters.get("min_entries_to_merge") != 1
     ):
@@ -2252,10 +2855,15 @@ def validate_merge_group_pull_request(
     payload: Any,
     *,
     repository: str,
+    repository_id: int,
     number: int,
     base_sha: str,
 ) -> tuple[PullRequestSnapshot, str]:
     repository = canonical_repository(repository)
+    repository_id = canonical_positive_integer(
+        repository_id,
+        "merge-group repository identity",
+    )
     number = canonical_positive_integer(number, "merge-group pull request number")
     base_sha = canonical_oid(base_sha, "merge-group base")
     pull = object_value(payload, "merge-group pull request")
@@ -2284,12 +2892,14 @@ def validate_merge_group_pull_request(
         raise GateError("merge-group pull request is draft")
     if (
         base_repo.get("full_name") != repository
+        or base_repo.get("id") != repository_id
         or base.get("ref") != DEFAULT_BRANCH
         or base.get("sha") != base_sha
     ):
         raise GateError("merge-group pull request base changed")
     if (
         head_repo.get("full_name") != repository
+        or head_repo.get("id") != repository_id
         or not isinstance(head_ref, str)
         or not head_ref
         or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}", head_ref) is None
@@ -2328,11 +2938,16 @@ def validate_merge_group_event(
     payload: Any,
     *,
     repository: str,
+    repository_id: int,
     event_ref: str,
     event_sha: str,
     workflow_sha: str,
 ) -> tuple[int, str, str]:
     repository = canonical_repository(repository)
+    repository_id = canonical_positive_integer(
+        repository_id,
+        "merge-group event repository identity",
+    )
     event_sha = canonical_oid(event_sha, "merge-group event SHA")
     workflow_sha = canonical_oid(workflow_sha, "merge-group workflow SHA")
     event = object_value(payload, "merge-group event")
@@ -2353,6 +2968,7 @@ def validate_merge_group_event(
     if (
         event.get("action") != "checks_requested"
         or event_repository.get("full_name") != repository
+        or event_repository.get("id") != repository_id
         or base_ref != DEFAULT_BRANCH_REF
         or match is None
         or event_ref != queue_ref
@@ -2388,6 +3004,7 @@ def validate_trusted_branch_configuration(
     ruleset_summaries: Any,
     ruleset_details: list[Any],
     repository: str,
+    repository_id: int,
     admission_app_id: int,
 ) -> str:
     admission_app_id = canonical_admission_app_id(admission_app_id)
@@ -2395,6 +3012,7 @@ def validate_trusted_branch_configuration(
         "repository": validate_repository_merge_configuration(
             repository_payload,
             repository=repository,
+            repository_id=repository_id,
         ),
         "active_rules": validate_active_branch_rules(
             active_rules_payload,
@@ -2415,6 +3033,7 @@ def validate_trusted_branch_configuration(
 def read_live_merge_group_snapshot(
     *,
     repository: str,
+    repository_id: int,
     event_path: Path,
     event_ref: str,
     event_sha: str,
@@ -2423,6 +3042,10 @@ def read_live_merge_group_snapshot(
     token: str,
 ) -> MergeGroupSnapshot:
     repository = canonical_repository(repository)
+    repository_id = canonical_positive_integer(
+        repository_id,
+        "merge-group repository identity",
+    )
     event_payload, _raw = read_bounded_json_file(
         event_path,
         "merge-group event payload",
@@ -2431,6 +3054,7 @@ def read_live_merge_group_snapshot(
     number, base_sha, queue_sha = validate_merge_group_event(
         event_payload,
         repository=repository,
+        repository_id=repository_id,
         event_ref=event_ref,
         event_sha=event_sha,
         workflow_sha=workflow_sha,
@@ -2447,6 +3071,7 @@ def read_live_merge_group_snapshot(
     pull, title = validate_merge_group_pull_request(
         pull_payload,
         repository=repository,
+        repository_id=repository_id,
         number=number,
         base_sha=base_sha,
     )
@@ -2464,7 +3089,7 @@ def read_live_merge_group_snapshot(
         queue_ref=event_ref,
         queue_sha=queue_sha,
     )
-    repository_payload = github_json("GET", repository, "", token=token)
+    repository_payload = github_json("GET", repository, "/", token=token)
     active_rules_payload = github_json(
         "GET",
         repository,
@@ -2504,10 +3129,12 @@ def read_live_merge_group_snapshot(
         ruleset_summaries=ruleset_summaries,
         ruleset_details=ruleset_details,
         repository=repository,
+        repository_id=repository_id,
         admission_app_id=admission_app_id,
     )
     return MergeGroupSnapshot(
         repository=repository,
+        repository_id=repository_id,
         base_ref=DEFAULT_BRANCH_REF,
         base_sha=base_sha,
         queue_ref=event_ref,
@@ -2523,52 +3150,206 @@ def read_live_merge_group_snapshot(
     )
 
 
-def _utc_now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
-
-
 def _format_utc_timestamp(value: dt.datetime, label: str) -> str:
-    if value.tzinfo != dt.timezone.utc:
+    if value.tzinfo != dt.timezone.utc or value.microsecond != 0:
         raise GateError(f"{label} is not UTC")
-    encoded = value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    encoded = value.isoformat(timespec="seconds").replace("+00:00", "Z")
     canonical_github_timestamp(encoded, label)
     return encoded
+
+
+def _github_clock_second(value: dt.datetime, label: str) -> dt.datetime:
+    if not isinstance(value, dt.datetime) or value.tzinfo != dt.timezone.utc:
+        raise GateError(f"{label} is not UTC")
+    return value.replace(microsecond=0)
+
+
+def _predecessor_audit_normalized_payload(
+    evidence: PredecessorAuditEvidence,
+) -> dict[str, Any]:
+    return {
+        "base_sha": evidence.base_sha,
+        "parent_sha": evidence.parent_sha,
+        "pull_request_number": evidence.pull_request_number,
+        "pull_request_node_id": evidence.pull_request_node_id,
+        "candidate_sha": evidence.candidate_sha,
+        "merged_at": evidence.merged_at,
+        "check_run_id": evidence.check_run_id,
+        "check_run_node_id": evidence.check_run_node_id,
+        "check_suite_id": evidence.check_suite_id,
+        "workflow_run_id": evidence.workflow_run_id,
+        "workflow_id": evidence.workflow_id,
+        "workflow_run_attempt": evidence.workflow_run_attempt,
+        "job_id": evidence.job_id,
+        "workflow_created_at": evidence.workflow_created_at,
+        "workflow_started_at": evidence.workflow_started_at,
+        "workflow_updated_at": evidence.workflow_updated_at,
+        "check_started_at": evidence.started_at,
+        "check_completed_at": evidence.completed_at,
+        "job_started_at": evidence.job_started_at,
+        "job_completed_at": evidence.job_completed_at,
+    }
+
+
+def _validate_predecessor_audit_digest(
+    evidence: PredecessorAuditEvidence,
+) -> None:
+    if (
+        evidence.sha256
+        != hashlib.sha256(
+            compact_json_bytes(_predecessor_audit_normalized_payload(evidence))
+        ).hexdigest()
+    ):
+        raise GateError("predecessor audit evidence digest differs")
+
+
+def _bootstrap_marker_payload(
+    *,
+    snapshot: MergeGroupSnapshot,
+    projection: MergeGroupProjection,
+    markers: tuple[str, ...],
+) -> dict[str, Any]:
+    return {
+        "base_sha": snapshot.base_sha,
+        "queue_sha": snapshot.queue_sha,
+        "pull_request_number": snapshot.pull_request_number,
+        "projection_sha256": merge_group_projection_sha256(projection),
+        "candidate_ref": snapshot.candidate_ref,
+        "bootstrap_markers": list(markers),
+    }
+
+
+def _predecessor_authority_context(
+    *,
+    expected: MergeGroupSnapshot,
+    projection: MergeGroupProjection,
+    policy: str,
+    trusted_base_root: Path,
+) -> tuple[str | None, tuple[str, ...], str | None]:
+    trusted_base_root = trusted_base_root.resolve()
+    _worktree_head(trusted_base_root, expected.base_sha, "trusted B1")
+    validator = trusted_validator_module(
+        contract="bootstrap" if policy == "bootstrap-v2" else "permanent"
+    )
+    try:
+        observed_markers = validator.history_v2_bootstrap_markers(
+            trusted_base_root,
+            expected.base_sha,
+        )
+    except Exception as exc:
+        raise GateError("trusted B1 bootstrap markers could not be read") from exc
+    markers = tuple(sorted(path.as_posix() for path in observed_markers))
+    expected_markers = tuple(sorted(BOOTSTRAP_TEMPORARY_PATHS))
+    if policy == "bootstrap-v2":
+        if (
+            markers != expected_markers
+            or expected.candidate_ref != BOOTSTRAP_CANDIDATE_REF
+            or projection.policy != policy
+            or projection.role != "admin"
+            or projection.candidate_base_sha != expected.base_sha
+            or projection.queue_base_sha != expected.base_sha
+            or projection.candidate_sha != expected.candidate_sha
+            or projection.queue_sha != expected.queue_sha
+        ):
+            raise GateError("bootstrap predecessor migration exception is invalid")
+        marker_sha256 = hashlib.sha256(
+            compact_json_bytes(
+                _bootstrap_marker_payload(
+                    snapshot=expected,
+                    projection=projection,
+                    markers=markers,
+                )
+            )
+        ).hexdigest()
+        return None, markers, marker_sha256
+    if policy != "history-v2":
+        raise GateError("predecessor authority policy is invalid")
+    if markers:
+        raise GateError("history-v2 predecessor still contains bootstrap markers")
+    if projection.policy != policy:
+        raise GateError("predecessor authority projection policy differs")
+    return _single_worktree_parent(trusted_base_root, expected.base_sha), (), None
 
 
 def revalidate_external_merge_group_authority(
     *,
     expected: MergeGroupSnapshot,
+    projection: MergeGroupProjection,
+    policy: str,
+    trusted_base_root: Path,
     event_path: Path,
     event_ref: str,
     event_sha: str,
     workflow_sha: str,
     admission_app_id: int,
     token: str,
-    clock: Callable[[], dt.datetime] = _utc_now,
+    clock: Callable[[], dt.datetime] | None = None,
+    monotonic_clock: Callable[[], float] = time.monotonic,
 ) -> MergeGroupLiveAuthorityEvidence:
-    observed_at = clock()
-    observed_at_text = _format_utc_timestamp(
-        observed_at,
-        "live merge-group authority observation",
-    )
-    valid_until = observed_at + dt.timedelta(
-        seconds=MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS
-    )
-    try:
-        observed = read_live_merge_group_snapshot(
-            repository=expected.repository,
-            event_path=event_path,
-            event_ref=event_ref,
-            event_sha=event_sha,
-            workflow_sha=workflow_sha,
-            admission_app_id=admission_app_id,
-            token=token,
+    parent_sha, bootstrap_markers, bootstrap_marker_sha256 = (
+        _predecessor_authority_context(
+            expected=expected,
+            projection=projection,
+            policy=policy,
+            trusted_base_root=trusted_base_root,
         )
-    except GateError as exc:
-        raise GateError(
-            "live merge-group authority could not be revalidated after runtime"
-        ) from exc
-    completed_at = clock()
+    )
+    live_budget = GitHubReadBudget(
+        deadline=monotonic_clock() + MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS,
+        clock=monotonic_clock,
+    )
+    with github_read_budget_scope(live_budget):
+        clock_source = (
+            clock
+            if clock is not None
+            else lambda: github_server_time(
+                repository=expected.repository,
+                repository_id=expected.repository_id,
+                token=token,
+            )
+        )
+        observed_at = _github_clock_second(
+            clock_source(),
+            "live merge-group authority observation",
+        )
+        observed_at_text = _format_utc_timestamp(
+            observed_at,
+            "live merge-group authority observation",
+        )
+        valid_until = observed_at + dt.timedelta(
+            seconds=MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS
+        )
+        try:
+            observed = read_live_merge_group_snapshot(
+                repository=expected.repository,
+                repository_id=expected.repository_id,
+                event_path=event_path,
+                event_ref=event_ref,
+                event_sha=event_sha,
+                workflow_sha=workflow_sha,
+                admission_app_id=admission_app_id,
+                token=token,
+            )
+        except GateError as exc:
+            raise GateError(
+                "live merge-group authority could not be revalidated after runtime"
+            ) from exc
+        audit = (
+            read_trusted_predecessor_audit_evidence(
+                repository=expected.repository,
+                base_sha=expected.base_sha,
+                parent_sha=parent_sha,
+                current_pr_number=expected.pull_request_number,
+                token=token,
+            )
+            if parent_sha is not None
+            else None
+        )
+        completed_at = _github_clock_second(
+            clock_source(),
+            "live merge-group authority completion",
+        )
+        live_budget.checkpoint()
     _format_utc_timestamp(
         completed_at,
         "live merge-group authority completion",
@@ -2577,11 +3358,44 @@ def revalidate_external_merge_group_authority(
         raise GateError("live merge-group authority revalidation exceeded its window")
     if observed != expected:
         raise GateError("live merge-group authority changed after runtime validation")
+    _worktree_head(trusted_base_root.resolve(), expected.base_sha, "trusted B1")
+    if audit is not None:
+        _validate_predecessor_audit_digest(audit)
+        predecessor_authority = MergeGroupPredecessorAuthorityEvidence(
+            mode="history-v2-required",
+            base_sha=expected.base_sha,
+            queue_sha=expected.queue_sha,
+            pull_request_number=expected.pull_request_number,
+            projection_sha256=merge_group_projection_sha256(projection),
+            parent_sha=parent_sha,
+            audit=audit,
+            candidate_ref=None,
+            bootstrap_markers=(),
+            bootstrap_marker_sha256=None,
+        )
+    else:
+        predecessor_authority = MergeGroupPredecessorAuthorityEvidence(
+            mode="bootstrap-v2-migration-exception",
+            base_sha=expected.base_sha,
+            queue_sha=expected.queue_sha,
+            pull_request_number=expected.pull_request_number,
+            projection_sha256=merge_group_projection_sha256(projection),
+            parent_sha=None,
+            audit=None,
+            candidate_ref=expected.candidate_ref,
+            bootstrap_markers=bootstrap_markers,
+            bootstrap_marker_sha256=bootstrap_marker_sha256,
+        )
+    predecessor_authority_sha256 = hashlib.sha256(
+        compact_json_bytes(predecessor_authority.as_dict())
+    ).hexdigest()
     return MergeGroupLiveAuthorityEvidence(
         snapshot_sha256=hashlib.sha256(
             compact_json_bytes(observed.as_dict())
         ).hexdigest(),
         tcb_sha256=observed.tcb_sha256,
+        predecessor_authority=predecessor_authority,
+        predecessor_authority_sha256=predecessor_authority_sha256,
         observed_at=observed_at_text,
         valid_until=_format_utc_timestamp(
             valid_until,
@@ -3538,7 +4352,7 @@ def load_preflight(path: Path) -> GitPreflight:
         },
         "candidate preflight manifest",
     )
-    if root.get("schema_version") != 2:
+    if type(root.get("schema_version")) is not int or root.get("schema_version") != 2:
         raise GateError("candidate preflight manifest schema is invalid")
     policy = root.get("policy")
     if policy not in {"bootstrap-v2", "history-v2"}:
@@ -3729,17 +4543,15 @@ def verify_preflight_objects(git_dir: Path, manifest: GitPreflight) -> None:
             raise GateError("candidate commit signature verification failed") from exc
 
 
-def load_merge_group_snapshot(path: Path) -> MergeGroupSnapshot:
-    payload, _raw = read_bounded_json_file(
-        path,
-        "merge-group snapshot",
-    )
+def parse_merge_group_snapshot(payload: Any) -> MergeGroupSnapshot:
+    payload = object_value(payload, "merge-group snapshot")
     exact_keys(
         payload,
         {
             "schema_version",
             "kind",
             "repository",
+            "repository_id",
             "base",
             "queue",
             "workflow_sha",
@@ -3749,11 +4561,16 @@ def load_merge_group_snapshot(path: Path) -> MergeGroupSnapshot:
         "merge-group snapshot",
     )
     if (
-        payload.get("schema_version") != 1
+        type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != 2
         or payload.get("kind") != MERGE_GROUP_SNAPSHOT_KIND
     ):
         raise GateError("merge-group snapshot identity is invalid")
     repository = canonical_repository(payload.get("repository"))
+    repository_id = canonical_positive_integer(
+        payload.get("repository_id"),
+        "merge-group snapshot repository identity",
+    )
     base = object_value(payload.get("base"), "merge-group snapshot base")
     queue = object_value(payload.get("queue"), "merge-group snapshot queue")
     pull = object_value(
@@ -3815,6 +4632,7 @@ def load_merge_group_snapshot(path: Path) -> MergeGroupSnapshot:
         raise GateError("merge-group snapshot coordinates are invalid")
     return MergeGroupSnapshot(
         repository=repository,
+        repository_id=repository_id,
         base_ref=DEFAULT_BRANCH_REF,
         base_sha=base_sha,
         queue_ref=queue_ref,
@@ -3830,8 +4648,16 @@ def load_merge_group_snapshot(path: Path) -> MergeGroupSnapshot:
     )
 
 
-def load_merge_group_projection(path: Path) -> MergeGroupProjection:
-    payload, _raw = read_bounded_json_file(path, "merge-group projection")
+def load_merge_group_snapshot(path: Path) -> MergeGroupSnapshot:
+    payload, _raw = read_bounded_json_file(
+        path,
+        "merge-group snapshot",
+    )
+    return parse_merge_group_snapshot(payload)
+
+
+def parse_merge_group_projection(payload: Any) -> MergeGroupProjection:
+    payload = object_value(payload, "merge-group projection")
     exact_keys(
         payload,
         {
@@ -3860,7 +4686,8 @@ def load_merge_group_projection(path: Path) -> MergeGroupProjection:
     subject = payload.get("squash_subject")
     changed_path_count = payload.get("changed_path_count")
     if (
-        payload.get("schema_version") != 1
+        type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != 1
         or payload.get("kind") != "retrospective-history-v2-merge-group-projection"
         or policy not in {"bootstrap-v2", "history-v2"}
         or payload.get("validation_mode") != f"{policy}-prospective-squash"
@@ -3913,13 +4740,17 @@ def load_merge_group_projection(path: Path) -> MergeGroupProjection:
     )
 
 
-def load_merge_group_runtime_evidence(path: Path) -> MergeGroupRuntimeEvidence:
-    authority_uid = os.geteuid()
-    payload, _raw = read_bounded_json_file(
-        path,
-        "merge-group runtime evidence",
-        expected_owner_uid=authority_uid,
-    )
+def load_merge_group_projection(path: Path) -> MergeGroupProjection:
+    payload, _raw = read_bounded_json_file(path, "merge-group projection")
+    return parse_merge_group_projection(payload)
+
+
+def parse_merge_group_runtime_evidence(
+    payload: Any,
+    *,
+    expected_authority_uid: int | None,
+) -> MergeGroupRuntimeEvidence:
+    payload = object_value(payload, "merge-group runtime evidence")
     field_names = {field.name for field in fields(MergeGroupRuntimeEvidence)}
     exact_keys(
         payload,
@@ -3927,7 +4758,8 @@ def load_merge_group_runtime_evidence(path: Path) -> MergeGroupRuntimeEvidence:
         "merge-group runtime evidence",
     )
     if (
-        payload.get("schema_version") != 1
+        type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != 1
         or payload.get("kind") != MERGE_GROUP_RUNTIME_EVIDENCE_KIND
     ):
         raise GateError("merge-group runtime evidence identity is invalid")
@@ -3957,7 +4789,10 @@ def load_merge_group_runtime_evidence(path: Path) -> MergeGroupRuntimeEvidence:
     integers = {name: payload.get(name) for name in integer_names}
     if any(type(value) is not int or value < 0 for value in integers.values()):
         raise GateError("merge-group runtime evidence integers are invalid")
-    if integers["authority_uid"] != authority_uid:
+    if (
+        expected_authority_uid is not None
+        and integers["authority_uid"] != expected_authority_uid
+    ):
         raise GateError(
             "merge-group runtime evidence authority differs from the receipt owner"
         )
@@ -3996,6 +4831,19 @@ def load_merge_group_runtime_evidence(path: Path) -> MergeGroupRuntimeEvidence:
         credential_environment=payload.get("credential_environment"),
         authority_write_access=payload.get("authority_write_access"),
         source_authority_pristine=payload.get("source_authority_pristine"),
+    )
+
+
+def load_merge_group_runtime_evidence(path: Path) -> MergeGroupRuntimeEvidence:
+    authority_uid = os.geteuid()
+    payload, _raw = read_bounded_json_file(
+        path,
+        "merge-group runtime evidence",
+        expected_owner_uid=authority_uid,
+    )
+    return parse_merge_group_runtime_evidence(
+        payload,
+        expected_authority_uid=authority_uid,
     )
 
 
@@ -4228,14 +5076,18 @@ def _normalized_merge_plan(plan: Any) -> dict[str, Any]:
             "squash_subject",
             "trust_generation",
             "role",
+            "changed_path_count",
+            "delta_sha256",
         },
         "B1 immutable merge plan",
     )
     subject = value.get("squash_subject")
     trust_generation = value.get("trust_generation")
     role = value.get("role")
+    changed_path_count = value.get("changed_path_count")
     if (
-        value.get("schema_version") != 1
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
         or not isinstance(subject, str)
         or not subject
         or len(subject.encode("ascii", errors="ignore")) != len(subject)
@@ -4244,8 +5096,14 @@ def _normalized_merge_plan(plan: Any) -> dict[str, Any]:
         or not isinstance(trust_generation, str)
         or re.fullmatch(r"[0-9a-f]{64}", trust_generation) is None
         or role not in {"publication", "admin"}
+        or type(changed_path_count) is not int
+        or changed_path_count < 0
     ):
         raise GateError("B1 immutable merge plan is malformed")
+    canonical_sha256(
+        value.get("delta_sha256"),
+        "B1 immutable merge plan delta",
+    )
     return value
 
 
@@ -4412,6 +5270,14 @@ def _validate_merge_group_graph(
             or plan.get("head_tree_oid") != candidate_commit.tree_oid
         ):
             raise GateError("B1 immutable plan does not bind B0/H/tree")
+        observed_delta_sha256 = hashlib.sha256(
+            compact_json_bytes(candidate_delta)
+        ).hexdigest()
+        if (
+            plan.get("changed_path_count") != len(candidate_delta)
+            or plan.get("delta_sha256") != observed_delta_sha256
+        ):
+            raise GateError("B1 immutable plan does not bind the exact delta")
         trust_at_candidate_base = _trust_generation_entries(
             git_dir,
             candidate_base,
@@ -4613,6 +5479,61 @@ def validate_merge_group_runtime_evidence(
         raise GateError("merge-group runtime evidence requirements digest differs")
 
 
+def _validate_predecessor_authority_evidence(
+    *,
+    snapshot: MergeGroupSnapshot,
+    projection: MergeGroupProjection,
+    evidence: MergeGroupPredecessorAuthorityEvidence,
+) -> dict[str, Any]:
+    expected_projection_sha256 = merge_group_projection_sha256(projection)
+    if (
+        evidence.base_sha != snapshot.base_sha
+        or evidence.queue_sha != snapshot.queue_sha
+        or evidence.pull_request_number != snapshot.pull_request_number
+        or evidence.projection_sha256 != expected_projection_sha256
+    ):
+        raise GateError("predecessor authority evidence is stale or cross-transaction")
+    if projection.policy == "history-v2":
+        audit = evidence.audit
+        if (
+            evidence.mode != "history-v2-required"
+            or evidence.parent_sha is None
+            or audit is None
+            or evidence.candidate_ref is not None
+            or evidence.bootstrap_markers
+            or evidence.bootstrap_marker_sha256 is not None
+            or audit.base_sha != snapshot.base_sha
+            or audit.parent_sha != evidence.parent_sha
+            or audit.pull_request_number == snapshot.pull_request_number
+        ):
+            raise GateError("predecessor authority evidence is invalid")
+        _validate_predecessor_audit_digest(audit)
+    elif projection.policy == "bootstrap-v2":
+        expected_markers = tuple(sorted(BOOTSTRAP_TEMPORARY_PATHS))
+        if (
+            evidence.mode != "bootstrap-v2-migration-exception"
+            or evidence.parent_sha is not None
+            or evidence.audit is not None
+            or evidence.candidate_ref != BOOTSTRAP_CANDIDATE_REF
+            or evidence.bootstrap_markers != expected_markers
+        ):
+            raise GateError("bootstrap predecessor migration exception is invalid")
+        expected_marker_sha256 = hashlib.sha256(
+            compact_json_bytes(
+                _bootstrap_marker_payload(
+                    snapshot=snapshot,
+                    projection=projection,
+                    markers=expected_markers,
+                )
+            )
+        ).hexdigest()
+        if evidence.bootstrap_marker_sha256 != expected_marker_sha256:
+            raise GateError("bootstrap predecessor marker digest differs")
+    else:
+        raise GateError("predecessor authority evidence policy is invalid")
+    return evidence.as_dict()
+
+
 def merge_group_admission_payload(
     *,
     snapshot: MergeGroupSnapshot,
@@ -4621,6 +5542,14 @@ def merge_group_admission_payload(
     live_authority: MergeGroupLiveAuthorityEvidence,
 ) -> dict[str, Any]:
     snapshot_sha256 = hashlib.sha256(compact_json_bytes(snapshot.as_dict())).hexdigest()
+    predecessor_authority = _validate_predecessor_authority_evidence(
+        snapshot=snapshot,
+        projection=projection,
+        evidence=live_authority.predecessor_authority,
+    )
+    predecessor_authority_sha256 = hashlib.sha256(
+        compact_json_bytes(predecessor_authority)
+    ).hexdigest()
     observed_at_text, observed_at = canonical_github_timestamp(
         live_authority.observed_at,
         "live merge-group authority observation",
@@ -4632,12 +5561,18 @@ def merge_group_admission_payload(
     if (
         live_authority.snapshot_sha256 != snapshot_sha256
         or live_authority.tcb_sha256 != snapshot.tcb_sha256
+        or live_authority.predecessor_authority_sha256 != predecessor_authority_sha256
         or valid_until - observed_at
         != dt.timedelta(seconds=MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS)
     ):
         raise GateError("live merge-group authority evidence is invalid")
+    live_authority_payload = {
+        **live_authority.as_dict(),
+        "observed_at": observed_at_text,
+        "valid_until": valid_until_text,
+    }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": MERGE_GROUP_ADMISSION_KIND,
         "decision": "accepted",
         "policy": projection.policy,
@@ -4652,12 +5587,311 @@ def merge_group_admission_payload(
         "runtime_evidence_sha256": hashlib.sha256(
             compact_json_bytes(evidence.as_dict())
         ).hexdigest(),
-        "live_authority": {
-            **live_authority.as_dict(),
-            "observed_at": observed_at_text,
-            "valid_until": valid_until_text,
-        },
+        "predecessor_authority_sha256": predecessor_authority_sha256,
+        "live_authority_sha256": hashlib.sha256(
+            compact_json_bytes(live_authority_payload)
+        ).hexdigest(),
+        "snapshot": snapshot.as_dict(),
+        "projection": projection.as_dict(),
+        "runtime_evidence": evidence.as_dict(),
+        "live_authority": live_authority_payload,
     }
+
+
+def parse_predecessor_audit_evidence(payload: Any) -> PredecessorAuditEvidence:
+    value = object_value(payload, "predecessor audit evidence")
+    field_names = {field.name for field in fields(PredecessorAuditEvidence)}
+    exact_keys(value, field_names, "predecessor audit evidence")
+    oid_names = ("base_sha", "parent_sha", "candidate_sha")
+    oids = {
+        name: canonical_oid(value.get(name), f"predecessor audit {name}")
+        for name in oid_names
+    }
+    integer_names = (
+        "pull_request_number",
+        "check_run_id",
+        "check_suite_id",
+        "workflow_run_id",
+        "workflow_id",
+        "workflow_run_attempt",
+        "job_id",
+    )
+    integers = {
+        name: canonical_positive_integer(
+            value.get(name),
+            f"predecessor audit {name}",
+        )
+        for name in integer_names
+    }
+    text_names = (
+        "pull_request_node_id",
+        "check_run_node_id",
+    )
+    texts = {name: value.get(name) for name in text_names}
+    if any(
+        not isinstance(item, str)
+        or not item
+        or len(item.encode("utf-8")) > 256
+        or any(ord(character) < 0x21 or ord(character) > 0x7E for character in item)
+        for item in texts.values()
+    ):
+        raise GateError("predecessor audit identity is invalid")
+    timestamp_names = (
+        "merged_at",
+        "workflow_created_at",
+        "workflow_started_at",
+        "workflow_updated_at",
+        "started_at",
+        "completed_at",
+        "job_started_at",
+        "job_completed_at",
+    )
+    timestamps = {
+        name: canonical_github_timestamp(
+            value.get(name),
+            f"predecessor audit {name}",
+        )[0]
+        for name in timestamp_names
+    }
+    evidence = PredecessorAuditEvidence(
+        **oids,
+        **integers,
+        **texts,
+        **timestamps,
+        sha256=canonical_sha256(
+            value.get("sha256"),
+            "predecessor audit evidence",
+        ),
+    )
+    _validate_predecessor_audit_digest(evidence)
+    return evidence
+
+
+def parse_merge_group_predecessor_authority(
+    payload: Any,
+) -> MergeGroupPredecessorAuthorityEvidence:
+    value = object_value(payload, "predecessor authority evidence")
+    exact_keys(
+        value,
+        {
+            "schema_version",
+            "kind",
+            "mode",
+            "base_sha",
+            "queue_sha",
+            "pull_request_number",
+            "projection_sha256",
+            "parent_sha",
+            "audit",
+            "candidate_ref",
+            "bootstrap_markers",
+            "bootstrap_marker_sha256",
+        },
+        "predecessor authority evidence",
+    )
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("kind") != MERGE_GROUP_PREDECESSOR_AUTHORITY_KIND
+    ):
+        raise GateError("predecessor authority evidence identity is invalid")
+    raw_markers = value.get("bootstrap_markers")
+    if (
+        not isinstance(raw_markers, list)
+        or any(not isinstance(item, str) for item in raw_markers)
+        or raw_markers != sorted(set(raw_markers))
+    ):
+        raise GateError("predecessor authority marker inventory is invalid")
+    parent_sha = value.get("parent_sha")
+    audit = value.get("audit")
+    candidate_ref = value.get("candidate_ref")
+    marker_sha256 = value.get("bootstrap_marker_sha256")
+    return MergeGroupPredecessorAuthorityEvidence(
+        mode=value.get("mode"),
+        base_sha=canonical_oid(
+            value.get("base_sha"),
+            "predecessor authority base",
+        ),
+        queue_sha=canonical_oid(
+            value.get("queue_sha"),
+            "predecessor authority queue",
+        ),
+        pull_request_number=canonical_positive_integer(
+            value.get("pull_request_number"),
+            "predecessor authority pull request",
+        ),
+        projection_sha256=canonical_sha256(
+            value.get("projection_sha256"),
+            "predecessor authority projection",
+        ),
+        parent_sha=(
+            canonical_oid(parent_sha, "predecessor authority parent")
+            if parent_sha is not None
+            else None
+        ),
+        audit=(parse_predecessor_audit_evidence(audit) if audit is not None else None),
+        candidate_ref=(candidate_ref if isinstance(candidate_ref, str) else None),
+        bootstrap_markers=tuple(raw_markers),
+        bootstrap_marker_sha256=(
+            canonical_sha256(
+                marker_sha256,
+                "predecessor authority marker",
+            )
+            if marker_sha256 is not None
+            else None
+        ),
+    )
+
+
+def parse_merge_group_live_authority(
+    payload: Any,
+) -> MergeGroupLiveAuthorityEvidence:
+    value = object_value(payload, "live merge-group authority evidence")
+    exact_keys(
+        value,
+        {
+            "schema_version",
+            "kind",
+            "snapshot_sha256",
+            "tcb_sha256",
+            "predecessor_authority",
+            "predecessor_authority_sha256",
+            "observed_at",
+            "valid_until",
+        },
+        "live merge-group authority evidence",
+    )
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("kind") != MERGE_GROUP_LIVE_AUTHORITY_KIND
+    ):
+        raise GateError("live merge-group authority identity is invalid")
+    predecessor = parse_merge_group_predecessor_authority(
+        value.get("predecessor_authority")
+    )
+    observed_at = canonical_github_second_timestamp(
+        value.get("observed_at"),
+        "live merge-group authority observation",
+    )[0]
+    valid_until = canonical_github_second_timestamp(
+        value.get("valid_until"),
+        "live merge-group authority expiration",
+    )[0]
+    return MergeGroupLiveAuthorityEvidence(
+        snapshot_sha256=canonical_sha256(
+            value.get("snapshot_sha256"),
+            "live merge-group authority snapshot",
+        ),
+        tcb_sha256=canonical_sha256(
+            value.get("tcb_sha256"),
+            "live merge-group authority TCB",
+        ),
+        predecessor_authority=predecessor,
+        predecessor_authority_sha256=canonical_sha256(
+            value.get("predecessor_authority_sha256"),
+            "live merge-group predecessor authority",
+        ),
+        observed_at=observed_at,
+        valid_until=valid_until,
+    )
+
+
+def parse_merge_group_admission_payload(
+    payload: Any,
+) -> tuple[
+    MergeGroupSnapshot,
+    MergeGroupProjection,
+    MergeGroupRuntimeEvidence,
+    MergeGroupLiveAuthorityEvidence,
+]:
+    value = object_value(payload, "merge-group admission record")
+    exact_keys(
+        value,
+        {
+            "schema_version",
+            "kind",
+            "decision",
+            "policy",
+            "queue_base_sha",
+            "candidate_sha",
+            "queue_sha",
+            "queue_tree_sha",
+            "prospective_sha",
+            "prospective_tree_sha",
+            "snapshot_sha256",
+            "projection_sha256",
+            "runtime_evidence_sha256",
+            "predecessor_authority_sha256",
+            "live_authority_sha256",
+            "snapshot",
+            "projection",
+            "runtime_evidence",
+            "live_authority",
+        },
+        "merge-group admission record",
+    )
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 2
+        or value.get("kind") != MERGE_GROUP_ADMISSION_KIND
+        or value.get("decision") != "accepted"
+    ):
+        raise GateError("merge-group admission record identity is invalid")
+    snapshot = parse_merge_group_snapshot(value.get("snapshot"))
+    projection = parse_merge_group_projection(value.get("projection"))
+    evidence = parse_merge_group_runtime_evidence(
+        value.get("runtime_evidence"),
+        expected_authority_uid=None,
+    )
+    live_authority = parse_merge_group_live_authority(value.get("live_authority"))
+    if (
+        value.get("policy") != projection.policy
+        or value.get("queue_base_sha") != snapshot.base_sha
+        or value.get("candidate_sha") != snapshot.candidate_sha
+        or value.get("queue_sha") != snapshot.queue_sha
+        or value.get("queue_tree_sha") != projection.queue_tree_sha
+        or value.get("prospective_sha") != projection.prospective_sha
+        or value.get("prospective_tree_sha") != projection.prospective_tree_sha
+        or value.get("snapshot_sha256")
+        != hashlib.sha256(compact_json_bytes(snapshot.as_dict())).hexdigest()
+        or value.get("projection_sha256") != merge_group_projection_sha256(projection)
+        or value.get("runtime_evidence_sha256")
+        != hashlib.sha256(compact_json_bytes(evidence.as_dict())).hexdigest()
+        or value.get("predecessor_authority_sha256")
+        != live_authority.predecessor_authority_sha256
+        or value.get("live_authority_sha256")
+        != hashlib.sha256(compact_json_bytes(live_authority.as_dict())).hexdigest()
+        or evidence.policy != projection.policy
+        or evidence.queue_base_sha != snapshot.base_sha
+        or evidence.candidate_sha != snapshot.candidate_sha
+        or evidence.queue_sha != snapshot.queue_sha
+        or evidence.queue_tree_sha != projection.queue_tree_sha
+        or evidence.prospective_sha != projection.prospective_sha
+        or evidence.prospective_tree_sha != projection.prospective_tree_sha
+        or evidence.projection_sha256 != merge_group_projection_sha256(projection)
+        or evidence.python_version != QUEUE_RUNTIME_PYTHON_VERSION
+        or evidence.runtime_profile != QUEUE_RUNTIME_PROFILE
+        or evidence.compile_command_sha256 != QUEUE_RUNTIME_COMPILE_COMMAND_SHA256
+        or evidence.test_command_sha256 != QUEUE_RUNTIME_TEST_COMMAND_SHA256
+        or evidence.compile_exit_code != 0
+        or evidence.test_exit_code != 0
+        or evidence.execution_uid == 0
+        or evidence.execution_uid == evidence.authority_uid
+        or evidence.credential_environment != "empty"
+        or evidence.authority_write_access is not False
+        or evidence.source_authority_pristine is not True
+    ):
+        raise GateError("merge-group admission record is stale or inconsistent")
+    canonical = merge_group_admission_payload(
+        snapshot=snapshot,
+        projection=projection,
+        evidence=evidence,
+        live_authority=live_authority,
+    )
+    if value != canonical:
+        raise GateError("merge-group admission record is not canonical")
+    return snapshot, projection, evidence, live_authority
 
 
 def git_blob_object_id(value: bytes, *, expected_length: int) -> str:
@@ -5471,7 +6705,8 @@ def load_authority_snapshot(path: Path) -> AuthoritySnapshot:
         "default authority receipt",
     )
     if (
-        payload.get("schema_version") != 1
+        type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != 1
         or payload.get("kind") != DEFAULT_AUTHORITY_RECEIPT_KIND
     ):
         raise GateError("default authority receipt schema is invalid")
@@ -5503,7 +6738,8 @@ def load_runtime_authority_snapshot(path: Path) -> RuntimeAuthoritySnapshot:
         "runtime authority receipt",
     )
     if (
-        payload.get("schema_version") != 1
+        type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != 1
         or payload.get("kind") != RUNTIME_AUTHORITY_RECEIPT_KIND
     ):
         raise GateError("runtime authority receipt schema is invalid")
@@ -5601,6 +6837,11 @@ def main(argv: list[str] | None = None) -> int:
 
     merge_snapshot_parser = subparsers.add_parser("merge-group-snapshot")
     merge_snapshot_parser.add_argument("--repository", required=True)
+    merge_snapshot_parser.add_argument(
+        "--repository-id",
+        required=True,
+        type=int,
+    )
     merge_snapshot_parser.add_argument("--event-path", required=True, type=Path)
     merge_snapshot_parser.add_argument("--event-ref", required=True)
     merge_snapshot_parser.add_argument("--event-sha", required=True)
@@ -5674,6 +6915,28 @@ def main(argv: list[str] | None = None) -> int:
     verify_runtime_parser.add_argument("--expected-head", required=True)
     verify_runtime_parser.add_argument("--receipt", required=True, type=Path)
 
+    resolve_admitted_candidate_parser = subparsers.add_parser(
+        "resolve-default-admitted-candidate"
+    )
+    resolve_admitted_candidate_parser.add_argument("--repository", required=True)
+    resolve_admitted_candidate_parser.add_argument(
+        "--repository-id",
+        required=True,
+        type=int,
+    )
+    resolve_admitted_candidate_parser.add_argument("--base-sha", required=True)
+    resolve_admitted_candidate_parser.add_argument("--head-sha", required=True)
+    resolve_admitted_candidate_parser.add_argument(
+        "--trusted-base-root",
+        required=True,
+        type=Path,
+    )
+    resolve_admitted_candidate_parser.add_argument(
+        "--output",
+        required=True,
+        type=Path,
+    )
+
     verify_github_commit_parser = subparsers.add_parser("verify-default-github-commit")
     verify_github_commit_parser.add_argument("--repository", required=True)
     verify_github_commit_parser.add_argument(
@@ -5682,8 +6945,18 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
     )
     verify_github_commit_parser.add_argument("--git-dir", required=True, type=Path)
+    verify_github_commit_parser.add_argument(
+        "--trusted-base-root",
+        required=True,
+        type=Path,
+    )
     verify_github_commit_parser.add_argument("--base-sha", required=True)
     verify_github_commit_parser.add_argument("--head-sha", required=True)
+    verify_github_commit_parser.add_argument(
+        "--initial-candidate-evidence",
+        required=True,
+        type=Path,
+    )
     verify_github_commit_parser.add_argument("--output", required=True, type=Path)
 
     resolve_base_parser = subparsers.add_parser("resolve-merge-group-base")
@@ -5709,7 +6982,11 @@ def main(argv: list[str] | None = None) -> int:
     admit_group_parser.add_argument(
         "--policy", required=True, choices=("bootstrap-v2", "history-v2")
     )
-    admit_group_parser.add_argument("--trusted-base-root", type=Path)
+    admit_group_parser.add_argument(
+        "--trusted-base-root",
+        required=True,
+        type=Path,
+    )
     admit_group_parser.add_argument(
         "--runtime-evidence",
         required=True,
@@ -5755,6 +7032,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "merge-group-snapshot":
             snapshot = read_live_merge_group_snapshot(
                 repository=args.repository,
+                repository_id=args.repository_id,
                 event_path=args.event_path.resolve(),
                 event_ref=args.event_ref,
                 event_sha=args.event_sha,
@@ -5826,19 +7104,38 @@ def main(argv: list[str] | None = None) -> int:
                 expected_head=args.expected_head,
                 receipt=load_runtime_authority_snapshot(args.receipt.resolve()),
             )
-        elif args.command == "verify-default-github-commit":
-            receipt = verify_default_github_commit(
+        elif args.command == "resolve-default-admitted-candidate":
+            evidence = resolve_default_candidate_evidence(
                 repository=args.repository,
                 repository_id=args.repository_id,
-                git_dir=args.git_dir,
+                trusted_base_root=args.trusted_base_root,
                 base_sha=args.base_sha,
                 head_sha=args.head_sha,
                 token=os.environ.get("GH_TOKEN", ""),
             )
             write_json(
                 args.output,
-                receipt,
+                evidence,
                 max_bytes=MAX_POLICY_JSON_BYTES,
+            )
+            print(evidence["candidate_sha"])
+        elif args.command == "verify-default-github-commit":
+            receipt = verify_default_github_commit(
+                repository=args.repository,
+                repository_id=args.repository_id,
+                git_dir=args.git_dir,
+                trusted_base_root=args.trusted_base_root,
+                base_sha=args.base_sha,
+                head_sha=args.head_sha,
+                initial_candidate_evidence=load_default_candidate_evidence(
+                    args.initial_candidate_evidence.resolve()
+                ),
+                token=os.environ.get("GH_TOKEN", ""),
+            )
+            write_json(
+                args.output,
+                receipt,
+                max_bytes=MAX_GITHUB_SQUASH_RECEIPT_BYTES,
             )
         elif args.command == "resolve-merge-group-base":
             snapshot = load_merge_group_snapshot(args.snapshot.resolve())
@@ -5901,6 +7198,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             live_authority = revalidate_external_merge_group_authority(
                 expected=snapshot,
+                projection=projection,
+                policy=args.policy,
+                trusted_base_root=args.trusted_base_root.resolve(),
                 event_path=args.event_path.resolve(),
                 event_ref=args.event_ref,
                 event_sha=args.event_sha,

@@ -96,7 +96,7 @@ BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH = Path(
     ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
 )
 BOOTSTRAP_V2_LEGACY_CI_BLOB_OID = "145e8de8a055794b85af6461a69e50715913ea6f"
-BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID = "08fce9a00fd907b65771cc4a1bcf5d6edfd096b0"
+BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID = "ad0c20778d6e9c66e8537e5412554a1ff26b663c"
 BOOTSTRAP_SECURITY_WORKFLOW_PATHS = frozenset(
     {BOOTSTRAP_WORKFLOW_PATH, BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH}
 )
@@ -118,42 +118,42 @@ def _trusted_sha256_values_hex(values: tuple[int, ...]) -> str:
 
 INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     BOOTSTRAP_V2_CI_PATH: (
-        "bc1db63b7f477b5e87f0996d008c2f8951ee5c5ee518f6e22801870357fab92a"
+        "9229b4c017a8b246a5094369f7225d93f0afbc8a4352eb045936513e147050c8"
     ),
     Path(".github/bootstrap/session-retrospective-v2-permanent-ci.yml"): bytes(
         (
-            0xF4,
-            0xE9,
-            0xAD,
-            0xD8,
-            0x67,
-            0xD2,
-            0x62,
-            0xE1,
-            0xAA,
-            0x1C,
-            0xE4,
-            0xCF,
-            0x39,
-            0xE1,
-            0x89,
-            0xC8,
-            0x20,
-            0xC6,
-            0xA0,
-            0x26,
-            0x50,
-            0x53,
-            0xFC,
-            0xCF,
-            0x39,
-            0x9E,
-            0x82,
-            0x08,
+            0x4F,
             0x24,
-            0xDB,
-            0x53,
-            0xF8,
+            0x9D,
+            0x94,
+            0xCA,
+            0x38,
+            0xDF,
+            0x15,
+            0xC1,
+            0x6F,
+            0xD1,
+            0x75,
+            0xBB,
+            0x4D,
+            0xA9,
+            0xE4,
+            0x63,
+            0x5C,
+            0xB0,
+            0x00,
+            0xFD,
+            0x95,
+            0x6C,
+            0xFB,
+            0x45,
+            0x27,
+            0xE1,
+            0x6E,
+            0x43,
+            0xE1,
+            0x1C,
+            0xF1,
         )
     ).hex(),
     Path(".github/workflows/session-retrospective-v2-bootstrap.yml"): bytes(
@@ -194,146 +194,146 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("scripts/trusted_history_ci.py"): bytes(
         (
-            0x94,
-            0x77,
-            0xE0,
-            0xE9,
-            0x44,
-            0x26,
-            0x30,
-            0x7E,
-            0x87,
-            0x02,
-            0xFC,
-            0x9E,
-            0x8D,
-            0x29,
-            0x7B,
-            0xF9,
-            0x56,
-            0x96,
-            0x10,
-            0xF0,
-            0x89,
-            0x1B,
-            0x84,
-            0x70,
-            0x5A,
-            0x81,
-            0xE0,
-            0x67,
-            0xD1,
             0xED,
-            0xD6,
-            0x9C,
+            0xA4,
+            0x62,
+            0x67,
+            0x82,
+            0x08,
+            0x33,
+            0x89,
+            0xDF,
+            0xB3,
+            0x94,
+            0xBB,
+            0x5E,
+            0xEB,
+            0xB9,
+            0xA2,
+            0x6E,
+            0x2B,
+            0xFB,
+            0xF4,
+            0x6F,
+            0x5D,
+            0x98,
+            0x53,
+            0x43,
+            0x1C,
+            0x8A,
+            0x6B,
+            0xB6,
+            0xCA,
+            0x81,
+            0x5B,
         )
     ).hex(),
     Path("scripts/validate_retained_history.py"): bytes(
         (
-            0xC5,
-            0x73,
-            0xDF,
-            0x70,
-            0x5A,
-            0x59,
-            0x06,
-            0x73,
-            0x10,
+            0x6F,
+            0x05,
+            0x84,
+            0x1D,
+            0x58,
+            0x0E,
+            0x14,
             0xA5,
-            0x03,
-            0x46,
-            0x60,
-            0x89,
-            0x13,
-            0xC4,
-            0x13,
-            0x26,
-            0xB9,
-            0x9D,
-            0x25,
-            0x0A,
-            0x3A,
-            0x9F,
-            0x0A,
-            0x01,
-            0xAD,
-            0x2E,
             0xA8,
-            0xDD,
+            0xF2,
+            0x47,
+            0x2E,
+            0xDC,
             0xAA,
-            0xCB,
+            0xD0,
+            0xD0,
+            0xA9,
+            0x35,
+            0x24,
+            0x61,
+            0xC2,
+            0x3A,
+            0xB7,
+            0x19,
+            0x86,
+            0xA1,
+            0x32,
+            0x70,
+            0x38,
+            0x31,
+            0xE9,
+            0x11,
         )
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
         (
-            0x6D,
-            0x56,
-            0x14,
-            0x06,
-            0x99,
-            0x8D,
-            0xE2,
-            0xB1,
-            0x73,
-            0xC9,
+            0xD1,
+            0x3B,
+            0x96,
+            0x58,
+            0x48,
             0x10,
-            0x73,
-            0xF8,
-            0xE5,
-            0x6F,
+            0x68,
+            0x36,
+            0x7C,
             0xA6,
-            0xF8,
-            0x08,
-            0x42,
+            0xA0,
+            0xB0,
+            0x7B,
+            0x16,
+            0x7E,
+            0x36,
             0x0F,
-            0x7D,
+            0xAE,
+            0xD9,
+            0x91,
+            0xF3,
+            0xF3,
+            0x8B,
+            0x5B,
+            0x83,
+            0xEC,
+            0x21,
+            0x1C,
+            0xA1,
+            0x50,
+            0x13,
             0xDF,
-            0xDF,
-            0xA7,
-            0x01,
-            0x4D,
-            0xB3,
-            0xF6,
-            0x84,
-            0x40,
-            0x08,
-            0x2A,
         )
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
         (
-            0x8D,
-            0x6B,
-            0xEC,
-            0xEF,
-            0x21,
-            0x86,
-            0x0C,
-            0xD4,
-            0xB0,
-            0xFC,
-            0x06,
-            0xA7,
+            0x03,
+            0xDD,
+            0x69,
+            0x38,
+            0xE9,
+            0xC9,
+            0xDB,
+            0x38,
+            0x8F,
+            0xF0,
             0x1D,
-            0x02,
-            0x3B,
-            0x94,
-            0x95,
-            0x1E,
-            0xD0,
-            0x53,
-            0xE1,
-            0x3F,
-            0x14,
-            0xC4,
-            0xFE,
-            0x05,
-            0xDA,
-            0x19,
-            0x15,
-            0x2C,
-            0x0D,
+            0xA3,
+            0xD5,
+            0x8A,
+            0x4D,
+            0x33,
+            0x00,
+            0xA7,
+            0x49,
+            0x2B,
             0x9E,
+            0x2E,
+            0xC1,
+            0xB0,
+            0x50,
+            0x8E,
+            0x75,
+            0xAA,
+            0x52,
+            0x66,
+            0xC0,
+            0x37,
         )
     ).hex(),
 }
@@ -401,7 +401,7 @@ BOOTSTRAP_V2_PUBLIC_KEY_SHA256 = {
 }
 BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256 = {
     BOOTSTRAP_V2_CI_PATH: (
-        "7aa95f9f46800f7389aafce7bff36846fa1880df7211a0744b991f447ded375a"
+        "4981ea03b00b4edcd17ba39195b6f6ffc1dee2a19ae49702b07b652107b00754"
     ),
     Path("README.md"): (
         "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
@@ -452,38 +452,38 @@ BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256 = {
     ),
     Path("tests/test_validate_retained_history.py"): bytes(
         (
-            0x8D,
-            0x2F,
-            0x1E,
-            0x33,
-            0xC3,
-            0xD6,
-            0x25,
-            0x00,
-            0x27,
-            0x1A,
-            0x51,
-            0x3F,
-            0x51,
-            0x02,
-            0x5D,
-            0x13,
-            0x68,
+            0xAA,
             0x94,
-            0x5E,
-            0x9F,
-            0xAF,
-            0xFA,
-            0x94,
-            0x9F,
-            0x05,
+            0x46,
+            0xB0,
+            0xEC,
+            0x98,
+            0x15,
+            0xCA,
+            0xF8,
+            0x59,
+            0x2E,
+            0xB7,
             0x58,
-            0xB1,
-            0xDB,
-            0x81,
-            0x07,
-            0x9C,
-            0x1E,
+            0x20,
+            0xEB,
+            0xAC,
+            0xD4,
+            0x39,
+            0xED,
+            0xAC,
+            0x8B,
+            0x5D,
+            0x66,
+            0xB4,
+            0xC9,
+            0x06,
+            0xDF,
+            0x05,
+            0xE2,
+            0xD8,
+            0xB5,
+            0xE1,
         )
     ).hex(),
 }
@@ -495,110 +495,110 @@ BOOTSTRAP_V2_TRUSTED_DECODED_RISK_VALUES_SHA256 = {
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/trusted_history_ci.py"): _trusted_sha256_values_hex(
         (
-            0x2C,
-            0xF7,
-            0x42,
-            0x13,
-            0xBF,
-            0xB9,
-            0xA5,
-            0x8C,
-            0x57,
-            0x25,
-            0xB2,
-            0x03,
-            0xB3,
-            0x34,
-            0xE7,
-            0x34,
-            0x3F,
-            0x47,
-            0x96,
-            0x64,
-            0xAD,
+            0x44,
+            0x41,
+            0x61,
+            0xC8,
+            0x3C,
+            0x7F,
+            0x2D,
             0xEC,
-            0xA7,
-            0xE5,
-            0xC0,
+            0x93,
+            0x12,
+            0x43,
+            0x5A,
+            0xF2,
+            0xF4,
+            0x54,
+            0x3A,
+            0x76,
+            0x93,
+            0x24,
+            0x3A,
+            0x70,
+            0xD1,
+            0x4C,
             0x30,
-            0x09,
-            0x3B,
-            0x5C,
-            0x5C,
-            0x9E,
-            0x8E,
+            0xBF,
+            0x25,
+            0xC6,
+            0x68,
+            0x3A,
+            0x1A,
+            0x34,
+            0xBB,
         )
     ),
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x71,
-            0x43,
-            0xD5,
-            0xBD,
-            0x32,
-            0x84,
-            0xDF,
-            0x22,
-            0xEB,
-            0xB7,
-            0x69,
-            0x95,
-            0xA4,
-            0x39,
-            0x46,
+            0x5A,
+            0xE2,
+            0x83,
+            0xDB,
+            0x6D,
+            0x6E,
+            0x80,
+            0x6A,
+            0x7B,
+            0x75,
+            0x63,
+            0x5E,
+            0x09,
+            0xC0,
+            0x13,
+            0xD9,
+            0x72,
+            0xB2,
+            0x33,
+            0xC3,
+            0x3E,
+            0x57,
+            0xEF,
+            0x83,
+            0x20,
+            0x8C,
+            0xC0,
+            0x68,
+            0x88,
+            0x30,
+            0x14,
             0xBA,
-            0x12,
-            0x1B,
-            0xDD,
-            0x89,
-            0x02,
-            0x03,
-            0x92,
-            0x0D,
-            0x85,
-            0x67,
-            0x0D,
-            0xD6,
-            0xB6,
-            0x29,
-            0x8B,
-            0x71,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x5C,
-            0x77,
-            0x33,
-            0xDB,
-            0xE4,
-            0x19,
-            0xE8,
-            0xCD,
-            0xC1,
-            0xAF,
-            0x56,
-            0x2C,
-            0xBB,
-            0x76,
-            0xF7,
-            0xC9,
-            0x7B,
-            0x40,
-            0x9F,
+            0xB8,
+            0xFC,
+            0xD5,
+            0x65,
             0x0C,
-            0x0E,
-            0x97,
-            0xCD,
+            0x2A,
+            0x7B,
             0xC1,
-            0x94,
+            0xAE,
+            0x2F,
+            0x17,
+            0xE4,
+            0x6C,
+            0xC3,
+            0xE9,
+            0x89,
+            0xD8,
+            0x67,
+            0x3B,
             0x85,
-            0x7C,
-            0x39,
-            0xEC,
-            0x3E,
-            0xF0,
-            0xD7,
+            0x03,
+            0x73,
+            0x24,
+            0xFC,
+            0x1D,
+            0xCD,
+            0xF9,
+            0xC4,
+            0x4B,
+            0xA3,
+            0x30,
+            0x02,
         )
     ),
 }
@@ -644,7 +644,7 @@ HISTORY_V2_MAX_COMMIT_BYTES = 64 * 1024
 HISTORY_V2_MAX_COMMIT_MESSAGE_BYTES = 16 * 1024
 HISTORY_V2_MAX_SQUASH_COMMIT_MESSAGE_BYTES = 257
 HISTORY_V2_MAX_COMMIT_SIGNATURE_BYTES = 16 * 1024
-HISTORY_V2_MAX_GITHUB_COMMIT_RECEIPT_BYTES = 16 * 1024
+HISTORY_V2_MAX_GITHUB_COMMIT_RECEIPT_BYTES = 128 * 1024
 HISTORY_V2_MAX_REACHABLE_BLOBS = 16 * 1024
 HISTORY_V2_MAX_REACHABLE_BLOB_BYTES = 64 * 1024 * 1024
 HISTORY_V2_MAX_PATH_REFERENCES = 65_536
@@ -692,6 +692,71 @@ HISTORY_V2_GITHUB_COMMITTER_IDENTITY = b"GitHub <noreply@github.com>"
 HISTORY_V2_GITHUB_SQUASH_RECEIPT_KIND = (
     "retrospective-history-v2-github-squash-verification"
 )
+HISTORY_V2_DEFAULT_CANDIDATE_EVIDENCE_KIND = (
+    "retrospective-history-v2-default-candidate-evidence"
+)
+HISTORY_V2_DEFAULT_ADMISSION_CHECK_KIND = "retrospective-history-v2-admission-check"
+HISTORY_V2_POST_MERGE_ADMISSION_BINDING_KIND = (
+    "retrospective-history-v2-post-merge-admission-binding"
+)
+HISTORY_V2_MERGE_GROUP_SNAPSHOT_KIND = "retrospective-history-v2-merge-group-snapshot"
+HISTORY_V2_MERGE_GROUP_PROJECTION_KIND = (
+    "retrospective-history-v2-merge-group-projection"
+)
+HISTORY_V2_MERGE_GROUP_RUNTIME_EVIDENCE_KIND = (
+    "retrospective-history-v2-merge-group-runtime-evidence"
+)
+HISTORY_V2_MERGE_GROUP_LIVE_AUTHORITY_KIND = (
+    "retrospective-history-v2-merge-group-live-authority"
+)
+HISTORY_V2_MERGE_GROUP_PREDECESSOR_AUTHORITY_KIND = (
+    "retrospective-history-v2-merge-group-predecessor-authority"
+)
+HISTORY_V2_MERGE_GROUP_ADMISSION_KIND = "retrospective-history-v2-merge-group-admission"
+HISTORY_V2_ADMISSION_RECORD_CHECK_CONTEXT = "Trusted history admission record"
+HISTORY_V2_ADMISSION_RECORD_OUTPUT_TITLE = "Retrospective history v2 admission"
+HISTORY_V2_ADMISSION_RECORD_EXTERNAL_ID_PREFIX = "retrospective-history-v2-admission:"
+HISTORY_V2_ADMISSION_RECORD_OUTPUT_SUMMARY_PREFIX = "Admission record SHA-256: "
+HISTORY_V2_ADMISSION_RECORD_APP_ID: int | None = None
+HISTORY_V2_ADMISSION_RECORD_APP_SLUG = "retrospective-history-admission"
+HISTORY_V2_REQUIRED_CHECK_CONTEXT = "Trusted history gate"
+HISTORY_V2_BOOTSTRAP_CANDIDATE_REF = "wip/session-retrospective-v2-history-bootstrap"
+HISTORY_V2_MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS = 30
+HISTORY_V2_QUEUE_RUNTIME_PROFILE = "credential-free-nonprivileged-exact-q-v1"
+HISTORY_V2_QUEUE_RUNTIME_PYTHON_VERSION = "3.13.12"
+HISTORY_V2_QUEUE_RUNTIME_COMPILE_COMMAND = (
+    "-I",
+    "-B",
+    "-X",
+    "pycache_prefix=<runtime-private>",
+    "-m",
+    "compileall",
+    "-q",
+    "-f",
+    "scripts",
+    "tests",
+)
+HISTORY_V2_QUEUE_RUNTIME_TEST_COMMAND = (
+    "-I",
+    "-B",
+    "-X",
+    "pycache_prefix=<runtime-private>",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+)
+HISTORY_V2_QUEUE_RUNTIME_COMPILE_COMMAND_SHA256 = hashlib.sha256(
+    bytes((0,)).join(
+        value.encode("ascii") for value in HISTORY_V2_QUEUE_RUNTIME_COMPILE_COMMAND
+    )
+).hexdigest()
+HISTORY_V2_QUEUE_RUNTIME_TEST_COMMAND_SHA256 = hashlib.sha256(
+    bytes((0,)).join(
+        value.encode("ascii") for value in HISTORY_V2_QUEUE_RUNTIME_TEST_COMMAND
+    )
+).hexdigest()
 HISTORY_V2_GITHUB_SQUASH_COMMIT_TITLE = "PR_TITLE"
 HISTORY_V2_GITHUB_SQUASH_COMMIT_MESSAGE = "BLANK"
 HISTORY_V2_CANONICAL_IDENTITY = (
@@ -15605,6 +15670,1003 @@ def load_history_v2_github_squash_receipt(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _history_v2_exact_json_object(
+    value: Any,
+    expected_keys: set[str],
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise ValueError(f"{label} shape is invalid")
+    return value
+
+
+def _history_v2_compact_json_sha256(value: Any) -> str:
+    encoded = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _history_v2_exact_oid(value: Any, label: str, *, length: int | None = None) -> str:
+    if (
+        not isinstance(value, str)
+        or HISTORY_V2_OID_RE.fullmatch(value) is None
+        or (length is not None and len(value) != length)
+    ):
+        raise ValueError(f"{label} is not a canonical object ID")
+    return value
+
+
+def _history_v2_exact_sha256(value: Any, label: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError(f"{label} is not a canonical SHA-256 digest")
+    return value
+
+
+def _history_v2_positive_integer(value: Any, label: str) -> int:
+    if type(value) is not int or value <= 0:
+        raise ValueError(f"{label} is not a positive integer")
+    return value
+
+
+def _history_v2_github_timestamp(value: Any, label: str) -> dt.datetime:
+    if not isinstance(value, str) or TIMESTAMP_RE.fullmatch(value) is None:
+        raise ValueError(f"{label} timestamp is invalid")
+    try:
+        parsed = dt.datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+    except ValueError as exc:
+        raise ValueError(f"{label} timestamp is invalid") from exc
+    if parsed.tzinfo != dt.timezone.utc:
+        raise ValueError(f"{label} timestamp is not UTC")
+    return parsed
+
+
+def _history_v2_validate_admission_snapshot(
+    value: Any,
+    *,
+    repository: str,
+    repository_id: int,
+    before_rev: str,
+    candidate_sha: str,
+) -> dict[str, Any]:
+    snapshot = _history_v2_exact_json_object(
+        value,
+        {
+            "schema_version",
+            "kind",
+            "repository",
+            "repository_id",
+            "base",
+            "queue",
+            "workflow_sha",
+            "pull_request",
+            "tcb",
+        },
+        "history-v2 admission snapshot",
+    )
+    base = _history_v2_exact_json_object(
+        snapshot.get("base"),
+        {"ref", "sha"},
+        "history-v2 admission snapshot base",
+    )
+    queue = _history_v2_exact_json_object(
+        snapshot.get("queue"),
+        {"ref", "sha"},
+        "history-v2 admission snapshot queue",
+    )
+    pull = _history_v2_exact_json_object(
+        snapshot.get("pull_request"),
+        {"number", "node_id", "title", "head_ref", "head_sha"},
+        "history-v2 admission snapshot pull request",
+    )
+    tcb = _history_v2_exact_json_object(
+        snapshot.get("tcb"),
+        {"required_check", "sha256"},
+        "history-v2 admission snapshot TCB",
+    )
+    number = _history_v2_positive_integer(
+        pull.get("number"),
+        "history-v2 admission pull request number",
+    )
+    queue_ref = queue.get("ref")
+    queue_match = (
+        re.fullmatch(
+            r"refs/heads/gh-readonly-queue/master/pr-([1-9][0-9]*)-"
+            r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
+            queue_ref,
+        )
+        if isinstance(queue_ref, str)
+        else None
+    )
+    node_id = pull.get("node_id")
+    title = pull.get("title")
+    head_ref = pull.get("head_ref")
+    queue_sha = _history_v2_exact_oid(
+        queue.get("sha"),
+        "history-v2 admission queue",
+        length=len(before_rev),
+    )
+    if (
+        type(snapshot.get("schema_version")) is not int
+        or snapshot.get("schema_version") != 2
+        or snapshot.get("kind") != HISTORY_V2_MERGE_GROUP_SNAPSHOT_KIND
+        or snapshot.get("repository") != repository
+        or snapshot.get("repository_id") != repository_id
+        or base != {"ref": "refs/heads/master", "sha": before_rev}
+        or queue_match is None
+        or int(queue_match.group(1)) != number
+        or snapshot.get("workflow_sha") != queue_sha
+        or pull.get("head_sha") != candidate_sha
+        or not isinstance(node_id, str)
+        or not node_id
+        or len(node_id.encode("utf-8")) > 256
+        or not isinstance(title, str)
+        or not title
+        or len(title.encode("utf-8")) > 256
+        or any(character in "\r\n" or ord(character) == 0 for character in title)
+        or not isinstance(head_ref, str)
+        or not head_ref
+        or tcb.get("required_check") != HISTORY_V2_REQUIRED_CHECK_CONTEXT
+        or _history_v2_exact_sha256(
+            tcb.get("sha256"),
+            "history-v2 admission TCB",
+        )
+        != tcb.get("sha256")
+        or len({before_rev, queue_sha, candidate_sha}) != 3
+    ):
+        raise ValueError("history-v2 admission snapshot differs")
+    return snapshot
+
+
+def _history_v2_validate_admission_projection(
+    value: Any,
+    *,
+    before_rev: str,
+    candidate_sha: str,
+) -> dict[str, Any]:
+    projection = _history_v2_exact_json_object(
+        value,
+        {
+            "schema_version",
+            "kind",
+            "validation_mode",
+            "policy",
+            "role",
+            "candidate_base_sha",
+            "queue_base_sha",
+            "candidate_sha",
+            "queue_sha",
+            "candidate_tree_sha",
+            "queue_tree_sha",
+            "prospective_sha",
+            "prospective_tree_sha",
+            "squash_subject",
+            "trust_generation",
+            "changed_path_count",
+            "delta_sha256",
+        },
+        "history-v2 admission projection",
+    )
+    policy = projection.get("policy")
+    role = projection.get("role")
+    subject = projection.get("squash_subject")
+    changed = projection.get("changed_path_count")
+    oid_fields = (
+        "candidate_base_sha",
+        "queue_base_sha",
+        "candidate_sha",
+        "queue_sha",
+        "candidate_tree_sha",
+        "queue_tree_sha",
+        "prospective_sha",
+        "prospective_tree_sha",
+    )
+    for field_name in oid_fields:
+        _history_v2_exact_oid(
+            projection.get(field_name),
+            f"history-v2 admission projection {field_name}",
+            length=len(before_rev),
+        )
+    if (
+        type(projection.get("schema_version")) is not int
+        or projection.get("schema_version") != 1
+        or projection.get("kind") != HISTORY_V2_MERGE_GROUP_PROJECTION_KIND
+        or policy not in {"bootstrap-v2", "history-v2"}
+        or projection.get("validation_mode") != f"{policy}-prospective-squash"
+        or role not in {"admin", "publication"}
+        or projection.get("queue_base_sha") != before_rev
+        or projection.get("candidate_sha") != candidate_sha
+        or not isinstance(subject, str)
+        or not subject
+        or len(subject.encode("utf-8")) > 256
+        or any(character in "\r\n" or ord(character) == 0 for character in subject)
+        or type(changed) is not int
+        or changed < 0
+    ):
+        raise ValueError("history-v2 admission projection differs")
+    _history_v2_exact_sha256(
+        projection.get("trust_generation"),
+        "history-v2 admission trust generation",
+    )
+    _history_v2_exact_sha256(
+        projection.get("delta_sha256"),
+        "history-v2 admission delta",
+    )
+    return projection
+
+
+def _history_v2_validate_runtime_evidence(
+    value: Any,
+    *,
+    projection: dict[str, Any],
+) -> dict[str, Any]:
+    runtime = _history_v2_exact_json_object(
+        value,
+        {
+            "schema_version",
+            "kind",
+            "policy",
+            "queue_base_sha",
+            "candidate_sha",
+            "queue_sha",
+            "queue_tree_sha",
+            "prospective_sha",
+            "prospective_tree_sha",
+            "projection_sha256",
+            "python_version",
+            "python_executable_sha256",
+            "requirements_sha256",
+            "runtime_profile",
+            "compile_command_sha256",
+            "test_command_sha256",
+            "compile_exit_code",
+            "test_exit_code",
+            "authority_uid",
+            "execution_uid",
+            "credential_environment",
+            "authority_write_access",
+            "source_authority_pristine",
+        },
+        "history-v2 admission runtime evidence",
+    )
+    oid_fields = (
+        "queue_base_sha",
+        "candidate_sha",
+        "queue_sha",
+        "queue_tree_sha",
+        "prospective_sha",
+        "prospective_tree_sha",
+    )
+    for field_name in oid_fields:
+        _history_v2_exact_oid(
+            runtime.get(field_name),
+            f"history-v2 runtime evidence {field_name}",
+            length=len(projection["candidate_sha"]),
+        )
+    for field_name in (
+        "projection_sha256",
+        "python_executable_sha256",
+        "requirements_sha256",
+        "compile_command_sha256",
+        "test_command_sha256",
+    ):
+        _history_v2_exact_sha256(
+            runtime.get(field_name),
+            f"history-v2 runtime evidence {field_name}",
+        )
+    integer_fields = (
+        "compile_exit_code",
+        "test_exit_code",
+        "authority_uid",
+        "execution_uid",
+    )
+    if any(
+        type(runtime.get(field)) is not int or runtime[field] < 0
+        for field in integer_fields
+    ):
+        raise ValueError("history-v2 runtime evidence integers are invalid")
+    if (
+        type(runtime.get("schema_version")) is not int
+        or runtime.get("schema_version") != 1
+        or runtime.get("kind") != HISTORY_V2_MERGE_GROUP_RUNTIME_EVIDENCE_KIND
+        or runtime.get("policy") != projection.get("policy")
+        or any(runtime.get(field) != projection.get(field) for field in oid_fields)
+        or runtime.get("projection_sha256")
+        != _history_v2_compact_json_sha256(projection)
+        or runtime.get("python_version") != HISTORY_V2_QUEUE_RUNTIME_PYTHON_VERSION
+        or runtime.get("runtime_profile") != HISTORY_V2_QUEUE_RUNTIME_PROFILE
+        or runtime.get("compile_command_sha256")
+        != HISTORY_V2_QUEUE_RUNTIME_COMPILE_COMMAND_SHA256
+        or runtime.get("test_command_sha256")
+        != HISTORY_V2_QUEUE_RUNTIME_TEST_COMMAND_SHA256
+        or runtime.get("compile_exit_code") != 0
+        or runtime.get("test_exit_code") != 0
+        or runtime.get("execution_uid") == 0
+        or runtime.get("execution_uid") == runtime.get("authority_uid")
+        or runtime.get("credential_environment") != "empty"
+        or runtime.get("authority_write_access") is not False
+        or runtime.get("source_authority_pristine") is not True
+    ):
+        raise ValueError("history-v2 admission runtime evidence differs")
+    return runtime
+
+
+def _history_v2_validate_predecessor_audit(
+    value: Any,
+    *,
+    oid_length: int,
+) -> dict[str, Any]:
+    audit = _history_v2_exact_json_object(
+        value,
+        {
+            "base_sha",
+            "parent_sha",
+            "pull_request_number",
+            "pull_request_node_id",
+            "candidate_sha",
+            "merged_at",
+            "check_run_id",
+            "check_run_node_id",
+            "check_suite_id",
+            "workflow_run_id",
+            "workflow_id",
+            "workflow_run_attempt",
+            "job_id",
+            "workflow_created_at",
+            "workflow_started_at",
+            "workflow_updated_at",
+            "started_at",
+            "completed_at",
+            "job_started_at",
+            "job_completed_at",
+            "sha256",
+        },
+        "history-v2 predecessor audit evidence",
+    )
+    for field_name in ("base_sha", "parent_sha", "candidate_sha"):
+        _history_v2_exact_oid(
+            audit.get(field_name),
+            f"history-v2 predecessor audit {field_name}",
+            length=oid_length,
+        )
+    for field_name in (
+        "pull_request_number",
+        "check_run_id",
+        "check_suite_id",
+        "workflow_run_id",
+        "workflow_id",
+        "workflow_run_attempt",
+        "job_id",
+    ):
+        _history_v2_positive_integer(
+            audit.get(field_name),
+            f"history-v2 predecessor audit {field_name}",
+        )
+    for field_name in ("pull_request_node_id", "check_run_node_id"):
+        item = audit.get(field_name)
+        if (
+            not isinstance(item, str)
+            or not item
+            or len(item.encode("utf-8")) > 256
+            or any(ord(character) < 0x21 or ord(character) > 0x7E for character in item)
+        ):
+            raise ValueError("history-v2 predecessor audit identity is invalid")
+    for field_name in (
+        "merged_at",
+        "workflow_created_at",
+        "workflow_started_at",
+        "workflow_updated_at",
+        "started_at",
+        "completed_at",
+        "job_started_at",
+        "job_completed_at",
+    ):
+        _history_v2_github_timestamp(
+            audit.get(field_name),
+            f"history-v2 predecessor audit {field_name}",
+        )
+    normalized = {
+        "base_sha": audit["base_sha"],
+        "parent_sha": audit["parent_sha"],
+        "pull_request_number": audit["pull_request_number"],
+        "pull_request_node_id": audit["pull_request_node_id"],
+        "candidate_sha": audit["candidate_sha"],
+        "merged_at": audit["merged_at"],
+        "check_run_id": audit["check_run_id"],
+        "check_run_node_id": audit["check_run_node_id"],
+        "check_suite_id": audit["check_suite_id"],
+        "workflow_run_id": audit["workflow_run_id"],
+        "workflow_id": audit["workflow_id"],
+        "workflow_run_attempt": audit["workflow_run_attempt"],
+        "job_id": audit["job_id"],
+        "workflow_created_at": audit["workflow_created_at"],
+        "workflow_started_at": audit["workflow_started_at"],
+        "workflow_updated_at": audit["workflow_updated_at"],
+        "check_started_at": audit["started_at"],
+        "check_completed_at": audit["completed_at"],
+        "job_started_at": audit["job_started_at"],
+        "job_completed_at": audit["job_completed_at"],
+    }
+    if audit.get("sha256") != _history_v2_compact_json_sha256(normalized):
+        raise ValueError("history-v2 predecessor audit digest differs")
+    return audit
+
+
+def _history_v2_validate_predecessor_authority(
+    value: Any,
+    *,
+    snapshot: dict[str, Any],
+    projection: dict[str, Any],
+) -> dict[str, Any]:
+    predecessor = _history_v2_exact_json_object(
+        value,
+        {
+            "schema_version",
+            "kind",
+            "mode",
+            "base_sha",
+            "queue_sha",
+            "pull_request_number",
+            "projection_sha256",
+            "parent_sha",
+            "audit",
+            "candidate_ref",
+            "bootstrap_markers",
+            "bootstrap_marker_sha256",
+        },
+        "history-v2 predecessor authority evidence",
+    )
+    pull = snapshot["pull_request"]
+    projection_sha256 = _history_v2_compact_json_sha256(projection)
+    markers = predecessor.get("bootstrap_markers")
+    if (
+        type(predecessor.get("schema_version")) is not int
+        or predecessor.get("schema_version") != 1
+        or predecessor.get("kind") != HISTORY_V2_MERGE_GROUP_PREDECESSOR_AUTHORITY_KIND
+        or predecessor.get("base_sha") != snapshot["base"]["sha"]
+        or predecessor.get("queue_sha") != snapshot["queue"]["sha"]
+        or predecessor.get("pull_request_number") != pull["number"]
+        or predecessor.get("projection_sha256") != projection_sha256
+        or not isinstance(markers, list)
+        or markers != sorted(set(markers))
+        or any(not isinstance(item, str) for item in markers)
+    ):
+        raise ValueError("history-v2 predecessor authority differs")
+    if projection.get("policy") == "history-v2":
+        audit = _history_v2_validate_predecessor_audit(
+            predecessor.get("audit"),
+            oid_length=len(projection["candidate_sha"]),
+        )
+        parent_sha = _history_v2_exact_oid(
+            predecessor.get("parent_sha"),
+            "history-v2 predecessor authority parent",
+            length=len(projection["candidate_sha"]),
+        )
+        if (
+            predecessor.get("mode") != "history-v2-required"
+            or audit.get("base_sha") != snapshot["base"]["sha"]
+            or audit.get("parent_sha") != parent_sha
+            or audit.get("pull_request_number") == pull["number"]
+            or predecessor.get("candidate_ref") is not None
+            or markers
+            or predecessor.get("bootstrap_marker_sha256") is not None
+        ):
+            raise ValueError("history-v2 predecessor authority policy differs")
+    else:
+        expected_markers = sorted(
+            path.as_posix() for path in BOOTSTRAP_V2_TEMPORARY_PATHS
+        )
+        marker_payload = {
+            "base_sha": snapshot["base"]["sha"],
+            "queue_sha": snapshot["queue"]["sha"],
+            "pull_request_number": pull["number"],
+            "projection_sha256": projection_sha256,
+            "candidate_ref": pull["head_ref"],
+            "bootstrap_markers": expected_markers,
+        }
+        if (
+            predecessor.get("mode") != "bootstrap-v2-migration-exception"
+            or predecessor.get("parent_sha") is not None
+            or predecessor.get("audit") is not None
+            or predecessor.get("candidate_ref") != HISTORY_V2_BOOTSTRAP_CANDIDATE_REF
+            or markers != expected_markers
+            or predecessor.get("bootstrap_marker_sha256")
+            != _history_v2_compact_json_sha256(marker_payload)
+        ):
+            raise ValueError("history-v2 bootstrap predecessor authority differs")
+    return predecessor
+
+
+def _history_v2_validate_live_authority(
+    value: Any,
+    *,
+    snapshot: dict[str, Any],
+    projection: dict[str, Any],
+) -> dict[str, Any]:
+    live = _history_v2_exact_json_object(
+        value,
+        {
+            "schema_version",
+            "kind",
+            "snapshot_sha256",
+            "tcb_sha256",
+            "predecessor_authority",
+            "predecessor_authority_sha256",
+            "observed_at",
+            "valid_until",
+        },
+        "history-v2 live authority evidence",
+    )
+    predecessor = _history_v2_validate_predecessor_authority(
+        live.get("predecessor_authority"),
+        snapshot=snapshot,
+        projection=projection,
+    )
+    observed = _history_v2_github_timestamp(
+        live.get("observed_at"),
+        "history-v2 live authority observation",
+    )
+    valid_until = _history_v2_github_timestamp(
+        live.get("valid_until"),
+        "history-v2 live authority expiration",
+    )
+    canonical_observed = observed.isoformat(timespec="seconds").replace("+00:00", "Z")
+    canonical_valid_until = valid_until.isoformat(timespec="seconds").replace(
+        "+00:00", "Z"
+    )
+    if (
+        type(live.get("schema_version")) is not int
+        or live.get("schema_version") != 1
+        or live.get("kind") != HISTORY_V2_MERGE_GROUP_LIVE_AUTHORITY_KIND
+        or live.get("snapshot_sha256") != _history_v2_compact_json_sha256(snapshot)
+        or live.get("tcb_sha256") != snapshot["tcb"]["sha256"]
+        or live.get("predecessor_authority_sha256")
+        != _history_v2_compact_json_sha256(predecessor)
+        or live.get("observed_at") != canonical_observed
+        or live.get("valid_until") != canonical_valid_until
+        or valid_until - observed
+        != dt.timedelta(seconds=HISTORY_V2_MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS)
+    ):
+        raise ValueError("history-v2 live authority evidence differs")
+    return live
+
+
+def _history_v2_validate_admission_record(
+    value: Any,
+    *,
+    repository: str,
+    repository_id: int,
+    before_rev: str,
+    candidate_sha: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    admission = _history_v2_exact_json_object(
+        value,
+        {
+            "schema_version",
+            "kind",
+            "decision",
+            "policy",
+            "queue_base_sha",
+            "candidate_sha",
+            "queue_sha",
+            "queue_tree_sha",
+            "prospective_sha",
+            "prospective_tree_sha",
+            "snapshot_sha256",
+            "projection_sha256",
+            "runtime_evidence_sha256",
+            "predecessor_authority_sha256",
+            "live_authority_sha256",
+            "snapshot",
+            "projection",
+            "runtime_evidence",
+            "live_authority",
+        },
+        "history-v2 merge-group admission record",
+    )
+    snapshot = _history_v2_validate_admission_snapshot(
+        admission.get("snapshot"),
+        repository=repository,
+        repository_id=repository_id,
+        before_rev=before_rev,
+        candidate_sha=candidate_sha,
+    )
+    projection = _history_v2_validate_admission_projection(
+        admission.get("projection"),
+        before_rev=before_rev,
+        candidate_sha=candidate_sha,
+    )
+    runtime = _history_v2_validate_runtime_evidence(
+        admission.get("runtime_evidence"),
+        projection=projection,
+    )
+    live = _history_v2_validate_live_authority(
+        admission.get("live_authority"),
+        snapshot=snapshot,
+        projection=projection,
+    )
+    predecessor = live["predecessor_authority"]
+    if (
+        type(admission.get("schema_version")) is not int
+        or admission.get("schema_version") != 2
+        or admission.get("kind") != HISTORY_V2_MERGE_GROUP_ADMISSION_KIND
+        or admission.get("decision") != "accepted"
+        or admission.get("policy") != projection.get("policy")
+        or admission.get("queue_base_sha") != before_rev
+        or admission.get("candidate_sha") != candidate_sha
+        or admission.get("queue_sha") != snapshot["queue"]["sha"]
+        or admission.get("queue_tree_sha") != projection.get("queue_tree_sha")
+        or admission.get("prospective_sha") != projection.get("prospective_sha")
+        or admission.get("prospective_tree_sha")
+        != projection.get("prospective_tree_sha")
+        or admission.get("snapshot_sha256") != _history_v2_compact_json_sha256(snapshot)
+        or admission.get("projection_sha256")
+        != _history_v2_compact_json_sha256(projection)
+        or admission.get("runtime_evidence_sha256")
+        != _history_v2_compact_json_sha256(runtime)
+        or admission.get("predecessor_authority_sha256")
+        != _history_v2_compact_json_sha256(predecessor)
+        or admission.get("live_authority_sha256")
+        != _history_v2_compact_json_sha256(live)
+    ):
+        raise ValueError("history-v2 merge-group admission record differs")
+    return admission, projection, live
+
+
+def validate_history_v2_candidate_evidence(
+    payload: Any,
+    *,
+    repository: str,
+    repository_id: int,
+    before_rev: str,
+    head_rev: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
+    evidence = _history_v2_exact_json_object(
+        payload,
+        {
+            "schema_version",
+            "kind",
+            "authority_mode",
+            "repository",
+            "repository_id",
+            "base_sha",
+            "head_sha",
+            "pull_request_number",
+            "candidate_ref",
+            "candidate_sha",
+            "pull_request_title_sha256",
+            "pull_request_node_identity_sha256",
+            "repository_identity_sha256",
+            "pull_request_provenance_sha256",
+            "pull_request_merged_at",
+            "admission_binding",
+            "squash_merge_commit_title",
+            "squash_merge_commit_message",
+        },
+        "history-v2 default candidate evidence",
+    )
+    authority_mode = evidence.get("authority_mode")
+    candidate_ref = evidence.get("candidate_ref")
+    candidate_sha = evidence.get("candidate_sha")
+    pull_number = evidence.get("pull_request_number")
+    title_sha256 = evidence.get("pull_request_title_sha256")
+    node_sha256 = evidence.get("pull_request_node_identity_sha256")
+    repository_sha256 = evidence.get("repository_identity_sha256")
+    provenance_sha256 = evidence.get("pull_request_provenance_sha256")
+    merged_at = evidence.get("pull_request_merged_at")
+    if (
+        type(evidence.get("schema_version")) is not int
+        or evidence.get("schema_version") != 1
+        or evidence.get("kind") != HISTORY_V2_DEFAULT_CANDIDATE_EVIDENCE_KIND
+        or authority_mode not in {"bootstrap-v2-migration", "history-v2-admission"}
+        or evidence.get("repository") != repository
+        or evidence.get("repository_id") != repository_id
+        or evidence.get("base_sha") != before_rev
+        or evidence.get("head_sha") != head_rev
+        or not isinstance(candidate_ref, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}", candidate_ref) is None
+        or ".." in candidate_ref
+        or "@{" in candidate_ref
+        or candidate_ref.endswith(".lock")
+        or (
+            authority_mode == "bootstrap-v2-migration"
+            and candidate_ref != HISTORY_V2_BOOTSTRAP_CANDIDATE_REF
+        )
+        or not isinstance(candidate_sha, str)
+        or HISTORY_V2_OID_RE.fullmatch(candidate_sha) is None
+        or len(candidate_sha) != len(head_rev)
+        or candidate_sha in {before_rev, head_rev}
+        or type(pull_number) is not int
+        or pull_number <= 0
+        or any(
+            not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            for value in (
+                title_sha256,
+                node_sha256,
+                repository_sha256,
+                provenance_sha256,
+            )
+        )
+        or not isinstance(merged_at, str)
+        or TIMESTAMP_RE.fullmatch(merged_at) is None
+        or evidence.get("squash_merge_commit_title")
+        != HISTORY_V2_GITHUB_SQUASH_COMMIT_TITLE
+        or evidence.get("squash_merge_commit_message")
+        != HISTORY_V2_GITHUB_SQUASH_COMMIT_MESSAGE
+    ):
+        raise ValueError("history-v2 default candidate evidence identity is invalid")
+    expected_repository_sha256 = hashlib.sha256(
+        f"{repository_id}:{repository}".encode("utf-8")
+    ).hexdigest()
+    expected_provenance = {
+        "authority_mode": authority_mode,
+        "base_ref": HISTORY_V2_DEFAULT_BRANCH,
+        "base_repository": repository,
+        "base_repository_id": repository_id,
+        "base_sha": before_rev,
+        "head_repository": repository,
+        "head_repository_id": repository_id,
+        "head_ref": candidate_ref,
+        "candidate_sha": candidate_sha,
+        "merge_commit_sha": head_rev,
+        "merged_at": merged_at,
+        "node_identity_sha256": node_sha256,
+        "number": pull_number,
+        "squash_merge_commit_message": HISTORY_V2_GITHUB_SQUASH_COMMIT_MESSAGE,
+        "squash_merge_commit_title": HISTORY_V2_GITHUB_SQUASH_COMMIT_TITLE,
+        "title_sha256": title_sha256,
+    }
+    if (
+        repository_sha256 != expected_repository_sha256
+        or provenance_sha256
+        != hashlib.sha256(
+            json.dumps(
+                expected_provenance,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    ):
+        raise ValueError("history-v2 default candidate provenance differs")
+    raw_binding = evidence.get("admission_binding")
+    if authority_mode == "bootstrap-v2-migration":
+        if raw_binding is not None:
+            raise ValueError("history-v2 bootstrap candidate has admission evidence")
+        return evidence, None, None
+    binding = _history_v2_exact_json_object(
+        raw_binding,
+        {
+            "schema_version",
+            "kind",
+            "app",
+            "admission_sha256",
+            "admission",
+            "candidate_record_check",
+            "queue_gate_check",
+        },
+        "history-v2 post-merge admission binding",
+    )
+    app = _history_v2_exact_json_object(
+        binding.get("app"),
+        {"id", "slug"},
+        "history-v2 admission App",
+    )
+    if (
+        HISTORY_V2_ADMISSION_RECORD_APP_ID is None
+        or app
+        != {
+            "id": HISTORY_V2_ADMISSION_RECORD_APP_ID,
+            "slug": HISTORY_V2_ADMISSION_RECORD_APP_SLUG,
+        }
+        or type(binding.get("schema_version")) is not int
+        or binding.get("schema_version") != 1
+        or binding.get("kind") != HISTORY_V2_POST_MERGE_ADMISSION_BINDING_KIND
+    ):
+        raise ValueError("history-v2 admission App identity differs")
+    admission, projection, live = _history_v2_validate_admission_record(
+        binding.get("admission"),
+        repository=repository,
+        repository_id=repository_id,
+        before_rev=before_rev,
+        candidate_sha=candidate_sha,
+    )
+    admission_sha256 = _history_v2_compact_json_sha256(admission)
+    if (
+        binding.get("admission_sha256") != admission_sha256
+        or admission.get("policy") != "history-v2"
+    ):
+        raise ValueError("history-v2 admission binding differs")
+
+    def validate_check(
+        raw: Any,
+        *,
+        check_name: str,
+        expected_head: str,
+        label: str,
+    ) -> tuple[dict[str, Any], dt.datetime]:
+        check = _history_v2_exact_json_object(
+            raw,
+            {
+                "schema_version",
+                "kind",
+                "check_name",
+                "check_run_id",
+                "check_run_node_id",
+                "check_suite_id",
+                "head_sha",
+                "started_at",
+                "completed_at",
+                "external_id",
+                "output_title",
+                "output_summary",
+                "admission_sha256",
+            },
+            label,
+        )
+        started = _history_v2_github_timestamp(check.get("started_at"), label)
+        completed = _history_v2_github_timestamp(check.get("completed_at"), label)
+        node_id = check.get("check_run_node_id")
+        if (
+            type(check.get("schema_version")) is not int
+            or check.get("schema_version") != 1
+            or check.get("kind") != HISTORY_V2_DEFAULT_ADMISSION_CHECK_KIND
+            or check.get("check_name") != check_name
+            or check.get("head_sha") != expected_head
+            or _history_v2_positive_integer(
+                check.get("check_run_id"),
+                f"{label} check run",
+            )
+            != check.get("check_run_id")
+            or _history_v2_positive_integer(
+                check.get("check_suite_id"),
+                f"{label} check suite",
+            )
+            != check.get("check_suite_id")
+            or not isinstance(node_id, str)
+            or not node_id
+            or len(node_id.encode("ascii", errors="ignore")) != len(node_id)
+            or len(node_id) > 256
+            or check.get("external_id")
+            != HISTORY_V2_ADMISSION_RECORD_EXTERNAL_ID_PREFIX + admission_sha256
+            or check.get("output_title") != HISTORY_V2_ADMISSION_RECORD_OUTPUT_TITLE
+            or check.get("output_summary")
+            != HISTORY_V2_ADMISSION_RECORD_OUTPUT_SUMMARY_PREFIX + admission_sha256
+            or check.get("admission_sha256") != admission_sha256
+            or started > completed
+        ):
+            raise ValueError(f"{label} differs")
+        return check, completed
+
+    candidate_check, candidate_completed = validate_check(
+        binding.get("candidate_record_check"),
+        check_name=HISTORY_V2_ADMISSION_RECORD_CHECK_CONTEXT,
+        expected_head=candidate_sha,
+        label="history-v2 candidate admission check",
+    )
+    queue_check, queue_completed = validate_check(
+        binding.get("queue_gate_check"),
+        check_name=HISTORY_V2_REQUIRED_CHECK_CONTEXT,
+        expected_head=projection["queue_sha"],
+        label="history-v2 queue admission check",
+    )
+    observed = _history_v2_github_timestamp(
+        live.get("observed_at"),
+        "history-v2 admission observation",
+    )
+    valid_until = _history_v2_github_timestamp(
+        live.get("valid_until"),
+        "history-v2 admission expiration",
+    )
+    merged = _history_v2_github_timestamp(
+        merged_at,
+        "history-v2 candidate merge",
+    )
+    snapshot_pull = admission["snapshot"]["pull_request"]
+    if (
+        snapshot_pull["number"] != pull_number
+        or snapshot_pull["head_ref"] != candidate_ref
+        or projection["squash_subject"] != snapshot_pull["title"]
+        or hashlib.sha256(snapshot_pull["title"].encode("utf-8")).hexdigest()
+        != title_sha256
+        or hashlib.sha256(snapshot_pull["node_id"].encode("utf-8")).hexdigest()
+        != node_sha256
+        or not observed <= candidate_completed <= queue_completed < valid_until
+        or queue_completed > merged
+        or candidate_check["admission_sha256"] != queue_check["admission_sha256"]
+    ):
+        raise ValueError("history-v2 admission transaction timing or scope differs")
+    return evidence, binding, projection
+
+
+def validate_history_v2_candidate_reproof(
+    *,
+    base_root: Path,
+    candidate_root: Path,
+    before_rev: str,
+    head_tree_oid: str,
+    candidate_evidence: dict[str, Any],
+    projection: dict[str, Any] | None,
+    work_budget: HistoryV2WorkBudget | None = None,
+) -> tuple[str, str]:
+    budget = work_budget if work_budget is not None else HistoryV2WorkBudget()
+    candidate_sha = candidate_evidence["candidate_sha"]
+    base_root = base_root.resolve()
+    candidate_root = candidate_root.resolve()
+    authority_mode = candidate_evidence["authority_mode"]
+    if validate_fixed_head_snapshot(
+        base_root,
+        before_rev,
+        validate_tree=authority_mode != "bootstrap-v2-migration",
+        work_budget=budget,
+    ) or validate_fixed_head_snapshot(
+        candidate_root,
+        candidate_sha,
+        work_budget=budget,
+    ):
+        raise ValueError("history-v2 candidate reproof snapshot is invalid")
+    if authority_mode == "bootstrap-v2-migration":
+        if (
+            history_v2_bootstrap_markers(base_root, before_rev)
+            != BOOTSTRAP_V2_TEMPORARY_PATHS
+        ):
+            raise ValueError("history-v2 bootstrap candidate base differs")
+        if validate_bootstrap_v2_candidate(base_root, candidate_root):
+            raise ValueError("history-v2 admitted bootstrap candidate is invalid")
+        result = validate_history_v2_bootstrap_transaction(
+            candidate_root,
+            base_rev=before_rev,
+            head_rev=candidate_sha,
+            verify_candidate_signature=True,
+            work_budget=budget,
+        )
+        physical = validate_history_v2_physical_commit_object(
+            candidate_root,
+            candidate_sha,
+            signature_verifier=None,
+        )
+        if (
+            result.get("head_tree_sha") != head_tree_oid
+            or physical.tree_oid != head_tree_oid
+            or physical.parents != (before_rev,)
+            or hashlib.sha256(physical.subject.encode("utf-8")).hexdigest()
+            != candidate_evidence["pull_request_title_sha256"]
+        ):
+            raise ValueError("history-v2 bootstrap candidate reproof differs")
+        return "bootstrap-v2", "admin"
+    if authority_mode != "history-v2-admission" or projection is None:
+        raise ValueError("history-v2 candidate authority mode is invalid")
+    plan, issues = build_pull_request_candidate_plan(
+        candidate_root,
+        projection["candidate_base_sha"],
+        candidate_sha,
+        work_budget=budget,
+    )
+    if issues or plan is None:
+        raise ValueError("history-v2 admitted candidate failed B1 validation")
+    normalized = plan.as_dict()
+    base_generation = history_v2_trust_generation_digest(
+        base_root,
+        before_rev,
+        work_budget=budget,
+    )
+    if (
+        normalized.get("base_oid") != projection.get("candidate_base_sha")
+        or normalized.get("head_oid") != candidate_sha
+        or normalized.get("head_tree_oid") != projection.get("candidate_tree_sha")
+        or normalized.get("squash_subject") != projection.get("squash_subject")
+        or normalized.get("trust_generation") != projection.get("trust_generation")
+        or normalized.get("role") != projection.get("role")
+        or normalized.get("changed_path_count") != projection.get("changed_path_count")
+        or normalized.get("delta_sha256") != projection.get("delta_sha256")
+        or base_generation != projection.get("trust_generation")
+        or projection.get("queue_base_sha") != before_rev
+        or projection.get("prospective_tree_sha") != head_tree_oid
+        or projection.get("queue_tree_sha") != head_tree_oid
+    ):
+        raise ValueError("history-v2 admitted candidate B1 plan differs")
+    return "history-v2", projection["role"]
+
+
 def validate_history_v2_github_squash_receipt(
     payload: dict[str, Any],
     *,
@@ -15613,7 +16675,10 @@ def validate_history_v2_github_squash_receipt(
     repository_id: int,
     before_rev: str,
     head_rev: str,
-) -> None:
+    base_root: Path,
+    candidate_root: Path,
+    work_budget: HistoryV2WorkBudget | None = None,
+) -> tuple[str, str]:
     expected_keys = {
         "schema_version",
         "kind",
@@ -15636,6 +16701,9 @@ def validate_history_v2_github_squash_receipt(
         "pull_request_merged_at",
         "squash_merge_commit_title",
         "squash_merge_commit_message",
+        "candidate_sha",
+        "candidate_evidence_sha256",
+        "candidate_evidence",
     }
     if (
         not isinstance(payload, dict)
@@ -15648,7 +16716,7 @@ def validate_history_v2_github_squash_receipt(
     if (
         not isinstance(repository, str)
         or HISTORY_V2_GITHUB_REPOSITORY_RE.fullmatch(repository) is None
-        or payload.get("schema_version") != 2
+        or payload.get("schema_version") != 3
         or payload.get("kind") != HISTORY_V2_GITHUB_SQUASH_RECEIPT_KIND
         or payload.get("repository") != repository
         or payload.get("base_sha") != before_rev
@@ -15683,6 +16751,8 @@ def validate_history_v2_github_squash_receipt(
     repository_identity_sha256 = payload.get("repository_identity_sha256")
     pull_request_provenance_sha256 = payload.get("pull_request_provenance_sha256")
     pull_request_merged_at = payload.get("pull_request_merged_at")
+    candidate_sha = payload.get("candidate_sha")
+    candidate_evidence_sha256 = payload.get("candidate_evidence_sha256")
     if (
         not isinstance(verified_at, str)
         or TIMESTAMP_RE.fullmatch(verified_at) is None
@@ -15700,6 +16770,12 @@ def validate_history_v2_github_squash_receipt(
         or re.fullmatch(r"[0-9a-f]{64}", pull_request_provenance_sha256) is None
         or not isinstance(pull_request_merged_at, str)
         or TIMESTAMP_RE.fullmatch(pull_request_merged_at) is None
+        or not isinstance(candidate_sha, str)
+        or HISTORY_V2_OID_RE.fullmatch(candidate_sha) is None
+        or len(candidate_sha) != len(head_rev)
+        or candidate_sha in {before_rev, head_rev}
+        or not isinstance(candidate_evidence_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", candidate_evidence_sha256) is None
     ):
         raise ValueError(
             "history-v2 GitHub squash verification receipt provenance is invalid"
@@ -15714,35 +16790,42 @@ def validate_history_v2_github_squash_receipt(
     expected_repository_identity = hashlib.sha256(
         f"{repository_id}:{repository}".encode("utf-8")
     ).hexdigest()
-    expected_provenance = {
-        "base_ref": HISTORY_V2_DEFAULT_BRANCH,
-        "base_repository": repository,
-        "base_repository_id": repository_id,
-        "base_sha": before_rev,
-        "head_repository": repository,
-        "head_repository_id": repository_id,
-        "merge_commit_sha": head_rev,
-        "merged_at": pull_request_merged_at,
-        "node_identity_sha256": pull_request_node_identity_sha256,
-        "number": pull_request_number,
-        "squash_merge_commit_message": HISTORY_V2_GITHUB_SQUASH_COMMIT_MESSAGE,
-        "squash_merge_commit_title": HISTORY_V2_GITHUB_SQUASH_COMMIT_TITLE,
-        "title_sha256": pull_request_title_sha256,
-    }
-    expected_provenance_sha256 = hashlib.sha256(
-        json.dumps(
-            expected_provenance,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    if (
-        repository_identity_sha256 != expected_repository_identity
-        or pull_request_provenance_sha256 != expected_provenance_sha256
-    ):
+    if repository_identity_sha256 != expected_repository_identity:
         raise ValueError(
             "history-v2 GitHub squash verification receipt provenance differs"
         )
+    candidate_evidence, _binding, projection = validate_history_v2_candidate_evidence(
+        payload.get("candidate_evidence"),
+        repository=repository,
+        repository_id=repository_id,
+        before_rev=before_rev,
+        head_rev=head_rev,
+    )
+    if (
+        payload.get("candidate_evidence_sha256")
+        != _history_v2_compact_json_sha256(candidate_evidence)
+        or candidate_evidence.get("candidate_sha") != candidate_sha
+        or candidate_evidence.get("pull_request_number") != pull_request_number
+        or candidate_evidence.get("pull_request_title_sha256")
+        != pull_request_title_sha256
+        or candidate_evidence.get("pull_request_node_identity_sha256")
+        != pull_request_node_identity_sha256
+        or candidate_evidence.get("repository_identity_sha256")
+        != repository_identity_sha256
+        or candidate_evidence.get("pull_request_provenance_sha256")
+        != pull_request_provenance_sha256
+        or candidate_evidence.get("pull_request_merged_at") != pull_request_merged_at
+    ):
+        raise ValueError("history-v2 GitHub squash candidate evidence differs")
+    return validate_history_v2_candidate_reproof(
+        base_root=base_root,
+        candidate_root=candidate_root,
+        before_rev=before_rev,
+        head_tree_oid=commit.tree_oid,
+        candidate_evidence=candidate_evidence,
+        projection=projection,
+        work_budget=work_budget,
+    )
 
 
 def history_v2_signature_verifier_for_root(
@@ -16239,6 +17322,82 @@ def history_v2_diff_output(
     return raw
 
 
+def history_v2_exact_tree_delta(
+    root: Path,
+    base_rev: str,
+    head_rev: str,
+    *,
+    work_budget: HistoryV2WorkBudget,
+) -> tuple[tuple[str, str, str, str, str, str], ...]:
+    base_rev = canonical_history_v2_oid(base_rev, "history-v2 tree-delta base")
+    head_rev = canonical_history_v2_oid(head_rev, "history-v2 tree-delta head")
+    work_budget.reserve_diff_call()
+    remaining = HISTORY_V2_MAX_DIFF_BYTES - work_budget.diff_bytes
+    raw = history_v2_git_output(
+        root,
+        "diff-tree",
+        "--no-commit-id",
+        "--raw",
+        "-r",
+        "-z",
+        "--no-renames",
+        "--no-abbrev",
+        base_rev,
+        head_rev,
+        "--",
+        max_bytes=remaining,
+    )
+    work_budget.add_diff_bytes(len(raw))
+    fields = raw.split(NUL_BYTE)
+    if fields[-1:] != [b""]:
+        raise ValueError("history-v2 exact tree delta is not NUL terminated")
+    records: list[tuple[str, str, str, str, str, str]] = []
+    seen: set[Path] = set()
+    index = 0
+    while index < len(fields) - 1:
+        if index + 1 >= len(fields) - 1:
+            raise ValueError("history-v2 exact tree delta is incomplete")
+        metadata = fields[index]
+        raw_path = fields[index + 1]
+        values = metadata.split(b" ")
+        if len(values) != 5 or not values[0].startswith(b":"):
+            raise ValueError("history-v2 exact tree delta metadata is malformed")
+        try:
+            old_mode = values[0][1:].decode("ascii")
+            new_mode = values[1].decode("ascii")
+            old_oid = values[2].decode("ascii")
+            new_oid = values[3].decode("ascii")
+            status = values[4].decode("ascii")
+            path_text = raw_path.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("history-v2 exact tree delta metadata is invalid") from exc
+        relative = Path(path_text)
+        if (
+            status not in {"A", "M"}
+            or re.fullmatch(r"[0-7]{6}", old_mode) is None
+            or re.fullmatch(r"[0-7]{6}", new_mode) is None
+            or len(old_oid) != len(head_rev)
+            or len(new_oid) != len(head_rev)
+            or re.fullmatch(r"[0-9a-f]+", old_oid) is None
+            or re.fullmatch(r"[0-9a-f]+", new_oid) is None
+            or not path_text
+            or relative.is_absolute()
+            or relative.as_posix() != path_text
+            or any(part in {"", ".", ".."} for part in relative.parts)
+            or len(path_text.encode("utf-8")) > 1024
+            or relative in seen
+        ):
+            raise ValueError("history-v2 exact tree delta is outside policy")
+        seen.add(relative)
+        records.append((status, path_text, old_mode, new_mode, old_oid, new_oid))
+        if len(records) > BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES:
+            raise ValueError("history-v2 exact tree delta exceeds the trusted limit")
+        index += 2
+    if not records:
+        raise ValueError("history-v2 exact tree delta is empty")
+    return tuple(records)
+
+
 def history_v2_read_path_value(
     root: Path,
     revision: str,
@@ -16604,6 +17763,8 @@ class HistoryV2MergePlan:
     squash_subject: str
     trust_generation: str
     role: str
+    changed_path_count: int
+    delta_sha256: str
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -16614,6 +17775,8 @@ class HistoryV2MergePlan:
             "squash_subject": self.squash_subject,
             "trust_generation": self.trust_generation,
             "role": self.role,
+            "changed_path_count": self.changed_path_count,
+            "delta_sha256": self.delta_sha256,
         }
 
 
@@ -16819,23 +17982,24 @@ def build_pull_request_candidate_plan(
     root: Path,
     base_rev: str,
     head_rev: str,
+    *,
+    work_budget: HistoryV2WorkBudget | None = None,
 ) -> tuple[HistoryV2MergePlan | None, list[str]]:
     root = root.resolve()
-    budget = HistoryV2WorkBudget()
+    budget = work_budget if work_budget is not None else HistoryV2WorkBudget()
     try:
         root, base_rev, head_rev = validated_history_v2_range_checkout(
             root,
             base_rev=base_rev,
             head_rev=head_rev,
         )
-        changed = parse_history_v2_changed_paths(
-            history_v2_diff_output(
-                root,
-                base_rev,
-                head_rev,
-                work_budget=budget,
-            )
+        candidate_delta = history_v2_exact_tree_delta(
+            root,
+            base_rev,
+            head_rev,
+            work_budget=budget,
         )
+        changed = [(record[0], Path(record[1])) for record in candidate_delta]
         role = classify_history_v2_transaction(changed)
         has_domain_artifacts = any(
             history_v2_run_artifact(relative) for _status, relative in changed
@@ -16885,6 +18049,8 @@ def build_pull_request_candidate_plan(
             squash_subject=squash_subject,
             trust_generation=trust_generation,
             role=role,
+            changed_path_count=len(candidate_delta),
+            delta_sha256=_history_v2_compact_json_sha256(candidate_delta),
         )
     except (OSError, UnicodeError, ValueError) as exc:
         return None, [safe_exception_message(exc)]
@@ -16894,9 +18060,14 @@ def build_pull_request_candidate_plan(
 def validate_fixed_head_snapshot(
     root: Path,
     expected_head: str,
+    *,
+    validate_tree: bool = True,
+    work_budget: HistoryV2WorkBudget | None = None,
 ) -> list[str]:
     root = root.resolve()
     try:
+        if type(validate_tree) is not bool:
+            raise ValueError("history-v2 fixed snapshot tree mode is invalid")
         expected_head = canonical_history_v2_oid(
             expected_head,
             "history-v2 fixed snapshot head",
@@ -16932,7 +18103,16 @@ def validate_fixed_head_snapshot(
             raise ValueError("history-v2 fixed snapshot is not pristine")
     except (OSError, UnicodeError, ValueError) as exc:
         return [safe_exception_message(exc)]
-    return validate_history_v2_tree(root)
+    return (
+        validate_history_v2_tree(
+            root,
+            work_budget=(
+                work_budget if work_budget is not None else HistoryV2WorkBudget()
+            ),
+        )
+        if validate_tree
+        else []
+    )
 
 
 def validate_history_v2_generic_append_only_changes(
@@ -17090,6 +18270,8 @@ def validate_history_v2_bootstrap_transaction(
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
     repository_id: int | None = None,
+    base_root: Path | None = None,
+    candidate_root: Path | None = None,
 ) -> dict[str, Any]:
     root, base_rev, head_rev = validated_history_v2_range_checkout(
         root,
@@ -17129,7 +18311,17 @@ def validate_history_v2_bootstrap_transaction(
             github_commit_receipt=github_commit_receipt,
             repository=repository,
             repository_id=repository_id,
+            base_root=base_root,
+            candidate_root=candidate_root,
+            work_budget=budget,
         )
+        if not isinstance(github_commit_receipt, dict):
+            raise ValueError(
+                "history-v2 bootstrap squash lacks candidate reproof evidence"
+            )
+        candidate_evidence = github_commit_receipt["candidate_evidence"]
+        if candidate_evidence.get("authority_mode") != "bootstrap-v2-migration":
+            raise ValueError("history-v2 bootstrap receipt uses another policy branch")
     budget.add_parent_edges(len(parents))
     if parents != (base_rev,):
         raise ValueError(
@@ -17228,6 +18420,9 @@ def history_v2_single_parent_squash_coordinates(
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
     repository_id: int | None = None,
+    base_root: Path | None = None,
+    candidate_root: Path | None = None,
+    work_budget: HistoryV2WorkBudget | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     before_rev = canonical_history_v2_oid(
         before_rev,
@@ -17255,7 +18450,13 @@ def history_v2_single_parent_squash_coordinates(
         max_bytes=HISTORY_V2_MAX_COMMIT_BYTES,
     )
     if b"\ngpgsig " in b"\n" + raw_commit.partition(b"\n\n")[0]:
-        if github_commit_receipt is None or repository is None or repository_id is None:
+        if (
+            github_commit_receipt is None
+            or repository is None
+            or repository_id is None
+            or base_root is None
+            or candidate_root is None
+        ):
             raise ValueError(
                 "history-v2 GitHub squash commit lacks exact provider verification"
             )
@@ -17270,12 +18471,21 @@ def history_v2_single_parent_squash_coordinates(
             repository_id=repository_id,
             before_rev=before_rev,
             head_rev=head_rev,
+            base_root=base_root,
+            candidate_root=candidate_root,
+            work_budget=work_budget,
         )
         head_tree_oid, parents = parsed.tree_oid, parsed.parents
     else:
         if any(
             value is not None
-            for value in (github_commit_receipt, repository, repository_id)
+            for value in (
+                github_commit_receipt,
+                repository,
+                repository_id,
+                base_root,
+                candidate_root,
+            )
         ):
             raise ValueError("history-v2 default squash is not GitHub provider-signed")
         head_tree_oid, parents = parse_history_v2_unsigned_squash_commit(
@@ -17306,6 +18516,8 @@ def validated_history_v2_default_event_checkout(
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
     repository_id: int | None = None,
+    base_root: Path | None = None,
+    candidate_root: Path | None = None,
 ) -> tuple[Path, str, str]:
     if any(
         type(value) is not bool
@@ -17340,6 +18552,9 @@ def validated_history_v2_default_event_checkout(
         github_commit_receipt=github_commit_receipt,
         repository=repository,
         repository_id=repository_id,
+        base_root=base_root,
+        candidate_root=candidate_root,
+        work_budget=work_budget,
     )
     if work_budget is not None:
         work_budget.authorized_domain_revisions.add((root, before_rev))
@@ -17355,6 +18570,8 @@ def validate_history_v2_actual_squash_transaction(
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
     repository_id: int | None = None,
+    base_root: Path | None = None,
+    candidate_root: Path | None = None,
 ) -> dict[str, Any]:
     root, before_rev, head_rev = validated_history_v2_range_checkout(
         root,
@@ -17369,6 +18586,9 @@ def validate_history_v2_actual_squash_transaction(
         github_commit_receipt=github_commit_receipt,
         repository=repository,
         repository_id=repository_id,
+        base_root=base_root,
+        candidate_root=candidate_root,
+        work_budget=budget,
     )
     budget.authorized_domain_revisions.add((root, before_rev))
     changed = parse_history_v2_changed_paths(
@@ -17382,6 +18602,20 @@ def validate_history_v2_actual_squash_transaction(
     if not changed:
         raise ValueError("history-v2 default squash transaction is empty")
     role = classify_history_v2_transaction(changed)
+    if github_commit_receipt is not None:
+        candidate_evidence = github_commit_receipt["candidate_evidence"]
+        admission_binding = candidate_evidence.get("admission_binding")
+        projection = (
+            admission_binding.get("admission", {}).get("projection", {})
+            if isinstance(admission_binding, dict)
+            else {}
+        )
+        if (
+            candidate_evidence.get("authority_mode") != "history-v2-admission"
+            or projection.get("policy") != "history-v2"
+            or projection.get("role") != role
+        ):
+            raise ValueError("history-v2 default receipt uses another policy branch")
     has_v2_runs = any(
         history_v2_run_artifact(relative) for _status, relative in changed
     )
@@ -17434,6 +18668,8 @@ def validate_history_v2_default_transaction(
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
     repository_id: int | None = None,
+    base_root: Path | None = None,
+    candidate_root: Path | None = None,
 ) -> dict[str, Any]:
     root, before_rev, head_rev = validated_history_v2_default_event_checkout(
         root,
@@ -17446,6 +18682,8 @@ def validate_history_v2_default_transaction(
         github_commit_receipt=github_commit_receipt,
         repository=repository,
         repository_id=repository_id,
+        base_root=base_root,
+        candidate_root=candidate_root,
     )
 
     markers = history_v2_bootstrap_markers(root, before_rev)
@@ -17461,6 +18699,8 @@ def validate_history_v2_default_transaction(
             github_commit_receipt=github_commit_receipt,
             repository=repository,
             repository_id=repository_id,
+            base_root=base_root,
+            candidate_root=candidate_root,
         )
     return validate_history_v2_actual_squash_transaction(
         root,
@@ -17470,6 +18710,8 @@ def validate_history_v2_default_transaction(
         github_commit_receipt=github_commit_receipt,
         repository=repository,
         repository_id=repository_id,
+        base_root=base_root,
+        candidate_root=candidate_root,
     )
 
 
@@ -17920,8 +19162,8 @@ def main(argv: list[str] | None = None) -> int:
                 issues.append(safe_exception_message(exc))
     elif args.mode == "history-v2-actual-default-squash":
         if (
-            args.base_root is not None
-            or args.candidate_root is not None
+            args.base_root is None
+            or args.candidate_root is None
             or args.base_rev is None
             or args.head_rev is None
             or args.write_merge_plan is not None
@@ -17933,7 +19175,7 @@ def main(argv: list[str] | None = None) -> int:
             or args.github_commit_receipt is None
         ):
             parser.error(
-                "history-v2-actual-default-squash mode requires --root, --base-rev, --head-rev, --repository, --repository-id, --github-commit-receipt, and every event flag"
+                "history-v2-actual-default-squash mode requires --root, --base-root, --candidate-root, --base-rev, --head-rev, --repository, --repository-id, --github-commit-receipt, and every event flag"
             )
         root = Path(args.root or ".")
         work_budget = HistoryV2WorkBudget()
@@ -17952,6 +19194,8 @@ def main(argv: list[str] | None = None) -> int:
                 github_commit_receipt=github_commit_receipt,
                 repository=args.repository,
                 repository_id=args.repository_id,
+                base_root=Path(args.base_root),
+                candidate_root=Path(args.candidate_root),
             )
         except (OSError, UnicodeError, ValueError) as exc:
             issues = [safe_exception_message(exc)]
@@ -17975,6 +19219,8 @@ def main(argv: list[str] | None = None) -> int:
                     github_commit_receipt=github_commit_receipt,
                     repository=args.repository,
                     repository_id=args.repository_id,
+                    base_root=Path(args.base_root),
+                    candidate_root=Path(args.candidate_root),
                 )
             except (OSError, UnicodeError, ValueError) as exc:
                 issues.append(safe_exception_message(exc))

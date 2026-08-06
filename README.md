@@ -75,8 +75,9 @@ required check, an external admission service must be installed. That service
 validates the exact queue SHA from independently trusted code, publishes the
 queue check through its bound GitHub App identity, and performs the history
 authority compare-and-swap. Its trusted configuration supplies that dedicated
-App ID to `merge-group-snapshot --admission-app-id`; the GitHub Actions App is
-explicitly ineligible. Before publishing success or attempting CAS, it must
+repository ID and App ID to `merge-group-snapshot --repository-id
+--admission-app-id`; the GitHub Actions App is explicitly ineligible. Before
+publishing success or attempting CAS, it must
 materialize the exact `Q` tree with `prepare-runtime-execution`, run the fixed
 CPython `3.13.12` compile and unittest commands without GitHub or CAS
 credentials as a nonprivileged UID, revalidate with
@@ -92,13 +93,46 @@ trusted runtime configuration, never from the receipt or candidate tree. After
 runtime validation, the command must reread the live pull request, queue ref,
 repository merge configuration, active branch rules, branch protection, and
 complete ruleset inventory. Every field and the resulting TCB digest must still
-equal the original snapshot. The admission record binds that live-authority
-digest and a 30-second validity window that starts before the first live read;
-the full reread must finish inside that window. The external service must
+equal the original snapshot, including the immutable repository ID. All nested
+GETs share one request-count, response-byte, and monotonic deadline budget. The
+admission record binds that live-authority digest and a 30-second validity
+window that starts before the first live read; the full response bodies and
+validation must finish inside that window. The external service must
 discard an expired record and repeat admission immediately before publishing
 success or attempting CAS. Only that fresh admission record may feed CAS.
 Until that external producer and receipt flow are proven, cutover is blocked
 and the existing branch rules remain unchanged.
+
+The external producer has a second, separate identity requirement. Its numeric
+GitHub App ID and the fixed `retrospective-history-admission` slug must be
+committed identically in `scripts/trusted_history_ci.py` and
+`scripts/validate_retained_history.py`; an environment or repository variable
+cannot supply or override that trust root. The tracked App ID is intentionally
+unset during bootstrap development, so `history-v2-admission` fails closed
+until the dedicated App exists and its real ID is reviewed and committed. The
+one-time `bootstrap-v2-migration` authority does not use that App, but it is
+valid only for the designated bootstrap candidate ref and only while the exact
+predecessor marker set is present.
+
+The post-merge audit emits a schema-v3 provider receipt. It records a canonical
+candidate-evidence object rather than a precomputed validation verdict. In the
+bootstrap authority mode, the offline validator independently reopens clean
+fixed snapshots for `B` and signed candidate `H`, verifies the bootstrap
+signature role and single parent, and proves that `tree(H) == tree(S)` for the
+provider squash `S`. In permanent history-v2 mode, the evidence binds the same
+canonical admission JSON digest to both the candidate-`H` admission check and
+the queue-`Q` gate check from the pinned App. The offline validator then reruns
+the B1 candidate plan against `H`, recomputes the predecessor trust generation,
+and proves that the admitted prospective and queue trees both equal `tree(S)`.
+Decoded-object equality is insufficient: both checks must carry the exact same
+SHA-256 digest, and every nested schema version is an exact integer.
+
+Admission timing is ordered as `observation <= H check <= Q check < expiry`.
+The `Q` check must complete no later than the recorded merge, but the merge may
+finish after the admission TTL; the TTL constrains the authority decision, not
+GitHub's subsequent merge latency. Failure to materialize either fixed snapshot
+or to reprove any candidate property blocks the audit rather than trusting the
+network collector's conclusion.
 
 The post-merge default audit also binds the exact local squash object to
 GitHub's read-only commit and pull-request APIs. Before any candidate dependency

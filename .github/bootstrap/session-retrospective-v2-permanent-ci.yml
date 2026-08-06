@@ -733,9 +733,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
+      checks: read
       contents: read
       pull-requests: read
     env:
+      ADMITTED_CANDIDATE_ROOT: "${{ github.workspace }}/admitted-candidate"
       DEFAULT_AUTHORITY_ROOT: "${{ github.workspace }}/candidate-default"
       EVENT_BEFORE_SHA: "${{ github.event.before }}"
       EVENT_CREATED: "${{ github.event.created }}"
@@ -823,6 +825,62 @@ jobs:
             printf 'CONTROL_PYTHON=%s\n' "$control_python"
           } >>"$GITHUB_ENV"
       -
+        name: Resolve exact admitted candidate H
+        id: resolve-admitted-candidate
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -f 8192
+          ulimit -n 256
+          initial_evidence="$RUNNER_TEMP/default-history-ci/initial-candidate-evidence.json"
+          candidate_sha="$(
+            timeout --signal=TERM --kill-after=5s 120s \
+              /usr/bin/env -i HOME="$CONTROL_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+                PATH="$PATH" GH_TOKEN="$GH_TOKEN" \
+                GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+                GIT_OPTIONAL_LOCKS=0 PYTHONDONTWRITEBYTECODE=1 \
+                PYTHONHASHSEED=0 \
+                "$CONTROL_PYTHON" -I -B \
+                  "$TRUSTED_BASELINE_ROOT/scripts/trusted_history_ci.py" \
+                  resolve-default-admitted-candidate \
+                  --repository "$GITHUB_REPOSITORY" \
+                  --repository-id "$EVENT_REPOSITORY_ID" \
+                  --trusted-base-root "$TRUSTED_BASELINE_ROOT" \
+                  --base-sha "$EVENT_BEFORE_SHA" \
+                  --head-sha "$GITHUB_SHA" \
+                  --output "$initial_evidence"
+          )"
+          validate_nonzero_sha() {
+            case "$1" in
+              ""|*[!0-9a-f]*|0000000000000000000000000000000000000000|0000000000000000000000000000000000000000000000000000000000000000)
+                return 1
+                ;;
+            esac
+            [ "${#1}" -eq 40 ] || [ "${#1}" -eq 64 ]
+          }
+          validate_nonzero_sha "$candidate_sha"
+          {
+            printf 'INITIAL_CANDIDATE_EVIDENCE=%s\n' "$initial_evidence"
+            printf 'ADMITTED_CANDIDATE_SHA=%s\n' "$candidate_sha"
+          } >>"$GITHUB_ENV"
+          printf 'candidate-sha=%s\n' "$candidate_sha" >>"$GITHUB_OUTPUT"
+      -
+        name: Checkout exact admitted candidate H
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: "${{ github.repository }}"
+          ref: "${{ steps.resolve-admitted-candidate.outputs.candidate-sha }}"
+          path: admitted-candidate
+          fetch-depth: 65
+          clean: true
+          lfs: false
+          submodules: false
+          set-safe-directory: false
+          persist-credentials: false
+      -
         name: Verify exact GitHub squash commit
         env:
           GH_TOKEN: "${{ github.token }}"
@@ -845,8 +903,10 @@ jobs:
                   --repository "$GITHUB_REPOSITORY" \
                   --repository-id "$EVENT_REPOSITORY_ID" \
                   --git-dir "$DEFAULT_AUTHORITY_ROOT/.git" \
+                  --trusted-base-root "$TRUSTED_BASELINE_ROOT" \
                   --base-sha "$EVENT_BEFORE_SHA" \
                   --head-sha "$GITHUB_SHA" \
+                  --initial-candidate-evidence "$INITIAL_CANDIDATE_EVIDENCE" \
                   --output "$github_commit_receipt"; then
             echo "Exact GitHub squash verification failed closed." >&2
             exit 1
@@ -904,6 +964,8 @@ jobs:
                   "$TRUSTED_BASELINE_ROOT/scripts/validate_retained_history.py" \
                   --mode history-v2-actual-default-squash \
                   --root "$DEFAULT_AUTHORITY_ROOT" \
+                  --base-root "$TRUSTED_BASELINE_ROOT" \
+                  --candidate-root "$ADMITTED_CANDIDATE_ROOT" \
                   --base-rev "$EVENT_BEFORE_SHA" \
                   --head-rev "$GITHUB_SHA" \
                   --repository "$GITHUB_REPOSITORY" \
@@ -924,14 +986,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          receipt="$RUNNER_TEMP/default-history-ci/github-commit-receipt.json"
-          if [ -e "$receipt" ] || [ -L "$receipt" ]; then
-            rm -f -- "$receipt"
-          fi
-          if [ -e "$receipt" ] || [ -L "$receipt" ]; then
-            echo "Temporary provider receipt cleanup failed." >&2
-            exit 1
-          fi
+          receipts=(
+            "$RUNNER_TEMP/default-history-ci/github-commit-receipt.json"
+            "$RUNNER_TEMP/default-history-ci/initial-candidate-evidence.json"
+          )
+          for receipt in "${receipts[@]}"; do
+            if [ -e "$receipt" ] || [ -L "$receipt" ]; then
+              rm -f -- "$receipt"
+            fi
+            if [ -e "$receipt" ] || [ -L "$receipt" ]; then
+              echo "Temporary provider receipt cleanup failed." >&2
+              exit 1
+            fi
+          done
       -
         name: Prepare disposable default test tree
         id: prepare-default-execution

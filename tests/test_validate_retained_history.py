@@ -407,17 +407,22 @@ def github_squash_receipt(
     head_sha: str,
     repository: str = "Joey-Tools/codex-session-retrospective-history",
     repository_id: int = FIXTURE_REPOSITORY_ID,
+    candidate_sha: str | None = None,
 ) -> dict[str, object]:
     pull_request_number = 4
     pull_request_merged_at = "2026-07-15T00:00:00Z"
+    candidate_sha = candidate_sha or "d" * len(head_sha)
     node_identity_sha256 = hashlib.sha256(b"PR_kwDOSyntheticReceipt").hexdigest()
     provenance = {
+        "authority_mode": "bootstrap-v2-migration",
         "base_ref": MODULE.HISTORY_V2_DEFAULT_BRANCH,
         "base_repository": repository,
         "base_repository_id": repository_id,
         "base_sha": base_sha,
         "head_repository": repository,
         "head_repository_id": repository_id,
+        "head_ref": MODULE.HISTORY_V2_BOOTSTRAP_CANDIDATE_REF,
+        "candidate_sha": candidate_sha,
         "merge_commit_sha": head_sha,
         "merged_at": pull_request_merged_at,
         "node_identity_sha256": node_identity_sha256,
@@ -426,8 +431,36 @@ def github_squash_receipt(
         "squash_merge_commit_title": "PR_TITLE",
         "title_sha256": parsed.pull_request_title_sha256,
     }
+    candidate_evidence = {
+        "schema_version": 1,
+        "kind": MODULE.HISTORY_V2_DEFAULT_CANDIDATE_EVIDENCE_KIND,
+        "authority_mode": "bootstrap-v2-migration",
+        "repository": repository,
+        "repository_id": repository_id,
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "pull_request_number": pull_request_number,
+        "candidate_ref": MODULE.HISTORY_V2_BOOTSTRAP_CANDIDATE_REF,
+        "candidate_sha": candidate_sha,
+        "pull_request_title_sha256": parsed.pull_request_title_sha256,
+        "pull_request_node_identity_sha256": node_identity_sha256,
+        "repository_identity_sha256": hashlib.sha256(
+            f"{repository_id}:{repository}".encode("utf-8")
+        ).hexdigest(),
+        "pull_request_provenance_sha256": hashlib.sha256(
+            json.dumps(
+                provenance,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+        "pull_request_merged_at": pull_request_merged_at,
+        "admission_binding": None,
+        "squash_merge_commit_title": "PR_TITLE",
+        "squash_merge_commit_message": "BLANK",
+    }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": MODULE.HISTORY_V2_GITHUB_SQUASH_RECEIPT_KIND,
         "repository": repository,
         "base_sha": base_sha,
@@ -456,6 +489,11 @@ def github_squash_receipt(
         "pull_request_merged_at": pull_request_merged_at,
         "squash_merge_commit_title": "PR_TITLE",
         "squash_merge_commit_message": "BLANK",
+        "candidate_sha": candidate_sha,
+        "candidate_evidence_sha256": MODULE._history_v2_compact_json_sha256(
+            candidate_evidence
+        ),
+        "candidate_evidence": candidate_evidence,
     }
 
 
@@ -732,6 +770,9 @@ def validate_synthetic_history_v2_default_transaction(
     event_created: bool = False,
     event_deleted: bool = False,
     event_forced: bool = False,
+    github_commit_receipt: dict[str, object] | None = None,
+    base_root: Path | None = None,
+    candidate_root: Path | None = None,
 ) -> dict[str, object]:
     digests = {
         relative: hashlib.sha256((root / relative).read_bytes()).hexdigest()
@@ -752,6 +793,17 @@ def validate_synthetic_history_v2_default_transaction(
             event_created=event_created,
             event_deleted=event_deleted,
             event_forced=event_forced,
+            github_commit_receipt=github_commit_receipt,
+            repository=(
+                "Joey-Tools/codex-session-retrospective-history"
+                if github_commit_receipt is not None
+                else None
+            ),
+            repository_id=(
+                FIXTURE_REPOSITORY_ID if github_commit_receipt is not None else None
+            ),
+            base_root=base_root,
+            candidate_root=candidate_root,
         )
 
 
@@ -3410,6 +3462,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     "squash_subject",
                     "trust_generation",
                     "role",
+                    "changed_path_count",
+                    "delta_sha256",
                 },
             )
             self.assertEqual(persisted_plan["base_oid"], base)
@@ -3448,6 +3502,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 write_bootstrap_v2_candidate(root)
                 fixture_commit_all(root, "post migration base")
                 base = run_fixture_git(root, "rev-parse", "HEAD").stdout.strip()
+                base_root = Path(raw) / "base"
+                shutil.copytree(root, base_root)
                 if role == "publication":
                     target = root / "reports" / "daily" / "2026" / "07" / "15.md"
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -3486,14 +3542,44 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         base,
                         head,
                     )
+                    reproof = (
+                        MODULE.validate_history_v2_candidate_reproof(
+                            base_root=base_root,
+                            candidate_root=root,
+                            before_rev=base,
+                            head_tree_oid=plan.head_tree_oid,
+                            candidate_evidence={
+                                "authority_mode": "history-v2-admission",
+                                "candidate_sha": head,
+                            },
+                            projection={
+                                "candidate_base_sha": base,
+                                "queue_base_sha": base,
+                                "candidate_sha": head,
+                                "candidate_tree_sha": plan.head_tree_oid,
+                                "queue_tree_sha": plan.head_tree_oid,
+                                "prospective_tree_sha": plan.head_tree_oid,
+                                "squash_subject": plan.squash_subject,
+                                "trust_generation": plan.trust_generation,
+                                "role": plan.role,
+                                "changed_path_count": plan.changed_path_count,
+                                "delta_sha256": plan.delta_sha256,
+                            },
+                        )
+                        if plan is not None
+                        else None
+                    )
                 self.assertEqual(issues, [])
                 self.assertIsNotNone(plan)
                 assert plan is not None
+                self.assertEqual(reproof, ("history-v2", role))
                 self.assertEqual(plan.base_oid, base)
                 self.assertEqual(plan.head_oid, head)
                 self.assertEqual(plan.role, role)
                 self.assertEqual(plan.squash_subject, subject)
                 self.assertRegex(plan.trust_generation, r"^[0-9a-f]{64}$")
+                self.assertEqual(plan.changed_path_count, 1)
+                self.assertRegex(plan.delta_sha256, r"^[0-9a-f]{64}$")
                 expected_policy = (
                     "history-v2" if role == "publication" else "bootstrap-v2"
                 )
@@ -3546,6 +3632,113 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 )
             self.assertIsNone(plan)
             self.assertIn("mixes publication and admin paths", "\n".join(issues))
+
+    def test_candidate_reproof_shares_one_budget_and_binds_exact_delta(self) -> None:
+        base = "b" * 40
+        candidate = "c" * 40
+        tree = "d" * 40
+        trust = "e" * 64
+        delta = "f" * 64
+        budget = MODULE.HistoryV2WorkBudget()
+        plan = MODULE.HistoryV2MergePlan(
+            base_oid=base,
+            head_oid=candidate,
+            head_tree_oid=tree,
+            squash_subject="Publish retained history",
+            trust_generation=trust,
+            role="publication",
+            changed_path_count=1,
+            delta_sha256=delta,
+        )
+        projection = {
+            "candidate_base_sha": base,
+            "queue_base_sha": base,
+            "candidate_sha": candidate,
+            "candidate_tree_sha": tree,
+            "queue_tree_sha": tree,
+            "prospective_tree_sha": tree,
+            "squash_subject": plan.squash_subject,
+            "trust_generation": trust,
+            "role": plan.role,
+            "changed_path_count": plan.changed_path_count,
+            "delta_sha256": plan.delta_sha256,
+        }
+        with (
+            mock.patch.object(
+                MODULE,
+                "validate_fixed_head_snapshot",
+                side_effect=[[], []],
+            ) as snapshots,
+            mock.patch.object(
+                MODULE,
+                "build_pull_request_candidate_plan",
+                return_value=(plan, []),
+            ) as plan_builder,
+            mock.patch.object(
+                MODULE,
+                "history_v2_trust_generation_digest",
+                return_value=trust,
+            ) as trust_digest,
+        ):
+            self.assertEqual(
+                MODULE.validate_history_v2_candidate_reproof(
+                    base_root=Path("/synthetic/base"),
+                    candidate_root=Path("/synthetic/candidate"),
+                    before_rev=base,
+                    head_tree_oid=tree,
+                    candidate_evidence={
+                        "authority_mode": "history-v2-admission",
+                        "candidate_sha": candidate,
+                    },
+                    projection=projection,
+                    work_budget=budget,
+                ),
+                ("history-v2", "publication"),
+            )
+        self.assertTrue(
+            all(
+                call.kwargs["work_budget"] is budget
+                for call in snapshots.call_args_list
+            )
+        )
+        self.assertIs(plan_builder.call_args.kwargs["work_budget"], budget)
+        self.assertIs(trust_digest.call_args.kwargs["work_budget"], budget)
+
+        for field, value in (
+            ("changed_path_count", 2),
+            ("delta_sha256", "0" * 64),
+        ):
+            changed = {**projection, field: value}
+            with (
+                self.subTest(field=field),
+                mock.patch.object(
+                    MODULE,
+                    "validate_fixed_head_snapshot",
+                    side_effect=[[], []],
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "build_pull_request_candidate_plan",
+                    return_value=(plan, []),
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "history_v2_trust_generation_digest",
+                    return_value=trust,
+                ),
+                self.assertRaisesRegex(ValueError, "B1 plan differs"),
+            ):
+                MODULE.validate_history_v2_candidate_reproof(
+                    base_root=Path("/synthetic/base"),
+                    candidate_root=Path("/synthetic/candidate"),
+                    before_rev=base,
+                    head_tree_oid=tree,
+                    candidate_evidence={
+                        "authority_mode": "history-v2-admission",
+                        "candidate_sha": candidate,
+                    },
+                    projection=changed,
+                )
 
     def test_domain_helpers_execute_only_frozen_source_with_closed_dependencies(
         self,
@@ -4915,6 +5108,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     str(SCRIPT),
                     "--root",
                     str(root),
+                    "--base-root",
+                    str(root),
+                    "--candidate-root",
+                    str(root),
                     "--mode",
                     "history-v2-actual-default-squash",
                     "--base-rev",
@@ -5006,13 +5203,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         root = Path("/synthetic/candidate")
         base = "a" * 40
         head = "b" * 40
-        mixed = [
-            ("A", Path("README.md")),
+        mixed = (
+            ("A", "README.md", "000000", "100644", "0" * 40, "1" * 40),
             (
                 "A",
-                Path("runs/daily/2026-07-15/aaaaaaaaaaaaaaaaaaaaaaaaaa/manifest.json"),
+                "runs/daily/2026-07-15/aaaaaaaaaaaaaaaaaaaaaaaaaa/manifest.json",
+                "000000",
+                "100644",
+                "0" * 40,
+                "2" * 40,
             ),
-        ]
+        )
         with (
             mock.patch.object(
                 MODULE,
@@ -5021,12 +5222,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ),
             mock.patch.object(
                 MODULE,
-                "history_v2_diff_output",
-                return_value=b"",
-            ),
-            mock.patch.object(
-                MODULE,
-                "parse_history_v2_changed_paths",
+                "history_v2_exact_tree_delta",
                 return_value=mixed,
             ),
             mock.patch.object(
@@ -5598,6 +5794,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
     def test_github_squash_requires_exact_provider_receipt(self) -> None:
         repository = "Joey-Tools/codex-session-retrospective-history"
+        candidate_reproof = mock.patch.object(
+            MODULE,
+            "validate_history_v2_candidate_reproof",
+            return_value=("bootstrap-v2", "admin"),
+        )
+        candidate_reproof.start()
+        self.addCleanup(candidate_reproof.stop)
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "repo"
             write_bootstrap_v2_candidate(root)
@@ -5674,6 +5877,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 repository_id=FIXTURE_REPOSITORY_ID,
                 before_rev=base,
                 head_rev=numbered,
+                base_root=root,
+                candidate_root=root,
             )
             mismatched_number = fixture_raw_commit(
                 root,
@@ -5703,6 +5908,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     repository_id=FIXTURE_REPOSITORY_ID,
                     before_rev=base,
                     head_rev=mismatched_number,
+                    base_root=root,
+                    candidate_root=root,
                 )
             for author in (
                 f"Retrospective History <{risky_email()}>",
@@ -5764,6 +5971,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     github_commit_receipt=receipt,
                     repository=repository,
                     repository_id=FIXTURE_REPOSITORY_ID,
+                    base_root=root,
+                    candidate_root=root,
                 ),
                 (tree_oid, (base,)),
             )
@@ -5802,6 +6011,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         repository_id=FIXTURE_REPOSITORY_ID,
                         before_rev=base,
                         head_rev=squash,
+                        base_root=root,
+                        candidate_root=root,
                     )
             for field, value in (
                 ("squash_merge_commit_title", "COMMIT_OR_PR_TITLE"),
@@ -5818,6 +6029,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         repository_id=FIXTURE_REPOSITORY_ID,
                         before_rev=base,
                         head_rev=squash,
+                        base_root=root,
+                        candidate_root=root,
                     )
             for field, value in (
                 ("verified_at", "not-a-timestamp"),
@@ -5842,6 +6055,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         repository_id=FIXTURE_REPOSITORY_ID,
                         before_rev=base,
                         head_rev=squash,
+                        base_root=root,
+                        candidate_root=root,
                     )
 
             for field, value in (
@@ -5853,7 +6068,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ):
                 with (
                     self.subTest(valid_shape_wrong_value=field),
-                    self.assertRaisesRegex(ValueError, "provenance differs"),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        "provenance differs|candidate evidence differs",
+                    ),
                 ):
                     MODULE.validate_history_v2_github_squash_receipt(
                         {**receipt, field: value},
@@ -5862,6 +6080,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         repository_id=FIXTURE_REPOSITORY_ID,
                         before_rev=base,
                         head_rev=squash,
+                        base_root=root,
+                        candidate_root=root,
                     )
 
             with self.assertRaisesRegex(ValueError, "provenance is invalid"):
@@ -5872,6 +6092,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     repository_id=True,
                     before_rev=base,
                     head_rev=squash,
+                    base_root=root,
+                    candidate_root=root,
                 )
 
             with self.assertRaisesRegex(ValueError, "shape is invalid"):
@@ -5882,6 +6104,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     repository_id=FIXTURE_REPOSITORY_ID,
                     before_rev=base,
                     head_rev=squash,
+                    base_root=root,
+                    candidate_root=root,
                 )
 
             with self.assertRaisesRegex(ValueError, "shape is invalid"):
@@ -5892,6 +6116,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     repository_id=FIXTURE_REPOSITORY_ID,
                     before_rev=base,
                     head_rev=squash,
+                    base_root=root,
+                    candidate_root=root,
                 )
 
             invalid_provider_commits = (
@@ -6120,16 +6346,50 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             write_bootstrap_v2_base(root)
             fixture_commit_all(root, "bootstrap base")
             base = run_fixture_git(root, "rev-parse", "HEAD").stdout.strip()
-            (root / MODULE.BOOTSTRAP_V2_CI_PATH).write_bytes(
-                PERMANENT_CI_TEMPLATE.read_bytes()
+            base_root = Path(raw) / "base"
+            candidate_root = Path(raw) / "candidate"
+            shutil.copytree(root, base_root)
+            shutil.copytree(root, candidate_root)
+            for checkout in (root, candidate_root):
+                (checkout / MODULE.BOOTSTRAP_V2_CI_PATH).write_bytes(
+                    PERMANENT_CI_TEMPLATE.read_bytes()
+                )
+                for relative in MODULE.BOOTSTRAP_V2_TEMPORARY_PATHS:
+                    (checkout / relative).unlink()
+                run_fixture_git(checkout, "add", "--all")
+            candidate = fixture_commit_all(
+                candidate_root,
+                "Publish retained history",
             )
-            for relative in MODULE.BOOTSTRAP_V2_TEMPORARY_PATHS:
-                (root / relative).unlink()
-            run_fixture_git(root, "add", "--all")
-            head = fixture_commit_all(
+            tree_oid = run_fixture_git(root, "write-tree").stdout.strip()
+            self.assertEqual(
+                tree_oid,
+                run_fixture_git(
+                    candidate_root,
+                    "rev-parse",
+                    f"{candidate}^{{tree}}",
+                ).stdout.strip(),
+            )
+            head = fixture_raw_commit(
                 root,
-                "complete bootstrap migration",
-                include_signature=False,
+                tree_oid=tree_oid,
+                parents=(base,),
+                message="Publish retained history (#4)",
+                committer="GitHub <noreply@github.com>",
+                author_timezone="+0100",
+                committer_timezone="+0100",
+                message_trailing_newline=False,
+            )
+            fixture_set_head(root, head)
+            parsed = MODULE.parse_history_v2_github_squash_commit(
+                fixture_commit_bytes(root, head),
+                expected_oid=head,
+            )
+            receipt = github_squash_receipt(
+                parsed,
+                base_sha=base,
+                head_sha=head,
+                candidate_sha=candidate,
             )
 
             self.assertEqual(validate_synthetic_history_v2_tree(root), [])
@@ -6137,9 +6397,68 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 root,
                 before_rev=base,
                 head_rev=head,
+                github_commit_receipt=receipt,
+                base_root=base_root,
+                candidate_root=candidate_root,
             )
             self.assertEqual(transaction["transaction_kind"], "bootstrap-v2")
             self.assertEqual(transaction["commit_count"], 1)
+
+            readme = candidate_root / "README.md"
+            readme.write_text(
+                "Synthetic bootstrap v2 infrastructure with drift.\n",
+                encoding="utf-8",
+            )
+            run_fixture_git(candidate_root, "add", "README.md")
+            drift_tree = run_fixture_git(candidate_root, "write-tree").stdout.strip()
+            drift_candidate = fixture_raw_commit(
+                candidate_root,
+                tree_oid=drift_tree,
+                parents=(base,),
+                message="Publish retained history",
+            )
+            fixture_set_head(candidate_root, drift_candidate)
+            with self.assertRaisesRegex(
+                ValueError,
+                "admitted bootstrap candidate is invalid|candidate reproof differs",
+            ):
+                validate_synthetic_history_v2_default_transaction(
+                    root,
+                    before_rev=base,
+                    head_rev=head,
+                    github_commit_receipt=github_squash_receipt(
+                        parsed,
+                        base_sha=base,
+                        head_sha=head,
+                        candidate_sha=drift_candidate,
+                    ),
+                    base_root=base_root,
+                    candidate_root=candidate_root,
+                )
+
+            fixture_set_head(candidate_root, candidate)
+            unsigned_candidate = fixture_raw_commit(
+                candidate_root,
+                tree_oid=tree_oid,
+                parents=(base,),
+                message="Publish retained history",
+                include_signature=False,
+            )
+            fixture_set_head(candidate_root, unsigned_candidate)
+            with self.assertRaisesRegex(ValueError, "signature|header order"):
+                validate_synthetic_history_v2_default_transaction(
+                    root,
+                    before_rev=base,
+                    head_rev=head,
+                    github_commit_receipt=github_squash_receipt(
+                        parsed,
+                        base_sha=base,
+                        head_sha=head,
+                        candidate_sha=unsigned_candidate,
+                    ),
+                    base_root=base_root,
+                    candidate_root=candidate_root,
+                )
 
     def test_history_v2_merge_plan_rejects_infrastructure_changes(self) -> None:
         with self.assertRaisesRegex(ValueError, "outside policy"):
