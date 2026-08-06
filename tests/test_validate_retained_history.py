@@ -422,6 +422,9 @@ def github_squash_receipt(
         "merged_at": pull_request_merged_at,
         "node_identity_sha256": node_identity_sha256,
         "number": pull_request_number,
+        "squash_merge_commit_message": "BLANK",
+        "squash_merge_commit_title": "PR_TITLE",
+        "title_sha256": parsed.pull_request_title_sha256,
     }
     return {
         "schema_version": 2,
@@ -438,6 +441,7 @@ def github_squash_receipt(
         "verification_reason": "valid",
         "verified_at": "2026-07-15T00:00:01Z",
         "pull_request_number": pull_request_number,
+        "pull_request_title_sha256": parsed.pull_request_title_sha256,
         "pull_request_node_identity_sha256": node_identity_sha256,
         "repository_identity_sha256": hashlib.sha256(
             f"{repository_id}:{repository}".encode("utf-8")
@@ -450,6 +454,8 @@ def github_squash_receipt(
             ).encode("utf-8")
         ).hexdigest(),
         "pull_request_merged_at": pull_request_merged_at,
+        "squash_merge_commit_title": "PR_TITLE",
+        "squash_merge_commit_message": "BLANK",
     }
 
 
@@ -5739,13 +5745,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 committer_timezone="+0100",
                 message_trailing_newline=False,
             )
-            self.assertEqual(
+            with self.assertRaisesRegex(ValueError, "not canonical"):
                 MODULE.parse_history_v2_github_squash_commit(
                     fixture_commit_bytes(root, multiline),
                     expected_oid=multiline,
-                ).tree_oid,
-                tree_oid,
-            )
+                )
             receipt = github_squash_receipt(
                 parsed,
                 base_sha=base,
@@ -5781,6 +5785,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "committer_identity_sha256": "0" * 64,
                 "github_committer_login": "not-web-flow",
                 "verification_reason": "unknown_key",
+                "pull_request_title_sha256": "1" * 64,
             }
             for field, value in mutations.items():
                 with (
@@ -5789,6 +5794,22 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         ValueError,
                         "differs from the exact commit",
                     ),
+                ):
+                    MODULE.validate_history_v2_github_squash_receipt(
+                        {**receipt, field: value},
+                        commit=parsed,
+                        repository=repository,
+                        repository_id=FIXTURE_REPOSITORY_ID,
+                        before_rev=base,
+                        head_rev=squash,
+                    )
+            for field, value in (
+                ("squash_merge_commit_title", "COMMIT_OR_PR_TITLE"),
+                ("squash_merge_commit_message", "COMMIT_MESSAGES"),
+            ):
+                with (
+                    self.subTest(provider_policy=field),
+                    self.assertRaisesRegex(ValueError, "provider policy differs"),
                 ):
                     MODULE.validate_history_v2_github_squash_receipt(
                         {**receipt, field: value},
@@ -7045,7 +7066,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         )
         python_files = {
             relative
-            for relative in EXPECTED_BOOTSTRAP_V2_FILES
+            for relative in MODULE.HISTORY_V2_TRUST_GENERATION_PATHS
             if relative.suffix == ".py"
         }
         self.assertLessEqual(
@@ -7136,6 +7157,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_bootstrap_v2_python_ast_fingerprints_match_validator_sources(self) -> None:
         repository_root = SCRIPT.parents[1]
         relatives = (
+            Path("scripts/trusted_history_ci.py"),
             Path("scripts/validate_retained_history.py"),
             Path("tests/test_validate_retained_history.py"),
         )
@@ -7146,12 +7168,21 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         for relative in relatives:
             with self.subTest(relative=relative.as_posix()):
                 source = (repository_root / relative).read_text(encoding="utf-8")
-                risky_values = MODULE.bootstrap_v2_python_privacy_risk_values(source)
+                risky_values = MODULE.bootstrap_v2_python_privacy_fingerprint_values(
+                    source,
+                    relative=relative,
+                )
                 observed = MODULE.bootstrap_v2_privacy_risk_lines_fingerprint(
                     risky_values
                 )
 
                 self.assertTrue(risky_values)
+                if relative == Path("scripts/trusted_history_ci.py"):
+                    self.assertTrue(
+                        risky_values[0].startswith(
+                            "python_ast_fail_closed_source_sha256:"
+                        )
+                    )
                 self.assertEqual(
                     observed,
                     MODULE.BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256[relative],
@@ -7169,6 +7200,33 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         relative=relative,
                     )
                 )
+
+    def test_history_v2_helper_uses_python_ast_privacy_scan(self) -> None:
+        relative = Path("scripts/trusted_history_ci.py")
+        expected = risky_github_classic_token()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_bootstrap_v2_candidate(root)
+            helper = root / relative
+            mutated = (
+                helper.read_text(encoding="utf-8")
+                + f"\nvalue = {expected[:2]!r} + {expected[2:]!r}\n"
+            )
+            self.assertFalse(
+                MODULE.contains_infrastructure_risk_text(
+                    mutated,
+                    relative=relative,
+                )
+            )
+            helper.write_text(mutated, encoding="utf-8")
+            run_fixture_git(root, "add", relative.as_posix())
+
+            issues = "\n".join(validate_synthetic_history_v2_tree(root))
+
+        self.assertIn(
+            "scripts/trusted_history_ci.py: infrastructure text contains raw/sensitive evidence",
+            issues,
+        )
 
     def test_bootstrap_v2_self_fingerprints_have_constrained_ast_shapes(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")
@@ -7636,6 +7694,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ),
         }
         trusted_python_entries = {
+            (
+                "BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256",
+                "scripts/trusted_history_ci.py",
+            ),
             (
                 "BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256",
                 "scripts/validate_retained_history.py",
@@ -8417,6 +8479,35 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(
             path_issue,
             "candidate artifact enumeration exceeds the trusted entry limit",
+        )
+
+    def test_bootstrap_v2_tree_entry_budget_is_global_across_recursion(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            child = root / "a" / "child.txt"
+            child.parent.mkdir(parents=True)
+            child.write_text("child\n", encoding="utf-8")
+            (root / "z.txt").write_text("sibling\n", encoding="utf-8")
+
+            rejected, issue = MODULE.snapshot_bootstrap_v2_files(
+                root,
+                max_entries=2,
+            )
+            accepted, accepted_issue = MODULE.snapshot_bootstrap_v2_files(
+                root,
+                max_entries=3,
+            )
+
+        self.assertIsNone(rejected)
+        self.assertEqual(
+            issue,
+            "candidate artifact enumeration exceeds the trusted entry limit",
+        )
+        self.assertIsNone(accepted_issue)
+        self.assertIsNotNone(accepted)
+        self.assertEqual(
+            tuple(snapshot.relative.as_posix() for snapshot in accepted or ()),
+            ("a/child.txt", "z.txt"),
         )
 
     def test_bootstrap_v2_rejects_nonpublic_key_material_and_packet_types(self) -> None:
@@ -11555,6 +11646,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_bootstrap_v2_python_static_byte_constructors_fail_closed(self) -> None:
         expected = risky_github_classic_token()
         values = ", ".join(str(ord(character)) for character in expected)
+        array_values = f"[{values}]"
         format_specifier = f"{len(expected)}B"
         rejected = (
             "import struct\n"
@@ -11565,6 +11657,15 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "reveal = struct.pack\n"
             f'payload = reveal("{format_specifier}", {values})\n'
             'value = payload.decode("ascii")\n',
+            "import array\n"
+            f'value = array.array("B", {array_values}).tobytes().decode("ascii")\n',
+            "from array import array as make_array\n"
+            f'value = make_array("B", {array_values}).tobytes().decode("ascii")\n',
+            "import array\n"
+            f'payload = array.array("B", {array_values})\n'
+            "emit = payload.tobytes\n"
+            "raw = emit()\n"
+            'value = raw.decode("ascii")\n',
         )
         for source in rejected:
             with self.subTest(source=source.splitlines()[-1][:56]):
@@ -11573,11 +11674,26 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     "unresolved bound string method",
                 )
 
+        self.assert_python_privacy_layers_reject(
+            f'from array import *\nvalue = array("B", {array_values}).tobytes()\n',
+            "binary producer module uses a wildcard import",
+        )
+        self.assert_python_privacy_layers_reject(
+            f'value = __import__("array").array("B", {array_values}).tobytes()\n',
+            "binary producer module uses a dynamic import",
+        )
+
         accepted = (
             'import struct\nvalue = struct.pack(format_string, *values).decode("ascii")\n',
             "import struct\n"
             "struct = custom_struct\n"
             f'value = struct.pack("{format_specifier}", {values}).decode("ascii")\n',
+            'import array\nvalue = array.array("B", get_values()).tobytes().decode("ascii")\n',
+            "import array\n"
+            "array = custom_array\n"
+            f'value = array.array("B", {array_values}).tobytes().decode("ascii")\n',
+            'payload = get_array()\nvalue = payload.tobytes().decode("ascii")\n',
+            f'value = custom_array("B", {array_values}).tobytes().decode("ascii")\n',
         )
         for source in accepted:
             with self.subTest(source=source.splitlines()[-1][:56]):

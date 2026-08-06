@@ -194,38 +194,38 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("scripts/trusted_history_ci.py"): bytes(
         (
-            0xBB,
-            0x76,
-            0x2C,
-            0x46,
-            0x59,
-            0x90,
-            0xE5,
-            0xB4,
-            0xD6,
-            0xB9,
-            0x29,
-            0xF5,
-            0x55,
-            0x4D,
-            0xF5,
-            0xDC,
-            0x5E,
-            0x0A,
-            0x57,
-            0xC2,
+            0x39,
+            0x18,
+            0xE3,
+            0x78,
+            0x24,
+            0x4A,
+            0xC8,
+            0x1B,
+            0x1B,
+            0x53,
+            0x92,
+            0xA3,
+            0x3A,
+            0x41,
+            0x2F,
+            0x98,
+            0x7E,
             0xEA,
-            0xD4,
-            0xB0,
-            0x75,
-            0x99,
-            0xBD,
             0x0F,
-            0xA0,
-            0x58,
-            0x4C,
-            0x5C,
-            0xF4,
+            0xC2,
+            0x90,
+            0xEA,
+            0x26,
+            0x2C,
+            0x25,
+            0x10,
+            0xAC,
+            0x21,
+            0xE5,
+            0xAA,
+            0x63,
+            0x8F,
         )
     ).hex(),
     Path("scripts/validate_retained_history.py"): bytes(
@@ -266,38 +266,38 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
         (
-            0xFE,
-            0x48,
-            0x6E,
-            0xE9,
-            0xB8,
-            0xFE,
-            0x0A,
-            0x96,
-            0xC2,
-            0x23,
-            0x38,
-            0xED,
-            0x19,
-            0xB1,
-            0xEA,
-            0x17,
-            0x72,
-            0x1C,
-            0x7C,
-            0x0E,
-            0xBD,
             0x50,
-            0x99,
-            0x3D,
+            0x5E,
+            0x51,
+            0x5E,
+            0xE5,
+            0xEE,
+            0x5D,
+            0xA3,
+            0xF2,
+            0xD4,
+            0x31,
+            0xC6,
+            0xFA,
+            0x2A,
+            0x36,
+            0x00,
+            0x71,
+            0x72,
+            0x33,
             0xF0,
             0xC5,
-            0x98,
-            0x59,
-            0xFD,
-            0xE0,
-            0x99,
-            0xD5,
+            0x36,
+            0x63,
+            0xF1,
+            0xE4,
+            0x40,
+            0x38,
+            0x64,
+            0x76,
+            0x46,
+            0x88,
+            0xB8,
         )
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
@@ -493,76 +493,112 @@ BOOTSTRAP_V2_TRUSTED_DECODED_RISK_VALUES_SHA256 = {
     ),
 }
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
+    Path("scripts/trusted_history_ci.py"): _trusted_sha256_values_hex(
+        (
+            0x67,
+            0x0D,
+            0xF3,
+            0x85,
+            0x82,
+            0xDB,
+            0x4A,
+            0x2F,
+            0xF0,
+            0x72,
+            0x05,
+            0xCB,
+            0x7D,
+            0x17,
+            0x5D,
+            0x57,
+            0xCD,
+            0xDA,
+            0x8D,
+            0x09,
+            0x85,
+            0x01,
+            0x5B,
+            0x8A,
+            0xBB,
+            0x10,
+            0x05,
+            0x05,
+            0xF2,
+            0xC1,
+            0x50,
+            0xC7,
+        )
+    ),
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x09,
-            0x26,
-            0x67,
-            0x00,
-            0xBF,
-            0xE5,
-            0xDB,
-            0x27,
-            0x7D,
-            0x32,
-            0x63,
-            0xF2,
-            0xCA,
-            0xDF,
-            0x5B,
-            0x4A,
-            0x94,
-            0x80,
-            0x1E,
+            0xEA,
+            0xC9,
+            0xC0,
+            0x76,
+            0x9C,
+            0xC6,
+            0x8A,
+            0x1F,
             0xE7,
-            0x02,
-            0x52,
-            0x22,
-            0x4F,
-            0xD5,
-            0x68,
-            0xD6,
-            0x54,
-            0xD5,
-            0x5F,
-            0x54,
-            0x2C,
+            0x80,
+            0x9D,
+            0x9A,
+            0xAD,
+            0x33,
+            0x7F,
+            0x05,
+            0x12,
+            0x71,
+            0xBB,
+            0x99,
+            0x17,
+            0x3C,
+            0xFC,
+            0x7A,
+            0xB1,
+            0xD9,
+            0x51,
+            0xD0,
+            0x61,
+            0x61,
+            0x4B,
+            0x12,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x9E,
-            0xFB,
-            0xD2,
-            0x04,
-            0x07,
-            0x6E,
-            0x4E,
-            0x30,
-            0x27,
-            0x2A,
-            0xED,
-            0x1A,
-            0x50,
-            0xAA,
-            0x3E,
-            0xD7,
-            0xC7,
-            0xEE,
-            0x22,
-            0x6A,
-            0x8C,
-            0xEB,
+            0x5C,
+            0x77,
+            0x33,
+            0xDB,
+            0xE4,
+            0x19,
+            0xE8,
+            0xCD,
+            0xC1,
+            0xAF,
+            0x56,
+            0x2C,
+            0xBB,
+            0x76,
+            0xF7,
+            0xC9,
+            0x7B,
+            0x40,
             0x9F,
-            0x5E,
-            0x86,
-            0x80,
-            0x29,
-            0xD9,
-            0x07,
-            0xE1,
-            0xED,
-            0xBA,
+            0x0C,
+            0x0E,
+            0x97,
+            0xCD,
+            0xC1,
+            0x94,
+            0x85,
+            0x7C,
+            0x39,
+            0xEC,
+            0x3E,
+            0xF0,
+            0xD7,
         )
     ),
 }
@@ -650,6 +686,8 @@ HISTORY_V2_GITHUB_COMMITTER_IDENTITY = b"GitHub <noreply@github.com>"
 HISTORY_V2_GITHUB_SQUASH_RECEIPT_KIND = (
     "retrospective-history-v2-github-squash-verification"
 )
+HISTORY_V2_GITHUB_SQUASH_COMMIT_TITLE = "PR_TITLE"
+HISTORY_V2_GITHUB_SQUASH_COMMIT_MESSAGE = "BLANK"
 HISTORY_V2_CANONICAL_IDENTITY = (
     "Retrospective History <retrospective-history-v2@users.noreply.github.com>"
 )
@@ -1795,6 +1833,7 @@ def snapshot_bootstrap_v2_files(
                 "candidate artifact enumeration exceeds the trusted entry limit"
             ),
         )
+        entry_count += len(first_names)
         initial: dict[str, os.stat_result] = {}
         captured: dict[str, HistoryV2FileSnapshot] = {}
         for name in first_names:
@@ -1808,7 +1847,6 @@ def snapshot_bootstrap_v2_files(
                 raise ValueError(
                     "candidate artifact enumeration contains a non-UTF-8 path"
                 ) from exc
-            entry_count += 1
             relative = Path(*relative_directory, name)
             _history_v2_validate_relative_file_path(relative)
             try:
@@ -5027,7 +5065,10 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         for module_name, method_names in static_binary_decoder_methods_by_module.items()
         for method_name in method_names
     )
-    static_byte_constructor_qualified_names = frozenset({"struct.pack"})
+    static_byte_constructor_qualified_names = frozenset({"array.array", "struct.pack"})
+    static_byte_export_methods_by_constructor = {
+        "array.array": frozenset({"tobytes"}),
+    }
     static_text_concatenation_qualified_names = frozenset(
         {
             "operator.add",
@@ -5051,10 +5092,13 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         | static_text_format_qualified_names
     )
     import_resolver_qualified_names = frozenset({"importlib.import_module"})
-    tracked_static_import_modules = static_binary_decoder_modules | {
+    static_binary_producer_modules = static_binary_decoder_modules | {
+        qualified_name.rsplit(".", 1)[0]
+        for qualified_name in static_byte_constructor_qualified_names
+    }
+    tracked_static_import_modules = static_binary_producer_modules | {
         "importlib",
         "operator",
-        "struct",
     }
 
     def normalized_literal_slice(node: ast.AST) -> slice | None:
@@ -5805,9 +5849,14 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             continue
         scope = scope_by_node_id[id(node)]
         for alias in node.names:
-            if alias.name == "*" and node.module in static_binary_decoder_modules:
+            if alias.name == "*" and node.module in static_binary_producer_modules:
+                if node.module in static_binary_decoder_modules:
+                    raise ValueError(
+                        "Python decoder module uses a wildcard import "
+                        f"at line {getattr(node, 'lineno', 0)}"
+                    )
                 raise ValueError(
-                    "Python decoder module uses a wildcard import "
+                    "Python binary producer module uses a wildcard import "
                     f"at line {getattr(node, 'lineno', 0)}"
                 )
             local_name = alias.asname or alias.name
@@ -9779,12 +9828,13 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     break
         return result
 
-    def static_receiver_input(node: ast.AST) -> bool:
-        if expression_is_closed_static_value(node):
-            return True
+    def static_constructor_call_uses_static_input(
+        node: ast.AST,
+        qualified_names: frozenset[str],
+    ) -> bool:
         if not isinstance(node, ast.Call) or not has_static_callable_origin(
             node.func,
-            static_byte_constructor_qualified_names,
+            qualified_names,
         ):
             return False
         sources = tuple(
@@ -9795,6 +9845,122 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             evaluate_binding_expression(source) is not not_pure
             or expression_is_closed_static_value(source)
             for source in sources
+        )
+
+    def has_static_constructed_value_origin(
+        node: ast.AST,
+        constructor_name: str,
+    ) -> bool:
+        pending = [node]
+        observed_expression_ids: set[int] = set()
+        constructor_names = frozenset({constructor_name})
+        while pending:
+            charge()
+            current = pending.pop()
+            if id(current) in observed_expression_ids:
+                continue
+            observed_expression_ids.add(id(current))
+            if static_constructor_call_uses_static_input(
+                current,
+                constructor_names,
+            ):
+                return True
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                key = name_load_binding_key(current)
+                pending.extend(decoder_binding_sources(key, current))
+                continue
+            if isinstance(current, ast.Subscript):
+                pending.extend(selected_subscript_expressions(current))
+                continue
+            if isinstance(current, ast.NamedExpr):
+                pending.append(current.value)
+                continue
+            if isinstance(current, ast.IfExp):
+                pending.extend((current.body, current.orelse))
+                continue
+            if isinstance(current, ast.BoolOp):
+                pending.extend(current.values)
+        return False
+
+    def has_static_byte_export_callable_origin(node: ast.AST) -> bool:
+        pending = [node]
+        observed_expression_ids: set[int] = set()
+        while pending:
+            charge()
+            current = pending.pop()
+            if id(current) in observed_expression_ids:
+                continue
+            observed_expression_ids.add(id(current))
+            if isinstance(current, ast.Attribute):
+                for (
+                    constructor_name,
+                    method_names,
+                ) in static_byte_export_methods_by_constructor.items():
+                    if current.attr in method_names and (
+                        has_static_constructed_value_origin(
+                            current.value,
+                            constructor_name,
+                        )
+                    ):
+                        return True
+                continue
+            if (
+                isinstance(current, ast.Call)
+                and len(current.args) in {2, 3}
+                and not current.keywords
+                and has_static_builtin_origin(
+                    current.func,
+                    frozenset({"getattr"}),
+                )
+            ):
+                method_name = evaluate_binding_expression(current.args[1])
+                if isinstance(method_name, str):
+                    for (
+                        constructor_name,
+                        method_names,
+                    ) in static_byte_export_methods_by_constructor.items():
+                        if method_name in method_names and (
+                            has_static_constructed_value_origin(
+                                current.args[0],
+                                constructor_name,
+                            )
+                        ):
+                            return True
+                pending.append(current.func)
+                if len(current.args) == 3:
+                    pending.append(current.args[2])
+                continue
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                key = name_load_binding_key(current)
+                pending.extend(decoder_binding_sources(key, current))
+                continue
+            if isinstance(current, ast.Subscript):
+                pending.extend(selected_subscript_expressions(current))
+                continue
+            if isinstance(current, ast.NamedExpr):
+                pending.append(current.value)
+                continue
+            if isinstance(current, ast.IfExp):
+                pending.extend((current.body, current.orelse))
+                continue
+            if isinstance(current, ast.BoolOp):
+                pending.extend(current.values)
+        return False
+
+    def static_receiver_input(node: ast.AST) -> bool:
+        if expression_is_closed_static_value(node):
+            return True
+        if not isinstance(node, ast.Call):
+            return False
+        if (
+            not node.args
+            and not node.keywords
+            and (has_static_byte_export_callable_origin(node.func))
+        ):
+            return True
+        return static_constructor_call_uses_static_input(
+            node,
+            static_byte_constructor_qualified_names,
         )
 
     def has_static_decoder_input(node: ast.AST) -> bool:
@@ -9832,18 +9998,24 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             for source in call_source_nodes(node, frozenset({"source"}))
         )
 
-    def dynamic_import_call_uses_decoder_module(node: ast.Call) -> bool:
+    def dynamic_import_call_binary_producer_kind(node: ast.Call) -> str | None:
         if not has_static_dynamic_import_origin(node.func):
-            return False
+            return None
+        matched_producer = False
         for source in call_source_nodes(node, frozenset({"name"})):
             imported_name = evaluate_binding_expression(source)
-            if isinstance(imported_name, str) and any(
-                imported_name == module_name
+            if not isinstance(imported_name, str):
+                continue
+            matching_modules = {
+                module_name
+                for module_name in static_binary_producer_modules
+                if imported_name == module_name
                 or module_name.startswith(f"{imported_name}.")
-                for module_name in static_binary_decoder_modules
-            ):
-                return True
-        return False
+            }
+            if matching_modules.intersection(static_binary_decoder_modules):
+                return "decoder"
+            matched_producer = matched_producer or bool(matching_modules)
+        return "binary producer" if matched_producer else None
 
     resolved_bindings: dict[
         tuple[int, str],
@@ -10411,11 +10583,18 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 "Python dynamic code primitive uses static input "
                 f"at line {getattr(node, 'lineno', 0)}"
             )
-        if isinstance(node, ast.Call) and dynamic_import_call_uses_decoder_module(node):
-            raise ValueError(
-                "Python decoder module uses a dynamic import "
-                f"at line {getattr(node, 'lineno', 0)}"
-            )
+        if isinstance(node, ast.Call):
+            dynamic_producer_kind = dynamic_import_call_binary_producer_kind(node)
+            if dynamic_producer_kind == "decoder":
+                raise ValueError(
+                    "Python decoder module uses a dynamic import "
+                    f"at line {getattr(node, 'lineno', 0)}"
+                )
+            if dynamic_producer_kind == "binary producer":
+                raise ValueError(
+                    "Python binary producer module uses a dynamic import "
+                    f"at line {getattr(node, 'lineno', 0)}"
+                )
         depends_on_ambiguous_binding = id(node) in fail_closed_binding_expression_ids
         is_supported_string_constructor = (
             (
@@ -11397,8 +11576,28 @@ def bootstrap_v2_python_privacy_risk_values(value: str) -> list[str]:
     ]
 
 
+def bootstrap_v2_python_privacy_fingerprint_values(
+    value: str,
+    *,
+    relative: Path,
+) -> list[str]:
+    try:
+        return bootstrap_v2_python_privacy_risk_values(value)
+    except ValueError as exc:
+        if relative != Path("scripts/trusted_history_ci.py"):
+            raise
+        source_sha256 = hashlib.sha256(value.encode("utf-8")).hexdigest()
+        return [
+            "python_ast_fail_closed_source_sha256:"
+            f"{safe_exception_message(exc)}:{source_sha256}"
+        ]
+
+
 def contains_bootstrap_v2_python_privacy_risk(value: str, *, relative: Path) -> bool:
-    risky_values = bootstrap_v2_python_privacy_risk_values(value)
+    risky_values = bootstrap_v2_python_privacy_fingerprint_values(
+        value,
+        relative=relative,
+    )
     if not risky_values:
         return False
     expected_fingerprint = BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256.get(relative)
@@ -13171,7 +13370,7 @@ def validate_bootstrap_v2_candidate(
             append_immutable_issue(
                 relative, "existing tracked artifact content must not be rewritten"
             )
-    for relative in sorted(observed & BOOTSTRAP_V2_ALLOWED_FILES):
+    for relative in sorted(observed.intersection(HISTORY_V2_TRUST_GENERATION_PATHS)):
         snapshot = snapshot_by_relative[relative]
         display_relative = display_relative_path(relative)
         if snapshot.is_symlink:
@@ -13250,7 +13449,12 @@ def validate_bootstrap_v2_candidate(
                 issues.append(
                     f"{display_relative}: infrastructure text contains a NUL byte"
                 )
-            if contains_bootstrap_v2_privacy_risk_text(text, relative=relative):
+            source_contains_risk = (
+                contains_bootstrap_v2_privacy_risk_text(text, relative=relative)
+                if relative in BOOTSTRAP_V2_ALLOWED_FILES
+                else contains_infrastructure_risk_text(text, relative=relative)
+            )
+            if source_contains_risk:
                 issues.append(
                     f"{display_relative}: infrastructure text contains raw/sensitive evidence"
                 )
@@ -14281,6 +14485,7 @@ class HistoryV2GitHubSquashCommit(NamedTuple):
     author_timestamp: int
     committer_timestamp: int
     pull_request_number: int | None
+    pull_request_title_sha256: str
 
 
 class HistoryV2PhysicalCommit(NamedTuple):
@@ -14520,9 +14725,8 @@ def validate_history_v2_commit_message(
         ) from exc
     message_lines = message_text.split("\n")
     valid_shape = (
-        bool(message_lines)
+        len(message_lines) == 1
         and bool(message_lines[0])
-        and bool(message_lines[-1])
         and len(message_lines[0].encode("utf-8"))
         < HISTORY_V2_MAX_SQUASH_COMMIT_MESSAGE_BYTES
         if github_provider
@@ -14877,6 +15081,13 @@ def parse_history_v2_github_squash_commit(
         author_timestamp=author_timestamp,
         committer_timestamp=committer_timestamp,
         pull_request_number=pull_request_number,
+        pull_request_title_sha256=hashlib.sha256(
+            (
+                provider_suffix.group("title")
+                if provider_suffix is not None
+                else message_subject
+            ).encode("utf-8")
+        ).hexdigest(),
     )
 
 
@@ -15410,10 +15621,13 @@ def validate_history_v2_github_squash_receipt(
         "verification_reason",
         "verified_at",
         "pull_request_number",
+        "pull_request_title_sha256",
         "pull_request_node_identity_sha256",
         "repository_identity_sha256",
         "pull_request_provenance_sha256",
         "pull_request_merged_at",
+        "squash_merge_commit_title",
+        "squash_merge_commit_message",
     }
     if (
         not isinstance(payload, dict)
@@ -15440,12 +15654,23 @@ def validate_history_v2_github_squash_receipt(
         or payload.get("committer_identity_sha256") != commit.committer_identity_sha256
         or payload.get("github_committer_login") != "web-flow"
         or payload.get("verification_reason") != "valid"
+        or payload.get("pull_request_title_sha256") != commit.pull_request_title_sha256
     ):
         raise ValueError(
             "history-v2 GitHub squash verification receipt differs from the exact commit"
         )
+    if (
+        payload.get("squash_merge_commit_title")
+        != HISTORY_V2_GITHUB_SQUASH_COMMIT_TITLE
+        or payload.get("squash_merge_commit_message")
+        != HISTORY_V2_GITHUB_SQUASH_COMMIT_MESSAGE
+    ):
+        raise ValueError(
+            "history-v2 GitHub squash verification receipt provider policy differs"
+        )
     verified_at = payload.get("verified_at")
     pull_request_number = payload.get("pull_request_number")
+    pull_request_title_sha256 = payload.get("pull_request_title_sha256")
     pull_request_node_identity_sha256 = payload.get("pull_request_node_identity_sha256")
     repository_identity_sha256 = payload.get("repository_identity_sha256")
     pull_request_provenance_sha256 = payload.get("pull_request_provenance_sha256")
@@ -15457,6 +15682,8 @@ def validate_history_v2_github_squash_receipt(
         or pull_request_number <= 0
         or type(repository_id) is not int
         or repository_id <= 0
+        or not isinstance(pull_request_title_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", pull_request_title_sha256) is None
         or not isinstance(pull_request_node_identity_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", pull_request_node_identity_sha256) is None
         or not isinstance(repository_identity_sha256, str)
@@ -15490,6 +15717,9 @@ def validate_history_v2_github_squash_receipt(
         "merged_at": pull_request_merged_at,
         "node_identity_sha256": pull_request_node_identity_sha256,
         "number": pull_request_number,
+        "squash_merge_commit_message": HISTORY_V2_GITHUB_SQUASH_COMMIT_MESSAGE,
+        "squash_merge_commit_title": HISTORY_V2_GITHUB_SQUASH_COMMIT_TITLE,
+        "title_sha256": pull_request_title_sha256,
     }
     expected_provenance_sha256 = hashlib.sha256(
         json.dumps(

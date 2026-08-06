@@ -1311,6 +1311,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             pull_payload = {
                 "number": pull_number,
                 "node_id": pull_node_id,
+                "title": "Publish retained history",
                 "state": "closed",
                 "merged": True,
                 "merged_at": merged_at,
@@ -1327,20 +1328,31 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     "repo": {"full_name": repository, "id": repository_id},
                 },
             }
-            with mock.patch.object(
-                CI_MODULE,
-                "github_json",
-                side_effect=[
-                    api_payload,
-                    associated,
-                    [],
-                    associated,
-                    pull_payload,
-                    associated,
-                    [],
-                    associated,
-                ],
-            ) as github_api:
+            squash_configuration = {
+                "squash_merge_commit_title": "PR_TITLE",
+                "squash_merge_commit_message": "BLANK",
+            }
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    side_effect=[
+                        api_payload,
+                        associated,
+                        [],
+                        associated,
+                        pull_payload,
+                        associated,
+                        [],
+                        associated,
+                    ],
+                ) as github_api,
+                mock.patch.object(
+                    CI_MODULE,
+                    "read_default_squash_configuration",
+                    return_value=squash_configuration,
+                ) as squash_configuration_reader,
+            ):
                 receipt = CI_MODULE.verify_default_github_commit(
                     repository=repository,
                     repository_id=repository_id,
@@ -1354,6 +1366,11 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     CI_MODULE,
                     "github_json",
                     return_value=api_payload,
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "read_default_squash_configuration",
+                    return_value=squash_configuration,
                 ),
                 mock.patch.object(
                     CI_MODULE,
@@ -1402,10 +1419,13 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 key: receipt[key]
                 for key in (
                     "pull_request_number",
+                    "pull_request_title_sha256",
                     "pull_request_node_identity_sha256",
                     "repository_identity_sha256",
                     "pull_request_provenance_sha256",
                     "pull_request_merged_at",
+                    "squash_merge_commit_title",
+                    "squash_merge_commit_message",
                 )
             }
             with (
@@ -1418,6 +1438,11 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     CI_MODULE,
                     "verify_default_merged_pull_request",
                     return_value=pull_evidence,
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "read_default_squash_configuration",
+                    return_value=squash_configuration,
                 ),
             ):
                 unnumbered_receipt = CI_MODULE.verify_default_github_commit(
@@ -1440,6 +1465,18 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             self.assertEqual(receipt["verification_reason"], "valid")
             self.assertEqual(receipt["pull_request_number"], pull_number)
             self.assertEqual(
+                receipt["pull_request_title_sha256"],
+                hashlib.sha256(b"Publish retained history").hexdigest(),
+            )
+            self.assertEqual(
+                receipt["squash_merge_commit_title"],
+                "PR_TITLE",
+            )
+            self.assertEqual(
+                receipt["squash_merge_commit_message"],
+                "BLANK",
+            )
+            self.assertEqual(
                 receipt["repository_identity_sha256"],
                 hashlib.sha256(
                     f"{repository_id}:{repository}".encode("utf-8")
@@ -1458,6 +1495,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     pull_node_id.encode("utf-8")
                 ).hexdigest(),
                 "number": pull_number,
+                **squash_configuration,
+                "title_sha256": hashlib.sha256(b"Publish retained history").hexdigest(),
             }
             self.assertEqual(
                 receipt["pull_request_provenance_sha256"],
@@ -1541,6 +1580,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     ),
                 ],
             )
+            self.assertEqual(squash_configuration_reader.call_count, 2)
 
             mutations = (
                 (
@@ -1601,6 +1641,11 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                                 associated,
                             ],
                         ),
+                        mock.patch.object(
+                            CI_MODULE,
+                            "read_default_squash_configuration",
+                            return_value=squash_configuration,
+                        ),
                         self.assertRaises(CI_MODULE.GateError),
                     ):
                         CI_MODULE.verify_default_github_commit(
@@ -1659,6 +1704,18 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     lambda value: value.__setitem__("node_id", "different-node"),
                 ),
                 ("number", lambda value: value.__setitem__("number", pull_number + 1)),
+                (
+                    "title",
+                    lambda value: value.__setitem__(
+                        "title", "Different retained history title"
+                    ),
+                ),
+                (
+                    "multiline title",
+                    lambda value: value.__setitem__(
+                        "title", "Publish retained history\nInjected body"
+                    ),
+                ),
             )
             for label, mutate in pull_mutations:
                 with self.subTest(pull_mutation=label):
@@ -1678,6 +1735,11 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                                 [],
                                 associated,
                             ],
+                        ),
+                        mock.patch.object(
+                            CI_MODULE,
+                            "read_default_squash_configuration",
+                            return_value=squash_configuration,
                         ),
                         self.assertRaises(CI_MODULE.GateError),
                     ):
@@ -1709,6 +1771,11 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                             [],
                             associated_pulls,
                         ],
+                    ),
+                    mock.patch.object(
+                        CI_MODULE,
+                        "read_default_squash_configuration",
+                        return_value=squash_configuration,
                     ),
                     self.assertRaisesRegex(
                         CI_MODULE.GateError,
@@ -1743,9 +1810,55 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         changed_association,
                     ],
                 ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "read_default_squash_configuration",
+                    return_value=squash_configuration,
+                ),
                 self.assertRaisesRegex(
                     CI_MODULE.GateError,
                     "missing or ambiguous|association changed|changed during collection",
+                ),
+            ):
+                CI_MODULE.verify_default_github_commit(
+                    repository=repository,
+                    repository_id=repository_id,
+                    git_dir=root / ".git",
+                    base_sha=base,
+                    head_sha=head,
+                    token="synthetic-read-token",
+                )
+
+            changed_squash_configuration = {
+                **squash_configuration,
+                "squash_merge_commit_message": "COMMIT_MESSAGES",
+            }
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    side_effect=[
+                        api_payload,
+                        associated,
+                        [],
+                        associated,
+                        pull_payload,
+                        associated,
+                        [],
+                        associated,
+                    ],
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "read_default_squash_configuration",
+                    side_effect=[
+                        squash_configuration,
+                        changed_squash_configuration,
+                    ],
+                ),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "configuration changed during collection",
                 ),
             ):
                 CI_MODULE.verify_default_github_commit(
@@ -2252,6 +2365,28 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         live_snapshot.assert_not_called()
 
     def test_trusted_branch_configuration_is_exact_and_fail_closed(self) -> None:
+        with mock.patch.object(
+            CI_MODULE,
+            "github_json",
+            return_value=repository_configuration_payload(),
+        ) as github_api:
+            self.assertEqual(
+                CI_MODULE.read_default_squash_configuration(
+                    repository=TEST_REPOSITORY,
+                    token="synthetic-read-token",
+                ),
+                {
+                    "squash_merge_commit_title": "PR_TITLE",
+                    "squash_merge_commit_message": "BLANK",
+                },
+            )
+        github_api.assert_called_once_with(
+            "GET",
+            TEST_REPOSITORY,
+            "/",
+            token="synthetic-read-token",
+        )
+
         digest = CI_MODULE.validate_trusted_branch_configuration(
             repository_payload=repository_configuration_payload(),
             active_rules_payload=active_branch_rules_payload(),

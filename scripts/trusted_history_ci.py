@@ -1031,6 +1031,10 @@ def verify_default_github_commit(
         != GITHUB_SQUASH_RECEIPT_KIND
     ):
         raise GateError("trusted GitHub squash receipt contract is unavailable")
+    squash_configuration = read_default_squash_configuration(
+        repository=repository,
+        token=token,
+    )
     raw_commit = git_output(
         git_dir.resolve(),
         "cat-file",
@@ -1136,6 +1140,7 @@ def verify_default_github_commit(
         repository_id=repository_id,
         base_sha=base_sha,
         head_sha=head_sha,
+        squash_configuration=squash_configuration,
         token=token,
     )
     if (
@@ -1145,6 +1150,18 @@ def verify_default_github_commit(
         raise GateError(
             "GitHub squash subject pull request differs from the associated pull request"
         )
+    if parsed.pull_request_title_sha256 != pull_evidence["pull_request_title_sha256"]:
+        raise GateError(
+            "GitHub squash subject differs from the associated pull request"
+        )
+    if (
+        read_default_squash_configuration(
+            repository=repository,
+            token=token,
+        )
+        != squash_configuration
+    ):
+        raise GateError("repository squash configuration changed during collection")
     return {
         "schema_version": 2,
         "kind": GITHUB_SQUASH_RECEIPT_KIND,
@@ -1312,12 +1329,33 @@ def default_associated_pull_request_identity(
     return number, node_id
 
 
+def read_default_squash_configuration(
+    *,
+    repository: str,
+    token: str,
+) -> dict[str, str]:
+    configuration = validate_repository_merge_configuration(
+        github_json(
+            "GET",
+            repository,
+            "/",
+            token=token,
+        ),
+        repository=repository,
+    )
+    return {
+        "squash_merge_commit_title": configuration["squash_merge_commit_title"],
+        "squash_merge_commit_message": configuration["squash_merge_commit_message"],
+    }
+
+
 def verify_default_merged_pull_request(
     *,
     repository: str,
     repository_id: int,
     base_sha: str,
     head_sha: str,
+    squash_configuration: dict[str, str],
     token: str,
 ) -> dict[str, Any]:
     encoded_sha = parse.quote(head_sha, safe="")
@@ -1352,6 +1390,7 @@ def verify_default_merged_pull_request(
         pull.get("merged_at"),
         "default squash pull request merge",
     )
+    title = pull.get("title")
     if (
         pull.get("number") != number
         or pull.get("node_id") != node_id
@@ -1365,6 +1404,15 @@ def verify_default_merged_pull_request(
         or base.get("sha") != base_sha
         or head_repository.get("full_name") != repository
         or head_repository.get("id") != repository_id
+        or not isinstance(title, str)
+        or not title
+        or len(title.encode("utf-8")) > 256
+        or any(character in title for character in "\r\n\0")
+        or squash_configuration
+        != {
+            "squash_merge_commit_title": "PR_TITLE",
+            "squash_merge_commit_message": "BLANK",
+        }
     ):
         raise GateError("default squash pull request provenance is stale or lookalike")
     associated_after = github_paginated_list(
@@ -1379,6 +1427,7 @@ def verify_default_merged_pull_request(
     ):
         raise GateError("default squash pull request association changed")
     node_identity_sha256 = hashlib.sha256(node_id.encode("utf-8")).hexdigest()
+    title_sha256 = hashlib.sha256(title.encode("utf-8")).hexdigest()
     provenance = {
         "base_ref": DEFAULT_BRANCH,
         "base_repository": repository,
@@ -1390,6 +1439,8 @@ def verify_default_merged_pull_request(
         "merged_at": merged_at,
         "node_identity_sha256": node_identity_sha256,
         "number": number,
+        **squash_configuration,
+        "title_sha256": title_sha256,
     }
     provenance_bytes = json.dumps(
         provenance,
@@ -1398,12 +1449,14 @@ def verify_default_merged_pull_request(
     ).encode("utf-8")
     return {
         "pull_request_number": number,
+        "pull_request_title_sha256": title_sha256,
         "pull_request_node_identity_sha256": node_identity_sha256,
         "repository_identity_sha256": hashlib.sha256(
             f"{repository_id}:{repository}".encode("utf-8")
         ).hexdigest(),
         "pull_request_provenance_sha256": hashlib.sha256(provenance_bytes).hexdigest(),
         "pull_request_merged_at": merged_at,
+        **squash_configuration,
     }
 
 
