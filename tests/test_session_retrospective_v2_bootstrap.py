@@ -1274,7 +1274,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 tree_oid=tree_oid,
                 parents=(base,),
                 message="Publish retained history",
-                author="Synthetic Maintainer <maintainer@example.net>",
+                author=VALIDATOR_MODULE.HISTORY_V2_CANONICAL_IDENTITY,
                 committer="GitHub <noreply@github.com>",
                 author_timezone="+0100",
                 committer_timezone="+0100",

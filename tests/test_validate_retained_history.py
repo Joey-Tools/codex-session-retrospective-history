@@ -265,9 +265,7 @@ def fixture_signature_armor(
 ) -> bytes:
     fingerprint = bytes.fromhex(signer_fingerprint)
     creation_length = (
-        bytes((255, 0, 0, 0, 5))
-        if noncanonical_creation_length
-        else b"\x05"
+        bytes((255, 0, 0, 0, 5)) if noncanonical_creation_length else b"\x05"
     )
     hashed = (
         hashed_subpackets
@@ -299,12 +297,9 @@ def fixture_signature_armor(
     packet = MODULE.encode_history_v2_signature_packet(body)
     encoded = base64.b64encode(packet).decode("ascii")
     payload_lines = [
-        encoded[index : index + 64]
-        for index in range(0, len(encoded), 64)
+        encoded[index : index + 64] for index in range(0, len(encoded), 64)
     ]
-    checksum = base64.b64encode(MODULE.bootstrap_v2_crc24(packet)).decode(
-        "ascii"
-    )
+    checksum = base64.b64encode(MODULE.bootstrap_v2_crc24(packet)).decode("ascii")
     return (
         "-----BEGIN PGP SIGNATURE-----\n"
         "\n"
@@ -363,12 +358,10 @@ def fixture_raw_commit(
     headers = [
         f"tree {tree_oid}".encode("ascii"),
         *(f"parent {parent}".encode("ascii") for parent in parents),
-        (
-            f"author {author} {author_timestamp} {author_timezone}"
-        ).encode("utf-8"),
-        (
-            f"committer {committer} {committer_timestamp} {committer_timezone}"
-        ).encode("utf-8"),
+        (f"author {author} {author_timestamp} {author_timezone}").encode("utf-8"),
+        (f"committer {committer} {committer_timestamp} {committer_timezone}").encode(
+            "utf-8"
+        ),
         *extra_headers,
         *(
             (
@@ -417,9 +410,7 @@ def github_squash_receipt(
 ) -> dict[str, object]:
     pull_request_number = 4
     pull_request_merged_at = "2026-07-15T00:00:00Z"
-    node_identity_sha256 = hashlib.sha256(
-        b"PR_kwDOSyntheticReceipt"
-    ).hexdigest()
+    node_identity_sha256 = hashlib.sha256(b"PR_kwDOSyntheticReceipt").hexdigest()
     provenance = {
         "base_ref": MODULE.HISTORY_V2_DEFAULT_BRANCH,
         "base_repository": repository,
@@ -564,9 +555,7 @@ def write_bootstrap_v2_base(root: Path) -> None:
         MODULE.BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH: (
             PERMANENT_CI_TEMPLATE.read_text(encoding="utf-8")
         ),
-        MODULE.BOOTSTRAP_WORKFLOW_PATH: BOOTSTRAP_WORKFLOW.read_text(
-            encoding="utf-8"
-        ),
+        MODULE.BOOTSTRAP_WORKFLOW_PATH: BOOTSTRAP_WORKFLOW.read_text(encoding="utf-8"),
         Path("tests/test_session_retrospective_v2_bootstrap.py"): (
             '"""Synthetic temporary bootstrap test."""\n'
         ),
@@ -618,9 +607,7 @@ def write_synthetic_history_v2_domain_sources(root: Path) -> None:
             "def validate_default_branch_update(root, _base, _head):\n"
             "    return [] if (root / 'runs').is_dir() else ['missing runs']\n"
         ),
-        Path("scripts/retrospective_history_privacy_v2.py"): (
-            'VALUE = "privacy"\n'
-        ),
+        Path("scripts/retrospective_history_privacy_v2.py"): ('VALUE = "privacy"\n'),
         Path("scripts/retrospective_history_templates_v2.py"): (
             'VALUE = "templates"\n'
         ),
@@ -3321,7 +3308,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
             report = root / "reports" / "daily" / "2026" / "07" / "15.md"
             report.parent.mkdir(parents=True, exist_ok=True)
-            report.write_text("# Daily retrospective\n\nNo issue observed.\n", encoding="utf-8")
+            report.write_text(
+                "# Daily retrospective\n\nNo issue observed.\n", encoding="utf-8"
+            )
             run_fixture_git(root, "add", "--all")
             fixture_commit_all(root, "append report")
             head = run_fixture_git(root, "rev-parse", "HEAD").stdout.strip()
@@ -3471,9 +3460,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 run_fixture_git(root, "add", target.relative_to(root).as_posix())
                 head = fixture_commit_all(root, subject)
                 digests = {
-                    relative: hashlib.sha256(
-                        (root / relative).read_bytes()
-                    ).hexdigest()
+                    relative: hashlib.sha256((root / relative).read_bytes()).hexdigest()
                     for relative in MODULE.BOOTSTRAP_V2_PUBLIC_KEY_FILES
                 }
                 with (
@@ -3531,9 +3518,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             head = fixture_commit_all(root, "Mixed authority update")
 
             digests = {
-                relative: hashlib.sha256(
-                    (root / relative).read_bytes()
-                ).hexdigest()
+                relative: hashlib.sha256((root / relative).read_bytes()).hexdigest()
                 for relative in MODULE.BOOTSTRAP_V2_PUBLIC_KEY_FILES
             }
             with (
@@ -3632,14 +3617,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             )
             candidate_source.unlink()
 
-            preloaded_attestation = type(sys)(
-                "retrospective_history_attestation_v2"
-            )
+            preloaded_attestation = type(sys)("retrospective_history_attestation_v2")
             preloaded_attestation.VALUE = "preloaded"
             preloaded_package = type(sys)("scripts")
-            preloaded_runtime = type(sys)(
-                "scripts.retrospective_history_v2"
-            )
+            preloaded_runtime = type(sys)("scripts.retrospective_history_v2")
             preloaded_runtime.PLAN = "preloaded"
             preloaded_package.retrospective_history_v2 = preloaded_runtime
             previous_modules = set(sys.modules)
@@ -3652,9 +3633,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                                 preloaded_attestation
                             ),
                             "scripts": preloaded_package,
-                            "scripts.retrospective_history_v2": (
-                                preloaded_runtime
-                            ),
+                            "scripts.retrospective_history_v2": (preloaded_runtime),
                         },
                     ),
                     mock.patch.object(
@@ -3669,9 +3648,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                             snapshots,
                         )
                     )
-                    self.assertTrue(
-                        git_module._verify_publisher_attestation({})
-                    )
+                    self.assertTrue(git_module._verify_publisher_attestation({}))
                     self.assertEqual(
                         runtime_module.validate_v2_runs_with_inventory(),
                         (["frozen-template", "frozen-privacy"], ()),
@@ -3782,11 +3759,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw).resolve()
             relatives = tuple(
-                Path("runs")
-                / "daily"
-                / "2026-07-15"
-                / run_ref
-                / "manifest.json"
+                Path("runs") / "daily" / "2026-07-15" / run_ref / "manifest.json"
                 for run_ref in (
                     "aaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "bbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -5366,9 +5339,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 include_signature=False,
             )
             digests = {
-                relative: hashlib.sha256(
-                    (root / relative).read_bytes()
-                ).hexdigest()
+                relative: hashlib.sha256((root / relative).read_bytes()).hexdigest()
                 for relative in MODULE.BOOTSTRAP_V2_PUBLIC_KEY_FILES
             }
             with mock.patch.object(
@@ -5518,9 +5489,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     message=message,
                     include_signature=False,
                 )
-                with self.subTest(label=label), self.assertRaises(
-                    ValueError
-                ) as caught:
+                with self.subTest(label=label), self.assertRaises(ValueError) as caught:
                     MODULE.parse_history_v2_unsigned_squash_commit(
                         fixture_commit_bytes(root, commit_oid),
                         expected_oid=commit_oid,
@@ -5578,9 +5547,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     message="Publish retained history",
                     **options,
                 )
-                with self.subTest(field=field), self.assertRaises(
-                    ValueError
-                ) as caught:
+                with self.subTest(field=field), self.assertRaises(ValueError) as caught:
                     MODULE.parse_history_v2_unsigned_squash_commit(
                         fixture_commit_bytes(root, commit_oid),
                         expected_oid=commit_oid,
@@ -5640,7 +5607,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 tree_oid=tree_oid,
                 parents=(base,),
                 message="Publish retained history",
-                author="Synthetic Maintainer <maintainer@example.net>",
+                author=MODULE.HISTORY_V2_CANONICAL_IDENTITY,
                 committer="GitHub <noreply@github.com>",
                 author_timezone="+0100",
                 committer_timezone="+0100",
@@ -5656,6 +5623,33 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertEqual(parsed.parents, (base,))
             self.assertTrue(parsed.signature_armor.endswith(b"\n"))
             self.assertFalse(parsed.signed_payload.endswith(b"\n"))
+            for author in (
+                f"Retrospective History <{risky_email()}>",
+                "Synthetic Maintainer "
+                "<retrospective-history-v2@users.noreply.github.com>",
+            ):
+                noncanonical_identity = fixture_raw_commit(
+                    root,
+                    tree_oid=tree_oid,
+                    parents=(base,),
+                    message="Publish retained history",
+                    author=author,
+                    committer="GitHub <noreply@github.com>",
+                    author_timezone="+0100",
+                    committer_timezone="+0100",
+                    message_trailing_newline=False,
+                )
+                with (
+                    self.subTest(author=author),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        "author identity is outside privacy policy",
+                    ),
+                ):
+                    MODULE.parse_history_v2_github_squash_commit(
+                        fixture_commit_bytes(root, noncanonical_identity),
+                        expected_oid=noncanonical_identity,
+                    )
             multiline = fixture_raw_commit(
                 root,
                 tree_oid=tree_oid,
@@ -5664,7 +5658,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     "Publish retained history\n\n"
                     "* Record the redacted retrospective summary"
                 ),
-                author="Synthetic Maintainer <maintainer@example.net>",
+                author=MODULE.HISTORY_V2_CANONICAL_IDENTITY,
                 committer="GitHub <noreply@github.com>",
                 author_timezone="+0100",
                 committer_timezone="+0100",
@@ -5828,7 +5822,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     root,
                     tree_oid=tree_oid,
                     parents=(base,),
-                    author="Synthetic Maintainer <maintainer@example.net>",
+                    author=MODULE.HISTORY_V2_CANONICAL_IDENTITY,
                     author_timezone="+0100",
                     committer_timezone="+0100",
                     **options,
@@ -6257,13 +6251,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             empty_tree = fixture_mktree(root, b"")
             sensitive_tree = fixture_mktree(
                 root,
-                f"040000 tree {empty_tree}\tnested".encode("ascii")
-                + MODULE.NUL_BYTE,
+                f"040000 tree {empty_tree}\tnested".encode("ascii") + MODULE.NUL_BYTE,
             )
             outer_tree = fixture_mktree(
                 root,
-                f"040000 tree {sensitive_tree}\traw".encode("ascii")
-                + MODULE.NUL_BYTE,
+                f"040000 tree {sensitive_tree}\traw".encode("ascii") + MODULE.NUL_BYTE,
             )
             root_tree = fixture_mktree(
                 root,
@@ -6300,9 +6292,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 mock.patch.object(
                     MODULE,
                     "history_v2_read_blob",
-                    side_effect=AssertionError(
-                        "sensitive leaf reached blob read"
-                    ),
+                    side_effect=AssertionError("sensitive leaf reached blob read"),
                 ) as blob_read,
                 mock.patch.object(
                     MODULE,
@@ -6432,9 +6422,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 ),
                 (
                     "committer PII",
-                    {
-                        "committer": "Synthetic Test <" + risky_email() + ">"
-                    },
+                    {"committer": "Synthetic Test <" + risky_email() + ">"},
                     "committer identity",
                 ),
                 (
@@ -6478,17 +6466,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         **identity_arguments,
                     )
                     with self.assertRaisesRegex(
-                        ValueError, expected + ".*retained privacy policy"
+                        ValueError,
+                        expected + ".*retained privacy policy"
                         if "identity" in expected
                         else expected,
                     ):
                         parse_fixture_commit(root, commit_oid)
             with self.assertRaisesRegex(ValueError, "timestamp is outside policy"):
                 MODULE.validate_history_v2_commit_identity(
-                    (
-                        MODULE.HISTORY_V2_CANONICAL_IDENTITY
-                        + " 4294967296 +0000"
-                    ).encode("ascii"),
+                    (MODULE.HISTORY_V2_CANONICAL_IDENTITY + " 4294967296 +0000").encode(
+                        "ascii"
+                    ),
                     "author",
                 )
 
@@ -6662,9 +6650,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 (
                     "duplicate signature",
                     {
-                        "extra_headers": (
-                            b"gpgsig -----BEGIN PGP SIGNATURE-----",
-                        ),
+                        "extra_headers": (b"gpgsig -----BEGIN PGP SIGNATURE-----",),
                     },
                     "duplicate signatures",
                 ),
@@ -6707,11 +6693,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 ),
                 (
                     "alternate hash",
-                    {
-                        "signature_armor": fixture_signature_armor(
-                            hash_algorithm=8
-                        )
-                    },
+                    {"signature_armor": fixture_signature_armor(hash_algorithm=8)},
                     "signature packet is outside policy",
                 ),
                 (
@@ -6801,9 +6783,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 )
                 verifier.home = Path(verifier_raw)
                 verifier.environment = {"LC_ALL": "C"}
-                verifier.allowed_fingerprints = frozenset(
-                    {FIXTURE_SIGNER_FINGERPRINT}
-                )
+                verifier.allowed_fingerprints = frozenset({FIXTURE_SIGNER_FINGERPRINT})
                 with mock.patch.object(
                     MODULE,
                     "bounded_process_output",
@@ -6817,9 +6797,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     verify_process.call_args.kwargs["input_data"],
                     signature.signed_payload,
                 )
-                self.assertFalse(
-                    (verifier.home / "commit-signature.asc").exists()
-                )
+                self.assertFalse((verifier.home / "commit-signature.asc").exists())
             for label, status, allowed in (
                 (
                     "wrong role",
@@ -6847,12 +6825,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertEqual(
                 MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS,
                 {
-                    "bootstrap-v2": Path(
-                        "retrospective-history-v2-admin-public.asc"
-                    ),
-                    "history-v2": Path(
-                        "retrospective-history-v2-publisher.asc"
-                    ),
+                    "bootstrap-v2": Path("retrospective-history-v2-admin-public.asc"),
+                    "history-v2": Path("retrospective-history-v2-publisher.asc"),
                 },
             )
 
@@ -6870,9 +6844,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "    os.write(1, b'x' * (8 * 1024 * 1024))\n"
                 "    time.sleep(60)\n"
             )
-            with self.assertRaisesRegex(
-                MODULE.BoundedProcessError, "output limit"
-            ):
+            with self.assertRaisesRegex(MODULE.BoundedProcessError, "output limit"):
                 MODULE.bounded_process_output(
                     [sys.executable, "-c", program],
                     max_output_bytes=1024,
@@ -7023,9 +6995,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(
             MODULE.BOOTSTRAP_V2_TEMPORARY_PATHS,
             {
-                Path(
-                    ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
-                ),
+                Path(".github/bootstrap/session-retrospective-v2-permanent-ci.yml"),
                 Path(".github/workflows/session-retrospective-v2-bootstrap.yml"),
                 Path("tests/test_session_retrospective_v2_bootstrap.py"),
             },
@@ -7074,7 +7044,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     write_bootstrap_v2_candidate(candidate)
                     target = (base if side == "base" else candidate) / relative
                     target.write_bytes(target.read_bytes() + b"\n")
-                    run_fixture_git(base if side == "base" else candidate, "add", "--all")
+                    run_fixture_git(
+                        base if side == "base" else candidate, "add", "--all"
+                    )
 
                     issues = "\n".join(
                         validate_synthetic_bootstrap_v2_candidate(
@@ -7660,9 +7632,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIsNone(helper_definition.args.vararg)
         self.assertIsNone(helper_definition.args.kwarg)
         helper_returns = [
-            node
-            for node in ast.walk(helper_definition)
-            if isinstance(node, ast.Return)
+            node for node in ast.walk(helper_definition) if isinstance(node, ast.Return)
         ]
         self.assertEqual(len(helper_returns), 1)
         helper_hex_call = helper_returns[0].value
@@ -7913,9 +7883,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ),
             (
                 "template retained",
-                Path(
-                    ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
-                ),
+                Path(".github/bootstrap/session-retrospective-v2-permanent-ci.yml"),
                 "temporary bootstrap artifact must be absent",
             ),
             (
@@ -8491,9 +8459,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_bootstrap_v2_public_key_armor_has_lf_only_closed_grammar(self) -> None:
         canonical = synthetic_bootstrap_v2_public_key()
         decoded = MODULE.decode_bootstrap_v2_public_key_armor(canonical)
-        checksum = base64.b64encode(
-            MODULE.bootstrap_v2_crc24(decoded)
-        )
+        checksum = base64.b64encode(MODULE.bootstrap_v2_crc24(decoded))
         with_checksum = canonical.replace(
             b"\n-----END PGP PUBLIC KEY BLOCK-----\n",
             b"\n=" + checksum + b"\n-----END PGP PUBLIC KEY BLOCK-----\n",
@@ -10701,7 +10667,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     'value = middle.replace("a", "cc")\n'
                 )
 
-        with self.assertRaisesRegex(ValueError, "codec is outside the trusted allowlist"):
+        with self.assertRaisesRegex(
+            ValueError, "codec is outside the trusted allowlist"
+        ):
             MODULE.bootstrap_v2_python_string_constants(
                 'value = "public".encode("rot_13")\n'
             )
@@ -11010,6 +10978,62 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             [],
         )
 
+    def test_bootstrap_v2_python_int_to_bytes_is_scanned(self) -> None:
+        relative = Path("tests/test_retrospective_history_v2.py")
+        expected = risky_github_classic_token()
+        encoded = int.from_bytes(expected.encode("ascii"), "big")
+        expression = f"({encoded}).to_bytes({len(expected)}, 'big')"
+        rejected = (
+            f"payload = {expression}\n",
+            f"number = {encoded}\npayload = number.to_bytes({len(expected)}, 'big')\n",
+            f"number = {encoded}\nencoder = number.to_bytes\n"
+            f"payload = encoder({len(expected)}, 'big')\n",
+            f"payloads = [{expression}]\n",
+            f"sink.write({expression})\n",
+            f"send({expression})\n",
+            f"payload = int.to_bytes({encoded}, {len(expected)}, 'big')\n",
+        )
+        for source in rejected:
+            with self.subTest(source=source.splitlines()[-1][:56]):
+                self.assertFalse(
+                    MODULE.contains_bootstrap_v2_privacy_risk_text(
+                        source,
+                        relative=relative,
+                    )
+                )
+                self.assertIn(
+                    expected,
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                )
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    write_bootstrap_v2_candidate(root)
+                    (root / relative).write_text(source, encoding="utf-8")
+
+                    issues = "\n".join(validate_synthetic_bootstrap_v2_candidate(root))
+
+                self.assertIn(
+                    "infrastructure text contains raw/sensitive evidence",
+                    issues,
+                )
+
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "payload = (65).to_bytes(1, 'big')\n"
+            ),
+            [],
+        )
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "number = get_number()\npayload = number.to_bytes(32, 'big')\n"
+            ),
+            [],
+        )
+        with self.assertRaisesRegex(ValueError, "unresolved argument"):
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "number = 65\npayload = number.to_bytes(length, 'big')\n"
+            )
+
     def test_bootstrap_v2_python_static_byte_constructors_fail_closed(self) -> None:
         expected = risky_github_classic_token()
         values = ", ".join(str(ord(character)) for character in expected)
@@ -11088,9 +11112,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     write_bootstrap_v2_candidate(root)
                     (root / relative).write_text(source, encoding="utf-8")
 
-                    issues = "\n".join(
-                        validate_synthetic_bootstrap_v2_candidate(root)
-                    )
+                    issues = "\n".join(validate_synthetic_bootstrap_v2_candidate(root))
 
                 self.assertIn(
                     "infrastructure text contains raw/sensitive evidence",
@@ -13360,9 +13382,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         repository_root = SCRIPT.parents[1]
         relatives = (
             Path(".github/workflows/ci.yml"),
-            Path(
-                ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
-            ),
+            Path(".github/bootstrap/session-retrospective-v2-permanent-ci.yml"),
             Path(".github/workflows/session-retrospective-v2-bootstrap.yml"),
             Path("scripts/trusted_history_ci.py"),
             Path("scripts/validate_retained_history.py"),

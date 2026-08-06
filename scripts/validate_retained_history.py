@@ -38,9 +38,7 @@ FORBIDDEN_COMPONENTS = frozenset(
     ".codex .codex-local .codex-tmp archived_sessions raw scratch sessions "
     "transient".split()
 )
-FORBIDDEN_EXACT_PATH_COMPONENTS = frozenset(
-    {"retrospective-history-v2-admin.asc"}
-)
+FORBIDDEN_EXACT_PATH_COMPONENTS = frozenset({"retrospective-history-v2-admin.asc"})
 FORBIDDEN_FILENAMES = frozenset(
     "auth.json config.toml history.jsonl session_index.jsonl source_metadata.json "
     "shard_manifest.json shards.jsonl turn_summaries.jsonl".split()
@@ -160,10 +158,38 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path(".github/workflows/session-retrospective-v2-bootstrap.yml"): bytes(
         (
-            0x49, 0xA4, 0xA1, 0x10, 0xCF, 0xE8, 0x30, 0xF4,
-            0x5D, 0xA0, 0xAB, 0xC9, 0x0D, 0x27, 0x2A, 0x97,
-            0x77, 0xA9, 0x43, 0x89, 0xF0, 0xD7, 0xB8, 0xDA,
-            0xD3, 0x18, 0x7A, 0xB3, 0xB6, 0xE9, 0xC4, 0x78,
+            0x49,
+            0xA4,
+            0xA1,
+            0x10,
+            0xCF,
+            0xE8,
+            0x30,
+            0xF4,
+            0x5D,
+            0xA0,
+            0xAB,
+            0xC9,
+            0x0D,
+            0x27,
+            0x2A,
+            0x97,
+            0x77,
+            0xA9,
+            0x43,
+            0x89,
+            0xF0,
+            0xD7,
+            0xB8,
+            0xDA,
+            0xD3,
+            0x18,
+            0x7A,
+            0xB3,
+            0xB6,
+            0xE9,
+            0xC4,
+            0x78,
         )
     ).hex(),
     Path("scripts/trusted_history_ci.py"): bytes(
@@ -204,110 +230,110 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("scripts/validate_retained_history.py"): bytes(
         (
-            0x76,
-            0x35,
-            0x5C,
-            0xAF,
-            0x85,
-            0x16,
-            0x4D,
-            0xC1,
-            0x8C,
-            0xEB,
-            0x17,
-            0xAB,
-            0xE8,
-            0x22,
-            0x08,
-            0x3F,
-            0x2D,
-            0x35,
-            0xAB,
-            0xAE,
-            0xB7,
-            0xA5,
+            0x14,
+            0x7F,
+            0x7F,
+            0xCE,
+            0x4A,
+            0x66,
             0xB0,
-            0xBA,
-            0x47,
-            0xC1,
+            0xE6,
+            0x81,
+            0x0C,
+            0x53,
+            0x71,
+            0xBE,
+            0xC5,
+            0xD5,
+            0x3F,
+            0x07,
+            0x5A,
             0xA1,
-            0xE0,
-            0xD9,
-            0x52,
-            0xBF,
-            0x2F,
+            0xED,
+            0xE6,
+            0xFC,
+            0x91,
+            0xB0,
+            0xC8,
+            0x80,
+            0x3F,
+            0xF0,
+            0xC6,
+            0x3C,
+            0x86,
+            0x3B,
         )
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
         (
-            0x94,
-            0x01,
-            0xEE,
-            0x50,
-            0xAD,
-            0x54,
+            0xA7,
+            0x27,
+            0xA1,
+            0x36,
             0x10,
-            0x15,
-            0x6C,
-            0x83,
-            0x0B,
-            0x44,
-            0x8B,
-            0x0B,
-            0xF8,
-            0x43,
-            0x7C,
-            0x6E,
-            0xF2,
-            0xC6,
-            0xD2,
-            0x74,
-            0xF5,
+            0x78,
+            0xED,
+            0x30,
             0xF3,
+            0x9A,
+            0xA1,
+            0xA1,
+            0x46,
+            0x77,
+            0xC2,
+            0x29,
+            0x2E,
+            0x13,
+            0xBC,
+            0x21,
+            0xF3,
+            0xC6,
+            0x44,
             0xAC,
-            0xB6,
-            0xBD,
-            0x08,
-            0xFC,
-            0x41,
-            0x93,
-            0xC4,
+            0x64,
+            0xC2,
+            0x4D,
+            0x3F,
+            0x8F,
+            0x2D,
+            0x66,
+            0x89,
         )
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
         (
-            0x3D,
-            0x84,
-            0x85,
-            0x2B,
-            0xE6,
-            0xC1,
-            0x48,
-            0xEA,
-            0xF1,
-            0x76,
-            0xFC,
-            0xA4,
-            0xBB,
-            0xB0,
-            0xBA,
-            0xBA,
+            0xAE,
+            0x29,
+            0x2E,
             0x04,
-            0x42,
-            0xC1,
-            0xFB,
-            0x71,
-            0x4A,
-            0xDF,
-            0x9D,
-            0x22,
-            0x54,
-            0xB6,
-            0x6C,
+            0xDE,
+            0x11,
+            0xA7,
+            0xEC,
+            0x0D,
+            0x6B,
+            0xC9,
+            0xA0,
+            0x6F,
+            0x6A,
+            0x98,
+            0x33,
+            0xC4,
+            0x29,
+            0x69,
+            0xBC,
+            0xB5,
+            0xEB,
+            0x8F,
+            0x26,
+            0x9F,
+            0xC3,
+            0x7F,
             0x15,
-            0xE7,
-            0xD3,
-            0x7C,
+            0x3D,
+            0x17,
+            0x90,
+            0xA1,
         )
     ).hex(),
 }
@@ -344,8 +370,7 @@ BOOTSTRAP_V2_REQUIRED_FILES = frozenset(
 BOOTSTRAP_V2_ALLOWED_FILES = BOOTSTRAP_V2_REQUIRED_FILES
 HISTORY_V2_TRUST_GENERATION_PATHS = tuple(
     sorted(
-        BOOTSTRAP_V2_ALLOWED_FILES
-        | {Path("scripts/trusted_history_ci.py")},
+        BOOTSTRAP_V2_ALLOWED_FILES | {Path("scripts/trusted_history_ci.py")},
         key=lambda path: path.as_posix(),
     )
 )
@@ -470,74 +495,74 @@ BOOTSTRAP_V2_TRUSTED_DECODED_RISK_VALUES_SHA256 = {
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x12,
-            0x5A,
-            0x82,
-            0x7F,
-            0xC7,
-            0xF6,
-            0x87,
-            0x05,
-            0x20,
-            0x20,
-            0x8F,
-            0x19,
-            0x99,
-            0x74,
-            0x11,
-            0xE8,
-            0xCF,
-            0x4B,
-            0xB8,
-            0xC3,
+            0xA4,
+            0x48,
+            0x0E,
             0x6B,
-            0x5F,
-            0x15,
-            0xAE,
-            0x82,
-            0xF4,
-            0x37,
-            0x44,
-            0x7D,
-            0x1D,
-            0xF6,
-            0xF4,
+            0x0F,
+            0x84,
+            0x31,
+            0x0F,
+            0xCA,
+            0x83,
+            0x5B,
+            0x90,
+            0x39,
+            0x48,
+            0xEB,
+            0x13,
+            0x3F,
+            0xF1,
+            0x96,
+            0x41,
+            0xD8,
+            0x6D,
+            0x7E,
+            0x48,
+            0x29,
+            0x56,
+            0x21,
+            0x21,
+            0x18,
+            0xBC,
+            0x7E,
+            0xD0,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0xF4,
-            0x54,
-            0xE9,
-            0x61,
-            0x24,
-            0x8C,
-            0x6A,
-            0x6A,
-            0xF3,
-            0xE8,
-            0x01,
-            0x69,
-            0x58,
-            0x2E,
-            0x67,
-            0xAB,
-            0x2A,
-            0x77,
-            0x82,
+            0xDC,
+            0x06,
+            0x5F,
+            0x91,
+            0xB7,
+            0xFC,
+            0x96,
+            0x10,
             0x2C,
-            0xCC,
-            0xB4,
-            0x4D,
-            0x53,
-            0x31,
+            0x95,
+            0xED,
+            0x45,
+            0xC4,
+            0xFC,
+            0x9E,
+            0x3C,
+            0xF7,
+            0x14,
+            0x10,
+            0x47,
+            0x91,
+            0x68,
+            0x7A,
+            0x1F,
+            0x63,
+            0xFA,
             0xD2,
-            0x88,
-            0x08,
-            0x0D,
-            0xA8,
-            0xD0,
-            0x3B,
+            0xEA,
+            0xB2,
+            0x35,
+            0x1B,
+            0xF9,
         )
     ),
 }
@@ -636,9 +661,7 @@ HISTORY_V2_SIGNATURE_HASH_ALGORITHM = 10
 HISTORY_V2_DOMAIN_MODULE_PATHS = tuple(
     Path(f"scripts/retrospective_history_{name}_v2.py")
     for name in "attestation credentials git privacy templates".split()
-) + (
-    Path("scripts/retrospective_history_v2.py"),
-)
+) + (Path("scripts/retrospective_history_v2.py"),)
 HISTORY_V2_CODEX_TRAILERS = frozenset(
     {
         "Co-authored-by: Codex (tool=Codex CLI; model=GPT-5) <codex@openai.com>",
@@ -718,8 +741,7 @@ class BoundedDiagnosticList(list[str]):
             encoded = value.encode("ascii")
         if (
             len(self) >= HISTORY_V2_MAX_DIAGNOSTIC_ITEMS
-            or self._encoded_bytes + len(encoded)
-            > HISTORY_V2_MAX_DIAGNOSTIC_BYTES
+            or self._encoded_bytes + len(encoded) > HISTORY_V2_MAX_DIAGNOSTIC_BYTES
         ):
             self._saturated = True
             marker = "history-v2 validation diagnostic budget was exhausted"
@@ -936,9 +958,7 @@ def _history_v2_common_git_dir(root: Path) -> Path:
             environment=closed_git_environment(),
         ).decode("utf-8")
     except (BoundedProcessError, UnicodeDecodeError) as exc:
-        raise ValueError(
-            "history-v2 Git common directory is unavailable"
-        ) from exc
+        raise ValueError("history-v2 Git common directory is unavailable") from exc
     common = Path(raw.strip())
     if not common.is_absolute():
         common = resolved_root / common
@@ -978,18 +998,14 @@ def validate_history_v2_closed_object_store(root: Path) -> None:
         except FileNotFoundError:
             continue
         except PermissionError as exc:
-            raise ValueError(
-                "history-v2 Git alternate policy is unreadable"
-            ) from exc
+            raise ValueError("history-v2 Git alternate policy is unreadable") from exc
         except OSError as exc:
             raise ValueError(
                 "history-v2 Git alternate policy could not be inspected"
             ) from exc
         else:
             os.close(descriptor)
-            raise ValueError(
-                "history-v2 Git alternate object fallback is prohibited"
-            )
+            raise ValueError("history-v2 Git alternate object fallback is prohibited")
 
 
 BOOTSTRAP_V2_REJECTED_PACKET_TAGS = frozenset({5, 7})
@@ -1296,9 +1312,7 @@ def _history_v2_revalidate_open_file(
         expected_size=opened.st_size,
     )
     current = os.fstat(descriptor)
-    if _history_v2_entry_identity(current) != _history_v2_entry_identity(
-        opened
-    ):
+    if _history_v2_entry_identity(current) != _history_v2_entry_identity(opened):
         raise ValueError(f"{label} object identity changed while being read")
     if _history_v2_entry_access(current) != _history_v2_entry_access(opened):
         raise ValueError(f"{label} access policy changed while being read")
@@ -1329,13 +1343,9 @@ def _history_v2_snapshot_entry(
                 operation="revalidated",
                 error=exc,
             ) from exc
-        if _history_v2_entry_identity(current) != _history_v2_entry_identity(
-            metadata
-        ):
+        if _history_v2_entry_identity(current) != _history_v2_entry_identity(metadata):
             raise ValueError(f"{label} object identity changed during inspection")
-        if _history_v2_entry_access(current) != _history_v2_entry_access(
-            metadata
-        ):
+        if _history_v2_entry_access(current) != _history_v2_entry_access(metadata):
             raise ValueError(f"{label} access policy changed during inspection")
         return HistoryV2FileSnapshot(
             relative=relative,
@@ -1396,9 +1406,7 @@ def _history_v2_snapshot_entry(
                 error=exc,
             ) from exc
 
-        if _history_v2_entry_identity(final) != _history_v2_entry_identity(
-            opened
-        ):
+        if _history_v2_entry_identity(final) != _history_v2_entry_identity(opened):
             raise ValueError(f"{label} object identity changed while being read")
         if _history_v2_entry_access(final) != _history_v2_entry_access(opened):
             raise ValueError(f"{label} access policy changed while being read")
@@ -1438,9 +1446,7 @@ def _history_v2_snapshot_entry(
             if _history_v2_entry_access(current) != _history_v2_entry_access(opened):
                 raise ValueError(f"{label} access policy changed during revalidation")
             if current.st_size != opened.st_size:
-                raise ValueError(
-                    f"{label} content changed during revalidation"
-                )
+                raise ValueError(f"{label} content changed during revalidation")
             if current.st_mtime_ns == final.st_mtime_ns:
                 break
             if attempt == 2:
@@ -1844,9 +1850,9 @@ def snapshot_bootstrap_v2_files(
                         raise ValueError(
                             "candidate artifact directory object identity changed"
                         )
-                    if _history_v2_entry_access(
-                        opened
-                    ) != _history_v2_entry_access(metadata):
+                    if _history_v2_entry_access(opened) != _history_v2_entry_access(
+                        metadata
+                    ):
                         raise ValueError(
                             "candidate artifact directory access policy changed"
                         )
@@ -1854,15 +1860,13 @@ def snapshot_bootstrap_v2_files(
                     final = os.fstat(child_descriptor)
                 finally:
                     os.close(child_descriptor)
-                if _history_v2_entry_identity(
-                    final
-                ) != _history_v2_entry_identity(opened):
+                if _history_v2_entry_identity(final) != _history_v2_entry_identity(
+                    opened
+                ):
                     raise ValueError(
                         "candidate artifact directory object identity changed"
                     )
-                if _history_v2_entry_access(final) != _history_v2_entry_access(
-                    opened
-                ):
+                if _history_v2_entry_access(final) != _history_v2_entry_access(opened):
                     raise ValueError(
                         "candidate artifact directory access policy changed"
                     )
@@ -1877,9 +1881,7 @@ def snapshot_bootstrap_v2_files(
                 )
                 total_bytes += snapshot.size
                 if total_bytes > BOOTSTRAP_V2_MAX_TREE_BYTES:
-                    raise ValueError(
-                        "history-v2 tree exceeds the trusted size limit"
-                    )
+                    raise ValueError("history-v2 tree exceeds the trusted size limit")
                 captured[name] = snapshot
                 snapshots.append(snapshot)
             else:
@@ -1913,15 +1915,13 @@ def snapshot_bootstrap_v2_files(
                     operation="revalidated",
                     error=exc,
                 ) from exc
-            if _history_v2_entry_identity(
-                current
-            ) != _history_v2_entry_identity(metadata):
+            if _history_v2_entry_identity(current) != _history_v2_entry_identity(
+                metadata
+            ):
                 raise ValueError(
                     "candidate artifact object identity changed during enumeration"
                 )
-            if _history_v2_entry_access(current) != _history_v2_entry_access(
-                metadata
-            ):
+            if _history_v2_entry_access(current) != _history_v2_entry_access(metadata):
                 raise ValueError(
                     "candidate artifact access policy changed during enumeration"
                 )
@@ -2103,10 +2103,7 @@ def git_index_entries(
     try:
         index_descriptor = os.open(
             index_path,
-            os.O_RDONLY
-            | os.O_CLOEXEC
-            | os.O_NOFOLLOW
-            | getattr(os, "O_NONBLOCK", 0),
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
         )
         try:
             index_metadata = os.fstat(index_descriptor)
@@ -4984,9 +4981,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         for name in dir(owner)
         if callable(getattr(owner, name, None))
     )
-    deterministic_text_builtin_names = frozenset(
-        {"bytearray", "bytes", "chr", "str"}
-    )
+    deterministic_text_builtin_names = frozenset({"bytearray", "bytes", "chr", "str"})
     dynamic_code_builtin_names = frozenset({"compile", "eval", "exec"})
     static_import_builtin_names = frozenset({"__import__"})
     decoder_source_keyword_names = frozenset(
@@ -5001,9 +4996,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             "a85decode b16decode b32decode b32hexdecode b64decode b85decode "
             "decode decodebytes standard_b64decode urlsafe_b64decode z85decode".split()
         ),
-        "binascii": frozenset(
-            "a2b_base64 a2b_hex a2b_qp a2b_uu unhexlify".split()
-        ),
+        "binascii": frozenset("a2b_base64 a2b_hex a2b_qp a2b_uu unhexlify".split()),
         "bz2": {"decompress"},
         "codecs": {"decode"},
         "gzip": {"decompress"},
@@ -5035,9 +5028,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             "operator.repeat",
         }
     )
-    static_text_format_qualified_names = frozenset(
-        {"operator.imod", "operator.mod"}
-    )
+    static_text_format_qualified_names = frozenset({"operator.imod", "operator.mod"})
     static_text_operator_qualified_names = (
         static_text_concatenation_qualified_names
         | static_text_repetition_qualified_names
@@ -5079,6 +5070,8 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         if isinstance(node, ast.Name):
             return isinstance(node.ctx, ast.Load)
         if isinstance(node, ast.Attribute):
+            if node.attr == "to_bytes":
+                return is_supported_binding_expression(node.value)
             return (
                 node.attr in bound_string_method_names
                 and (
@@ -5109,9 +5102,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     normalized_literal_slice(node.slice) is not None
                     and not isinstance(node.value, ast.Name)
                 )
-            ) and (
-                is_supported_binding_expression(node.value)
-            )
+            ) and (is_supported_binding_expression(node.value))
         if isinstance(node, ast.BinOp):
             return isinstance(node.op, (ast.Add, ast.Mult, ast.Mod)) and (
                 is_supported_binding_expression(node.left)
@@ -6018,6 +6009,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         )
 
     bound_string_method_marker = object()
+    bound_int_to_bytes_method_marker = object()
     bound_string_method_kinds_by_expression_id: dict[int, frozenset[str]] = {}
     bound_string_method_dataflow_ready = False
     unknown_subscript_selector = object()
@@ -6762,14 +6754,23 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             and len(value) == 3
             and value[0] is bound_string_method_marker
             and value[1] in bound_string_method_names
-            and (
-                type(value[2]) in {str, bytes}
-                or value[2] is str
-                or value[2] is bytes
-            )
+            and (type(value[2]) in {str, bytes} or value[2] is str or value[2] is bytes)
         ):
             return value[1], value[2]
         return None
+
+    def bound_int_to_bytes_method_value(receiver: Any) -> tuple[object, Any]:
+        return (bound_int_to_bytes_method_marker, receiver)
+
+    def unpack_bound_int_to_bytes_method(value: Any) -> Any:
+        if (
+            type(value) is tuple
+            and len(value) == 2
+            and value[0] is bound_int_to_bytes_method_marker
+            and (type(value[1]) is int or value[1] is int)
+        ):
+            return value[1]
+        return not_pure
 
     def unshadowed_builtin_name(
         node: ast.AST,
@@ -6783,8 +6784,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             return None
         key, skipped_class_keys = name_load_binding_resolution(node)
         if any(
-            binding_event_ids.get(candidate)
-            for candidate in (key, *skipped_class_keys)
+            binding_event_ids.get(candidate) for candidate in (key, *skipped_class_keys)
         ):
             return None
         return node.id
@@ -6802,6 +6802,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
 
     def unshadowed_static_range_builtin(node: ast.AST) -> Any:
         return range if unshadowed_builtin_name(node, frozenset({"range"})) else None
+
+    def unshadowed_static_int_builtin(node: ast.AST) -> Any:
+        return int if unshadowed_builtin_name(node, frozenset({"int"})) else None
 
     def unshadowed_builtin_text_type(node: ast.AST) -> type[str] | type[bytes] | None:
         value = unshadowed_deterministic_text_builtin(node)
@@ -7017,7 +7020,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                         "Python deterministic bytes iterable exceeds the trusted "
                         "byte limit"
                     )
-                if any(type(item) is not int or not 0 <= item <= 255 for item in source):
+                if any(
+                    type(item) is not int or not 0 <= item <= 255 for item in source
+                ):
                     raise ValueError(
                         "Python deterministic bytes iterable contains an invalid item"
                     )
@@ -7062,6 +7067,81 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             result = bytes(result)
         return validate_text_method_result(result)
 
+    def evaluate_static_int_to_bytes_call(
+        node: ast.Call,
+        evaluate_node: Any,
+    ) -> Any:
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "to_bytes":
+            receiver = evaluate_node(node.func.value)
+            if type(receiver) is not int and receiver is not int:
+                return not_pure
+        else:
+            receiver = unpack_bound_int_to_bytes_method(evaluate_node(node.func))
+            if receiver is not int and type(receiver) is not int:
+                return not_pure
+
+        if any(isinstance(argument, ast.Starred) for argument in node.args):
+            raise ValueError("Python deterministic int.to_bytes uses starred arguments")
+        arguments: list[Any] = []
+        for argument_node in node.args:
+            argument = evaluate_node(argument_node)
+            if argument is not_pure:
+                raise ValueError(
+                    "Python deterministic int.to_bytes uses an unresolved argument "
+                    f"at line {getattr(node, 'lineno', 0)}"
+                )
+            arguments.append(argument)
+        keywords: dict[str, Any] = {}
+        for keyword in node.keywords:
+            if keyword.arg is None or keyword.arg in keywords:
+                raise ValueError(
+                    "Python deterministic int.to_bytes uses unsupported keywords"
+                )
+            keyword_value = evaluate_node(keyword.value)
+            if keyword_value is not_pure:
+                raise ValueError(
+                    "Python deterministic int.to_bytes uses an unresolved argument "
+                    f"at line {getattr(node, 'lineno', 0)}"
+                )
+            keywords[keyword.arg] = keyword_value
+
+        if receiver is int:
+            if not arguments or type(arguments[0]) is not int:
+                raise ValueError(
+                    "Python deterministic int.to_bytes has no exact integer receiver"
+                )
+            receiver = arguments.pop(0)
+        if (
+            len(arguments) > 2
+            or not set(keywords) <= {"length", "byteorder", "signed"}
+            or (arguments and "length" in keywords)
+            or (len(arguments) >= 2 and "byteorder" in keywords)
+        ):
+            raise ValueError("Python deterministic int.to_bytes call is outside policy")
+        length = arguments[0] if arguments else keywords.get("length", 1)
+        byteorder = (
+            arguments[1] if len(arguments) >= 2 else keywords.get("byteorder", "big")
+        )
+        signed = keywords.get("signed", False)
+        if (
+            type(length) is not int
+            or length < 0
+            or length > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES
+            or type(byteorder) is not str
+            or byteorder not in {"big", "little"}
+            or type(signed) is not bool
+        ):
+            raise ValueError(
+                "Python deterministic int.to_bytes arguments are outside policy"
+            )
+        try:
+            result = receiver.to_bytes(length, byteorder, signed=signed)
+        except (OverflowError, ValueError) as exc:
+            raise ValueError(
+                "Python deterministic int.to_bytes call is unsupported"
+            ) from exc
+        return validate_text_method_result(result)
+
     def preflight_text_method_call(
         method_name: str,
         receiver: Any,
@@ -7101,7 +7181,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         if method_name == "expandtabs":
             tab_size = argument(0, "tabsize", 8)
             if type(tab_size) is not int:
-                raise ValueError("Python deterministic expandtabs size is not an integer")
+                raise ValueError(
+                    "Python deterministic expandtabs size is not an integer"
+                )
             source_size = bootstrap_v2_python_payload_size(receiver)
             if source_size * max(tab_size, 1) > limit:
                 raise ValueError(
@@ -7320,7 +7402,11 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 if builtin is not None:
                     result = builtin
                 else:
-                    result = unshadowed_static_range_builtin(node) or not_pure
+                    result = (
+                        unshadowed_static_range_builtin(node)
+                        or unshadowed_static_int_builtin(node)
+                        or not_pure
+                    )
         elif isinstance(node, ast.Subscript):
             container = evaluate_binding_expression(node.value)
             selector = normalized_literal_selector(node.slice)
@@ -7332,10 +7418,14 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                         result = container[selector]
                 except (IndexError, KeyError, TypeError):
                     result = not_pure
-        elif isinstance(node, ast.Attribute) and node.attr in bound_string_method_names:
+        elif isinstance(node, ast.Attribute):
             receiver = evaluate_binding_expression(node.value)
-            if type(receiver) in {str, bytes} or receiver is str or receiver is bytes:
+            if node.attr in bound_string_method_names and (
+                type(receiver) in {str, bytes} or receiver is str or receiver is bytes
+            ):
                 result = bound_string_method_value(node.attr, receiver)
+            elif node.attr == "to_bytes" and (type(receiver) is int or receiver is int):
+                result = bound_int_to_bytes_method_value(receiver)
         elif isinstance(node, (ast.Tuple, ast.List)):
             children = [evaluate_binding_expression(child) for child in node.elts]
             if all(child is not not_pure for child in children):
@@ -7468,10 +7558,15 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             else:
                 result = "".join(rendered_parts)
         elif isinstance(node, ast.Call):
-            result = evaluate_static_text_operator_call(
+            result = evaluate_static_int_to_bytes_call(
                 node,
                 evaluate_binding_expression,
             )
+            if result is not_pure:
+                result = evaluate_static_text_operator_call(
+                    node,
+                    evaluate_binding_expression,
+                )
             if result is not_pure:
                 callable_value = evaluate_binding_expression(node.func)
                 if any(
@@ -7569,9 +7664,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         nonlocal input_ops
         input_ops += 1
         if input_ops > input_limit:
-            raise ValueError(
-                "Python decoder input exceeds the trusted operation limit"
-            )
+            raise ValueError("Python decoder input exceeds the trusted operation limit")
 
     def static_input_origin(node, receiver):
         pending = [node]
@@ -7677,7 +7770,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         node: ast.AST,
         module_names: frozenset[str],
     ) -> bool:
-        namespaces = frozenset(f"{module_name}.__dict__" for module_name in module_names)
+        namespaces = frozenset(
+            f"{module_name}.__dict__" for module_name in module_names
+        )
         if namespaces and has_static_module_origin(node, namespaces):
             return True
         if (
@@ -7715,18 +7810,14 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             if (
                 isinstance(current, ast.Attribute)
                 and current.attr in {"__getitem__", "get"}
-                and has_static_module_namespace_origin(
-                    current.value, module_names
-                )
+                and has_static_module_namespace_origin(current.value, module_names)
             ):
                 return True
             if (
                 isinstance(current, ast.Call)
                 and len(current.args) in {2, 3}
                 and not current.keywords
-                and has_static_builtin_origin(
-                    current.func, frozenset({"getattr"})
-                )
+                and has_static_builtin_origin(current.func, frozenset({"getattr"}))
             ):
                 accessor_name = evaluate_binding_expression(current.args[1])
                 if (
@@ -7781,9 +7872,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 if (
                     len(current.args) in {2, 3}
                     and not current.keywords
-                    and has_static_builtin_origin(
-                        current.func, frozenset({"getattr"})
-                    )
+                    and has_static_builtin_origin(current.func, frozenset({"getattr"}))
                 ):
                     module_names = reflective_callable_modules(
                         current.args[1], qualified_names
@@ -7886,7 +7975,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 pending.extend(current.values)
                 continue
             if isinstance(current, (ast.Lambda, ast.NamedExpr)):
-                pending.append(current.body if isinstance(current, ast.Lambda) else current.value)
+                pending.append(
+                    current.body if isinstance(current, ast.Lambda) else current.value
+                )
                 continue
             if not isinstance(current, ast.Name) or not isinstance(
                 current.ctx, ast.Load
@@ -7977,13 +8068,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     "Python static text operator exceeds the trusted byte limit"
                 )
             return text_value * multiplier
-        if not isinstance(left, (str, bytes)) and not isinstance(
-            right, (str, bytes)
-        ):
+        if not isinstance(left, (str, bytes)) and not isinstance(right, (str, bytes)):
             return not_pure
-        if not isinstance(left, (str, bytes)) or not isinstance(
-            right, (str, bytes)
-        ):
+        if not isinstance(left, (str, bytes)) or not isinstance(right, (str, bytes)):
             raise ValueError(
                 "Python static text operator uses an unsupported literal type"
             )
@@ -7993,7 +8080,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             bootstrap_v2_python_payload_size(part) for part in (left, right)
         )
         if combined_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
-            raise ValueError("Python static text operator exceeds the trusted byte limit")
+            raise ValueError(
+                "Python static text operator exceeds the trusted byte limit"
+            )
         return left + right
 
     value_input_cache: dict[int, bool | None] = {}
@@ -8074,9 +8163,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             first = node.args[0]
             return (first.value if isinstance(first, ast.Starred) else first,)
         return tuple(
-            keyword.value
-            for keyword in node.keywords
-            if keyword.arg in keyword_names
+            keyword.value for keyword in node.keywords if keyword.arg in keyword_names
         )
 
     def dynamic_code_call_uses_static_input(node: ast.Call) -> bool:
@@ -8182,7 +8269,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         for index, child in enumerate(discovered):
             payload_size = evaluated_text_payload_size(child)
             if payload_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
-                raise ValueError("Python evaluated string exceeds the trusted byte limit")
+                raise ValueError(
+                    "Python evaluated string exceeds the trusted byte limit"
+                )
             evaluated_value_count += 1
             if evaluated_value_count > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUES:
                 raise ValueError("Python AST exceeds the trusted evaluated value limit")
@@ -8213,9 +8302,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             raise ValueError("Python evaluated string exceeds the trusted byte limit")
         existing = partial_values.get(id(node))
         existing_size = (
-            evaluated_text_payload_size(existing)
-            if existing is not None
-            else 0
+            evaluated_text_payload_size(existing) if existing is not None else 0
         )
         next_value_count = evaluated_value_count + (existing is None)
         next_evaluated_bytes = evaluated_bytes - existing_size + payload_size
@@ -8425,14 +8512,20 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             )
             constructor = unshadowed_deterministic_text_builtin(node.func)
             if any(
-                constructor is candidate
-                for candidate in (bytearray, bytes, chr, str)
+                constructor is candidate for candidate in (bytearray, bytes, chr, str)
             ):
                 constructor_result = evaluate_binding_expression(node)
                 is_supported_string_constructor = (
                     is_supported_string_constructor
                     or type(constructor_result) in {str, bytes}
                 )
+            int_to_bytes_result = evaluate_static_int_to_bytes_call(
+                node,
+                evaluate_binding_expression,
+            )
+            is_supported_string_constructor = (
+                is_supported_string_constructor or type(int_to_bytes_result) is bytes
+            )
         ambiguity_sensitive_constructor = is_supported_string_constructor
         if (
             isinstance(node, ast.Call)
@@ -8512,6 +8605,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 evaluated[id(node)] = (
                     unshadowed_deterministic_text_builtin(node)
                     or unshadowed_static_range_builtin(node)
+                    or unshadowed_static_int_builtin(node)
                     or not_pure
                 )
             else:
@@ -8520,9 +8614,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
 
         if isinstance(node, ast.Subscript):
             container = evaluated.get(id(node.value), not_pure)
-            selector: int | str | slice | None = normalized_literal_selector(
-                node.slice
-            )
+            selector: int | str | slice | None = normalized_literal_selector(node.slice)
             if selector is None:
                 selector = normalized_literal_slice(node.slice)
             if selector is None or type(container) not in {
@@ -8739,6 +8831,16 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             if result is not not_pure:
                 record_constructed_result(node, result)
             continue
+
+        if isinstance(node, ast.Call):
+            result = evaluate_static_int_to_bytes_call(
+                node,
+                lambda child: evaluated.get(id(child), not_pure),
+            )
+            if result is not not_pure:
+                evaluated[id(node)] = result
+                record_constructed_result(node, result)
+                continue
 
         if isinstance(node, ast.Call):
             result = evaluate_static_text_operator_call(
@@ -10340,10 +10442,7 @@ def contains_bootstrap_v2_nonpublic_key_marker(value: str) -> bool:
 
 
 def decode_bootstrap_v2_public_key_armor(value: bytes) -> bytes:
-    if any(
-        (byte < 0x20 and byte != 0x0A) or byte == 0x7F
-        for byte in value
-    ):
+    if any((byte < 0x20 and byte != 0x0A) or byte == 0x7F for byte in value):
         raise ValueError("public key armor contains prohibited control bytes")
     try:
         text = value.decode("ascii")
@@ -10398,13 +10497,10 @@ def decode_bootstrap_v2_public_key_armor(value: bytes) -> bytes:
                 validate=True,
             )
         except (binascii.Error, ValueError) as exc:
-            raise ValueError(
-                "public key armor contains a malformed checksum"
-            ) from exc
+            raise ValueError("public key armor contains a malformed checksum") from exc
         if (
             len(expected_checksum) != 3
-            or base64.b64encode(expected_checksum).decode("ascii")
-            != checksum_line[1:]
+            or base64.b64encode(expected_checksum).decode("ascii") != checksum_line[1:]
         ):
             raise ValueError("public key armor contains a malformed checksum")
 
@@ -11274,15 +11370,12 @@ def classify_history_v2_transaction(
     if not changed:
         raise ValueError("history-v2 transaction is empty")
     publication = tuple(
-        history_v2_mutable_artifact(relative)
-        for _status, relative in changed
+        history_v2_mutable_artifact(relative) for _status, relative in changed
     )
     if all(publication):
         return "publication"
     if any(publication):
-        raise ValueError(
-            "history-v2 transaction mixes publication and admin paths"
-        )
+        raise ValueError("history-v2 transaction mixes publication and admin paths")
     return "admin"
 
 
@@ -11364,7 +11457,9 @@ def _history_v2_domain_issue_payload(
             type(issue) is not str
             or not issue
             or len(issue) > HISTORY_V2_MAX_DOMAIN_ISSUE_CHARACTERS
-            or any(ord(character) < 0x20 or ord(character) > 0x7E for character in issue)
+            or any(
+                ord(character) < 0x20 or ord(character) > 0x7E for character in issue
+            )
         ):
             return False, False
         encoded_bytes += len(issue.encode("ascii"))
@@ -11411,10 +11506,7 @@ def _history_v2_domain_source_snapshots(
         return None
     if missing:
         raise ValueError("trusted history-v2 domain validator source is incomplete")
-    if any(
-        not snapshot.is_regular or snapshot.value is None
-        for snapshot in snapshots
-    ):
+    if any(not snapshot.is_regular or snapshot.value is None for snapshot in snapshots):
         raise ValueError("trusted history-v2 domain validator source is invalid")
     return tuple(snapshots)
 
@@ -11462,9 +11554,7 @@ class _HistoryV2FrozenImportlibUtil:
             not isinstance(spec, _HistoryV2FrozenDynamicSpec)
             or spec.loader.module is not self.module
         ):
-            raise ImportError(
-                "trusted history-v2 dynamic helper spec is inconsistent"
-            )
+            raise ImportError("trusted history-v2 dynamic helper spec is inconsistent")
         return self.module
 
 
@@ -11580,20 +11670,14 @@ def _history_v2_load_frozen_domain_modules(
         runtime_module = modules_by_relative[
             Path("scripts/retrospective_history_v2.py")
         ]
-        importlib_facade = type(sys)(
-            f"_history_v2_frozen_{generation}_importlib"
-        )
+        importlib_facade = type(sys)(f"_history_v2_frozen_{generation}_importlib")
         importlib_facade.util = _HistoryV2FrozenImportlibUtil(
-            trusted_root
-            / "scripts"
-            / "retrospective_history_privacy_v2.py",
+            trusted_root / "scripts" / "retrospective_history_privacy_v2.py",
             privacy_module,
         )
         runtime_module.importlib = importlib_facade
         return (
-            modules_by_relative[
-                Path("scripts/retrospective_history_git_v2.py")
-            ],
+            modules_by_relative[Path("scripts/retrospective_history_git_v2.py")],
             runtime_module,
         )
     except BaseException:
@@ -11714,9 +11798,7 @@ def trusted_history_v2_domain_contract(
         "trusted history-v2 domain source revision",
     )
     if observed_top != trusted_root:
-        raise ValueError(
-            "trusted history-v2 domain validator root is inconsistent"
-        )
+        raise ValueError("trusted history-v2 domain validator root is inconsistent")
     if history_v2_git_output(
         trusted_root,
         "status",
@@ -11743,9 +11825,7 @@ def trusted_history_v2_domain_contract(
             work_budget=HistoryV2WorkBudget(),
         )
         if expected_generation != trusted_generation:
-            raise ValueError(
-                "trusted history-v2 domain validator generation changed"
-            )
+            raise ValueError("trusted history-v2 domain validator generation changed")
     source_fingerprints = {
         snapshot.relative: hashlib.sha256(snapshot.value or b"").digest()
         for snapshot in source_snapshots
@@ -11785,9 +11865,7 @@ def trusted_history_v2_domain_contract(
 
 def history_v2_run_artifact(relative: Path) -> bool:
     return bool(
-        not relative.is_absolute()
-        and relative.parts
-        and relative.parts[0] == "runs"
+        not relative.is_absolute() and relative.parts and relative.parts[0] == "runs"
     )
 
 
@@ -11809,15 +11887,11 @@ def validate_history_v2_domain_tree(
             max_entries=BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES,
         )
         if visibility_issue is not None or file_snapshots is None:
-            return [
-                visibility_issue
-                or "trusted Git file enumeration failed closed"
-            ]
+            return [visibility_issue or "trusted Git file enumeration failed closed"]
     elif file_snapshots is None:
         try:
             relatives = tuple(
-                path.relative_to(root)
-                for path in tuple(visible_files or ())
+                path.relative_to(root) for path in tuple(visible_files or ())
             )
         except ValueError:
             return ["trusted history-v2 domain inventory escaped its root"]
@@ -11856,17 +11930,13 @@ def validate_history_v2_domain_tree(
         return [safe_exception_message(exc)]
     if contract is None:
         return (
-            ["trusted history-v2 domain validator is unavailable"]
-            if run_files
-            else []
+            ["trusted history-v2 domain validator is unavailable"] if run_files else []
         )
 
     inventory: Any = ()
     try:
         if any(
-            snapshot.is_symlink
-            or not snapshot.is_regular
-            or snapshot.value is None
+            snapshot.is_symlink or not snapshot.is_regular or snapshot.value is None
             for snapshot in frozen_snapshots
         ):
             raise ValueError(
@@ -11887,9 +11957,7 @@ def validate_history_v2_domain_tree(
             )
         )
         if len(expected_inventory) > HISTORY_V2_MAX_DOMAIN_MANIFESTS:
-            raise ValueError(
-                "trusted history-v2 manifest inventory exceeds its limit"
-            )
+            raise ValueError("trusted history-v2 manifest inventory exceeds its limit")
         attestation_issues = BoundedDiagnosticList()
         for relative in expected_inventory:
             manifest = snapshot_by_relative[relative].value
@@ -11997,13 +12065,9 @@ def validate_history_v2_domain_tree(
             result[0]
         )
         if not valid_issue_payload:
-            raise ValueError(
-                "trusted history-v2 domain validator result is invalid"
-            )
+            raise ValueError("trusted history-v2 domain validator result is invalid")
         if has_domain_issues:
-            return [
-                "trusted history-v2 domain validator rejected the frozen snapshot"
-            ]
+            return ["trusted history-v2 domain validator rejected the frozen snapshot"]
         inventory = result[1]
 
         supplied_inventory: list[Path] = []
@@ -12015,9 +12079,7 @@ def validate_history_v2_domain_tree(
                     "trusted history-v2 manifest inventory exceeds its limit"
                 )
             if not isinstance(supplied_relative, Path):
-                raise ValueError(
-                    "trusted history-v2 manifest inventory is invalid"
-                )
+                raise ValueError("trusted history-v2 manifest inventory is invalid")
             relative = supplied_relative
             if (
                 relative.is_absolute()
@@ -12026,9 +12088,7 @@ def validate_history_v2_domain_tree(
                 or relative.name != "manifest.json"
                 or relative not in visible_relatives
             ):
-                raise ValueError(
-                    "trusted history-v2 manifest inventory is invalid"
-                )
+                raise ValueError("trusted history-v2 manifest inventory is invalid")
             supplied_inventory.append(relative)
         if (
             len(set(supplied_inventory)) != len(supplied_inventory)
@@ -12063,10 +12123,7 @@ def validate_history_v2_tree(
         max_entries=BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES,
     )
     if snapshot_issue is not None or file_snapshots is None:
-        return [
-            snapshot_issue
-            or "history-v2 candidate snapshot could not be frozen"
-        ]
+        return [snapshot_issue or "history-v2 candidate snapshot could not be frozen"]
     issues = validate_bootstrap_v2_candidate(
         root,
         root,
@@ -12099,9 +12156,7 @@ def validate_history_v2_tree(
         return [visibility_issue or "trusted Git file enumeration failed closed"]
     snapshot_by_relative = {snapshot.relative: snapshot for snapshot in file_snapshots}
     if frozenset(visible_relatives) != frozenset(snapshot_by_relative):
-        return [
-            "trusted Git inventory differs from the frozen candidate snapshot"
-        ]
+        return ["trusted Git inventory differs from the frozen candidate snapshot"]
     visible_snapshots = tuple(
         snapshot_by_relative[relative] for relative in visible_relatives
     )
@@ -12302,10 +12357,7 @@ def validate_history_v2_commit_identity(value: bytes, label: str) -> int:
 def decode_history_v2_commit_signature_armor(value: bytes) -> bytes:
     if not 0 < len(value) <= HISTORY_V2_MAX_COMMIT_SIGNATURE_BYTES:
         raise ValueError("history-v2 commit signature exceeds policy")
-    if any(
-        (byte < 0x20 and byte != 0x0A) or byte == 0x7F
-        for byte in value
-    ):
+    if any((byte < 0x20 and byte != 0x0A) or byte == 0x7F for byte in value):
         raise ValueError(
             "history-v2 commit signature armor contains prohibited control bytes"
         )
@@ -12334,8 +12386,7 @@ def decode_history_v2_commit_signature_armor(value: bytes) -> bytes:
         or len(checksum_line) != 5
         or not checksum_line.startswith("=")
         or any(
-            not re.fullmatch(r"[A-Za-z0-9+/]{64}", line)
-            for line in encoded_lines[:-1]
+            not re.fullmatch(r"[A-Za-z0-9+/]{64}", line) for line in encoded_lines[:-1]
         )
         or re.fullmatch(r"[A-Za-z0-9+/]{1,64}={0,2}", encoded_lines[-1]) is None
     ):
@@ -12423,9 +12474,7 @@ def validate_history_v2_commit_signature(
         raise ValueError(
             "history-v2 commit signature time differs from canonical commit time"
         )
-    signer_fingerprint = binascii.hexlify(hashed[1][2][1:]).decode(
-        "ascii"
-    ).upper()
+    signer_fingerprint = binascii.hexlify(hashed[1][2][1:]).decode("ascii").upper()
 
     unhashed_length = int.from_bytes(body[hashed_end : hashed_end + 2], "big")
     unhashed_start = hashed_end + 2
@@ -12552,8 +12601,7 @@ def validate_history_v2_commit_message(
         or any(line != line.strip(" \t") for line in message_lines)
     ):
         if not squash and any(
-            line.startswith("Co-authored-by: Codex ")
-            for line in message_lines[1:]
+            line.startswith("Co-authored-by: Codex ") for line in message_lines[1:]
         ):
             raise ValueError(
                 "history-v2 commit message contains raw/sensitive evidence"
@@ -12666,9 +12714,7 @@ def parse_history_v2_unsigned_squash_commit(
             )
         timestamp = int(match.group("timestamp"))
         if timestamp > 4_294_967_295:
-            raise ValueError(
-                f"history-v2 squash {label} timestamp is outside policy"
-            )
+            raise ValueError(f"history-v2 squash {label} timestamp is outside policy")
         name = match.group("name").decode("ascii")
         if HISTORY_V2_RAW_CONVERSATION_EVIDENCE_RE.search(
             name
@@ -12701,8 +12747,18 @@ def validate_history_v2_github_squash_identity(
         raise ValueError(
             f"history-v2 GitHub squash {label} identity is not canonical"
         ) from exc
+    if label == "author":
+        expected_name = b"Retrospective History"
+        expected_email = b"retrospective-history-v2@users.noreply.github.com"
+    elif label == "committer":
+        expected_name = b"GitHub"
+        expected_email = b"noreply@github.com"
+    else:
+        raise ValueError("history-v2 GitHub squash identity role is outside policy")
     if (
-        name != name.strip(" \t")
+        match.group("name") != expected_name
+        or match.group("email") != expected_email
+        or name != name.strip(" \t")
         or unicodedata.normalize("NFC", name) != name
         or any(not character.isprintable() for character in name)
         or HISTORY_V2_RAW_CONVERSATION_EVIDENCE_RE.search(name)
@@ -12922,8 +12978,7 @@ def parse_history_v2_commit_object(
         raise ValueError("history-v2 commit header order is invalid")
     parent_end = 1
     while (
-        parent_end < len(parsed_headers)
-        and parsed_headers[parent_end][0] == b"parent"
+        parent_end < len(parsed_headers) and parsed_headers[parent_end][0] == b"parent"
     ):
         parent_end += 1
     if (
@@ -13065,9 +13120,7 @@ class HistoryV2SignatureVerifier:
         if key_issues:
             raise ValueError(key_issues[0])
 
-        self._temporary = tempfile.TemporaryDirectory(
-            prefix="history-v2-signature-"
-        )
+        self._temporary = tempfile.TemporaryDirectory(prefix="history-v2-signature-")
         self.home = Path(self._temporary.name)
         self.home.chmod(0o700)
         self.environment = {
@@ -13105,9 +13158,7 @@ class HistoryV2SignatureVerifier:
                 timeout_seconds=HISTORY_V2_GIT_TIMEOUT_SECONDS,
                 environment=self.environment,
             )
-            self.allowed_fingerprints = parse_history_v2_key_fingerprints(
-                fingerprints
-            )
+            self.allowed_fingerprints = parse_history_v2_key_fingerprints(fingerprints)
         except (BoundedProcessError, OSError, ValueError) as exc:
             self.__exit__(None, None, None)
             raise ValueError(
@@ -13131,10 +13182,7 @@ class HistoryV2SignatureVerifier:
         try:
             descriptor = os.open(
                 signature_path,
-                os.O_WRONLY
-                | os.O_CREAT
-                | os.O_EXCL
-                | getattr(os, "O_NOFOLLOW", 0),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
                 0o600,
             )
             with os.fdopen(descriptor, "wb") as stream:
@@ -13435,13 +13483,9 @@ def validate_history_v2_github_squash_receipt(
         )
     verified_at = payload.get("verified_at")
     pull_request_number = payload.get("pull_request_number")
-    pull_request_node_identity_sha256 = payload.get(
-        "pull_request_node_identity_sha256"
-    )
+    pull_request_node_identity_sha256 = payload.get("pull_request_node_identity_sha256")
     repository_identity_sha256 = payload.get("repository_identity_sha256")
-    pull_request_provenance_sha256 = payload.get(
-        "pull_request_provenance_sha256"
-    )
+    pull_request_provenance_sha256 = payload.get("pull_request_provenance_sha256")
     pull_request_merged_at = payload.get("pull_request_merged_at")
     if (
         not isinstance(verified_at, str)
@@ -13686,7 +13730,9 @@ def history_v2_tree_entries(
             HistoryV2TreeEntry(mode, decoded_type, object_id, size, relative)
         )
         if len(entries) > BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES:
-            raise ValueError("history-v2 commit tree entry count exceeds the trusted limit")
+            raise ValueError(
+                "history-v2 commit tree entry count exceeds the trusted limit"
+            )
     if total_size > BOOTSTRAP_V2_MAX_TREE_BYTES:
         raise ValueError("history-v2 commit tree exceeds the trusted size limit")
     if observed_tree_paths != expected_tree_paths:
@@ -13768,9 +13814,7 @@ def trusted_history_v2_domain_revision_contract(
         work_budget=work_budget,
     )
     by_path = {
-        entry.relative: entry
-        for entry in entries
-        if entry.object_type == "blob"
+        entry.relative: entry for entry in entries if entry.object_type == "blob"
     }
     selected: list[HistoryV2FileSnapshot] = []
     missing = 0
@@ -13785,9 +13829,7 @@ def trusted_history_v2_domain_revision_contract(
             or entry.size is None
             or entry.size > BOOTSTRAP_V2_MAX_PYTHON_SOURCE_BYTES
         ):
-            raise ValueError(
-                "trusted history-v2 domain revision source is invalid"
-            )
+            raise ValueError("trusted history-v2 domain revision source is invalid")
         value = history_v2_read_blob(root, entry, work_budget=work_budget)
         selected.append(
             HistoryV2FileSnapshot(
@@ -13808,9 +13850,7 @@ def trusted_history_v2_domain_revision_contract(
     if missing or tuple(snapshot.relative for snapshot in selected) != (
         HISTORY_V2_DOMAIN_MODULE_PATHS
     ):
-        raise ValueError(
-            "trusted history-v2 domain revision source is incomplete"
-        )
+        raise ValueError("trusted history-v2 domain revision source is incomplete")
 
     trusted_generation = history_v2_trust_generation_digest(
         root,
@@ -13848,9 +13888,7 @@ def validate_history_v2_commit_tree(
 ) -> None:
     if tree_oid in work_budget.validated_tree_oids:
         return
-    blob_entries = tuple(
-        entry for entry in entries if entry.object_type == "blob"
-    )
+    blob_entries = tuple(entry for entry in entries if entry.object_type == "blob")
     index_records = tuple(
         entry.mode.encode("ascii")
         + b" "
@@ -13927,7 +13965,9 @@ def validate_history_v2_commit_tree(
                 environment=environment,
             )
         except BoundedProcessError as exc:
-            raise ValueError("history-v2 commit tree index could not be created") from exc
+            raise ValueError(
+                "history-v2 commit tree index could not be created"
+            ) from exc
         try:
             reconstructed_tree = canonical_history_v2_oid(
                 bounded_process_output(
@@ -14120,10 +14160,7 @@ def validate_history_v2_new_commits(
                 signature_verifier=signature_verifier,
             )
             work_budget.add_parent_edges(len(commit_object.parents))
-            if any(
-                parent not in preceding_commits
-                for parent in commit_object.parents
-            ):
+            if any(parent not in preceding_commits for parent in commit_object.parents):
                 raise ValueError(
                     "history-v2 commit graph is not bounded to the authorized range"
                 )
@@ -14317,7 +14354,9 @@ def validate_history_v2_merge_range(
                 relative,
                 work_budget=budget,
             )
-            if len(head_value) <= len(base_value) or not head_value.startswith(base_value):
+            if len(head_value) <= len(base_value) or not head_value.startswith(
+                base_value
+            ):
                 raise ValueError(
                     "history-v2 JSONL modifications must be strict append-only updates"
                 )
@@ -14405,9 +14444,7 @@ def history_v2_trust_generation_digest(
         work_budget=work_budget,
     )
     by_path = {
-        entry.relative: entry
-        for entry in entries
-        if entry.object_type == "blob"
+        entry.relative: entry for entry in entries if entry.object_type == "blob"
     }
     selected = []
     for relative in HISTORY_V2_TRUST_GENERATION_PATHS:
@@ -14491,11 +14528,8 @@ def history_v2_domain_candidate_plan(
         or HISTORY_V2_OID_RE.fullmatch(payload["head_tree_oid"]) is None
         or len(payload["head_tree_oid"]) != len(head_rev)
         or type(payload.get("squash_subject")) is not str
-        or HISTORY_V2_COMMIT_SUBJECT_RE.fullmatch(payload["squash_subject"])
-        is None
-        or HISTORY_V2_RAW_CONVERSATION_EVIDENCE_RE.search(
-            payload["squash_subject"]
-        )
+        or HISTORY_V2_COMMIT_SUBJECT_RE.fullmatch(payload["squash_subject"]) is None
+        or HISTORY_V2_RAW_CONVERSATION_EVIDENCE_RE.search(payload["squash_subject"])
         is not None
         or type(payload.get("trust_generation")) is not str
         or re.fullmatch(
@@ -14596,8 +14630,7 @@ def build_pull_request_candidate_plan(
         )
         role = classify_history_v2_transaction(changed)
         has_domain_artifacts = any(
-            history_v2_run_artifact(relative)
-            for _status, relative in changed
+            history_v2_run_artifact(relative) for _status, relative in changed
         )
         if has_domain_artifacts and role != "publication":
             raise ValueError(
@@ -14763,9 +14796,7 @@ def validate_append_only_event_range(
             "history-v2 fixed-Q tree",
         )
         if observed_tree_oid != head_tree_oid:
-            raise ValueError(
-                "history-v2 prospective squash tree differs from fixed Q"
-            )
+            raise ValueError("history-v2 prospective squash tree differs from fixed Q")
         changed = parse_history_v2_changed_paths(
             history_v2_diff_output(
                 root,
@@ -14838,11 +14869,7 @@ def history_v2_bootstrap_markers(root: Path, base_rev: str) -> frozenset[Path]:
 def history_v2_blob_entry_map(
     entries: tuple[HistoryV2TreeEntry, ...],
 ) -> dict[Path, HistoryV2TreeEntry]:
-    return {
-        entry.relative: entry
-        for entry in entries
-        if entry.object_type == "blob"
-    }
+    return {entry.relative: entry for entry in entries if entry.object_type == "blob"}
 
 
 def validate_history_v2_bootstrap_transaction(
@@ -15020,11 +15047,7 @@ def history_v2_single_parent_squash_coordinates(
         max_bytes=HISTORY_V2_MAX_COMMIT_BYTES,
     )
     if b"\ngpgsig " in b"\n" + raw_commit.partition(b"\n\n")[0]:
-        if (
-            github_commit_receipt is None
-            or repository is None
-            or repository_id is None
-        ):
+        if github_commit_receipt is None or repository is None or repository_id is None:
             raise ValueError(
                 "history-v2 GitHub squash commit lacks exact provider verification"
             )
@@ -15152,8 +15175,7 @@ def validate_history_v2_actual_squash_transaction(
         raise ValueError("history-v2 default squash transaction is empty")
     role = classify_history_v2_transaction(changed)
     has_v2_runs = any(
-        history_v2_run_artifact(relative)
-        for _status, relative in changed
+        history_v2_run_artifact(relative) for _status, relative in changed
     )
     if role == "publication":
         validate_history_v2_generic_append_only_changes(
@@ -15165,9 +15187,7 @@ def validate_history_v2_actual_squash_transaction(
             rewrite_error=(
                 "history-v2 default squash deletes or rewrites retained history"
             ),
-            append_error=(
-                "history-v2 default JSONL update is not strict append-only"
-            ),
+            append_error=("history-v2 default JSONL update is not strict append-only"),
         )
     if has_v2_runs:
         domain_issues = validate_history_v2_domain_default_range(
@@ -15259,7 +15279,9 @@ def write_history_v2_merge_plan(
     except ValueError:
         pass
     else:
-        raise ValueError("history-v2 merge plan must be written outside the candidate root")
+        raise ValueError(
+            "history-v2 merge plan must be written outside the candidate root"
+        )
     if not parent.is_dir() or destination.exists() or destination.is_symlink():
         raise ValueError("history-v2 merge plan destination is not a new regular file")
     encoded = (
@@ -15308,10 +15330,7 @@ def validate_root(
             label="retained artifact",
         )
         if snapshot_issue is not None or file_snapshots is None:
-            return [
-                snapshot_issue
-                or "retained history inventory could not be frozen"
-            ]
+            return [snapshot_issue or "retained history inventory could not be frozen"]
     elif file_snapshots is None:
         git_snapshots, git_issue = git_visible_file_snapshots(
             root,
@@ -15320,10 +15339,7 @@ def validate_root(
         if git_snapshots is not None:
             file_snapshots = git_snapshots
         elif git_control_path_present(root):
-            return [
-                git_issue
-                or "trusted Git file enumeration failed closed"
-            ]
+            return [git_issue or "trusted Git file enumeration failed closed"]
         else:
             file_snapshots, snapshot_issue = snapshot_bootstrap_v2_files(
                 root,
@@ -15333,8 +15349,7 @@ def validate_root(
                 if "candidate root is missing" in (snapshot_issue or ""):
                     return ["root must be an existing directory"]
                 return [
-                    snapshot_issue
-                    or "retained history inventory could not be frozen"
+                    snapshot_issue or "retained history inventory could not be frozen"
                 ]
     frozen_snapshots = tuple(file_snapshots)
     retained_export_files: dict[tuple[str, str], set[str]] = {}
@@ -15479,9 +15494,7 @@ def validate_root(
                 rows = parse_jsonl_bytes(value)
                 total_jsonl_rows += len(rows)
                 if total_jsonl_rows > HISTORY_V2_MAX_TOTAL_JSONL_ROWS:
-                    raise ValueError(
-                        "JSONL total row count exceeds the trusted limit"
-                    )
+                    raise ValueError("JSONL total row count exceeds the trusted limit")
                 jsonl_kind = allowed_retained_jsonl_artifact(relative)
                 if jsonl_kind is None:
                     issues.append(f"{display_relative}: unexpected JSONL artifact")
