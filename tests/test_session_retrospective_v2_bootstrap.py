@@ -1113,33 +1113,155 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             candidate["permissions"],
             {"contents": "read", "pull-requests": "read"},
         )
-        self.assertEqual(audit["permissions"], {"contents": "read"})
+        self.assertEqual(
+            audit["permissions"],
+            {"contents": "read", "pull-requests": "read"},
+        )
         self.assertEqual(audit["name"], "Post-merge default audit")
+        self.assertEqual(audit["timeout-minutes"], 45)
+        self.assertEqual(
+            audit["env"]["DEFAULT_AUTHORITY_ROOT"],
+            "${{ github.workspace }}/candidate-default",
+        )
+        self.assertEqual(
+            audit["env"]["TRUSTED_BASELINE_ROOT"],
+            "${{ github.workspace }}/trusted-default",
+        )
+        self.assertEqual(
+            audit["env"]["EVENT_REPOSITORY_ID"],
+            "${{ github.repository_id }}",
+        )
         self.assertEqual(
             audit["if"],
             "${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}",
         )
         audit_steps = steps_by_name(audit)
+        step_names = [step["name"] for step in audit["steps"]]
+        ordered = (
+            "Checkout exact default S",
+            "Checkout exact trusted B0",
+            "Bind trusted control Python",
+            "Verify exact GitHub squash commit",
+            "Detect invalid S tree or transaction",
+            "Remove temporary provider receipt",
+            "Prepare disposable default test tree",
+            "Install validated default test dependencies",
+            "Run tests after dropping UID and cwd",
+        )
+        offsets = [step_names.index(name) for name in ordered]
+        self.assertEqual(offsets, sorted(offsets))
+        baseline_checkout = audit_steps["Checkout exact trusted B0"]
+        self.assertEqual(baseline_checkout["with"]["ref"], "${{ github.event.before }}")
+        self.assertEqual(baseline_checkout["with"]["path"], "trusted-default")
+        self.assertIs(baseline_checkout["with"]["persist-credentials"], False)
+        action_steps = [step for step in audit["steps"] if "uses" in step]
+        self.assertEqual(
+            [step["uses"] for step in action_steps],
+            [
+                "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+                "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+                "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
+            ],
+        )
+        self.assertFalse(any(step["uses"].startswith("./") for step in action_steps))
+        trusted_setup = audit_steps["Set up trusted Python"]
+        self.assertEqual(
+            trusted_setup["with"],
+            {"python-version": "3.13.12", "cache": False},
+        )
+        control_binding = audit_steps["Bind trusted control Python"]["run"]
+        self.assertIn('control_version="$("$control_python" -I -B --version 2>&1)"', control_binding)
+        self.assertIn('[ "$control_version" != "Python 3.13.12" ]', control_binding)
         verification = audit_steps["Verify exact GitHub squash commit"]
         self.assertEqual(verification["env"], {"GH_TOKEN": "${{ github.token }}"})
+        token_steps = [
+            step
+            for step in audit["steps"]
+            if {"GH_TOKEN", "GITHUB_TOKEN"} & set(step.get("env", {}))
+        ]
+        self.assertEqual(token_steps, [verification])
         self.assertIn("verify-default-github-commit", verification["run"])
+        self.assertIn("/usr/bin/env -i", verification["run"])
+        self.assertIn('"$CONTROL_PYTHON" -I -B', verification["run"])
+        self.assertEqual(verification["run"].count('"$CONTROL_PYTHON"'), 1)
+        self.assertIn(
+            '"$TRUSTED_BASELINE_ROOT/scripts/trusted_history_ci.py"',
+            verification["run"],
+        )
+        self.assertEqual(
+            verification["run"].count(
+                '"$TRUSTED_BASELINE_ROOT/scripts/trusted_history_ci.py"'
+            ),
+            1,
+        )
+        self.assertNotIn(
+            '"$DEFAULT_AUTHORITY_ROOT/scripts/trusted_history_ci.py"',
+            verification["run"],
+        )
         self.assertIn('--repository "$GITHUB_REPOSITORY"', verification["run"])
+        self.assertIn('--repository-id "$EVENT_REPOSITORY_ID"', verification["run"])
         self.assertIn('--base-sha "$EVENT_BEFORE_SHA"', verification["run"])
         self.assertIn('--head-sha "$GITHUB_SHA"', verification["run"])
         self.assertIn("timeout --signal=TERM --kill-after=5s", verification["run"])
         detector_gate = audit_steps["Detect invalid S tree or transaction"]["run"]
+        self.assertIn(
+            '"$TRUSTED_BASELINE_ROOT/scripts/validate_retained_history.py"',
+            detector_gate,
+        )
+        self.assertIn('--root "$DEFAULT_AUTHORITY_ROOT"', detector_gate)
         self.assertIn('--repository "$GITHUB_REPOSITORY"', detector_gate)
+        self.assertIn('--repository-id "$EVENT_REPOSITORY_ID"', detector_gate)
         self.assertIn(
             '--github-commit-receipt "$GITHUB_COMMIT_RECEIPT"',
             detector_gate,
         )
         self.assertNotIn("GH_TOKEN", detector_gate)
+        dependency_step = audit_steps["Install validated default test dependencies"][
+            "run"
+        ]
+        self.assertIn(
+            '--requirement "$DEFAULT_EXECUTION_ROOT/requirements-v2.txt"',
+            dependency_step,
+        )
+        self.assertNotIn("GH_TOKEN=", dependency_step)
+        self.assertIn("-u GH_TOKEN -u GITHUB_TOKEN", dependency_step)
+        for step in audit["steps"][: step_names.index("Detect invalid S tree or transaction")]:
+            script = step.get("run", "")
+            self.assertNotIn("pip install", script)
+            self.assertNotIn("TEST_PYTHON", script)
+            self.assertNotIn(
+                '"$DEFAULT_AUTHORITY_ROOT/scripts/trusted_history_ci.py"',
+                script,
+            )
+            self.assertNotIn(
+                '"$DEFAULT_AUTHORITY_ROOT/scripts/validate_retained_history.py"',
+                script,
+            )
+        cleanup = audit_steps["Remove temporary provider receipt"]
+        self.assertEqual(cleanup["if"], "${{ always() }}")
+        self.assertIn("github-commit-receipt.json", cleanup["run"])
+        self.assertIn("rm -f --", cleanup["run"])
+        self.assertLess(
+            step_names.index("Remove temporary provider receipt"),
+            step_names.index("Prepare disposable default test tree"),
+        )
+        for step_name in (
+            "Detect invalid S tree or transaction",
+            "Install validated default test dependencies",
+            "Run tests after dropping UID and cwd",
+        ):
+            script = audit_steps[step_name]["run"]
+            self.assertNotIn("tail -n", script)
+            self.assertIn("/usr/bin/tail -c 65536", script)
+            self.assertIn("/usr/bin/base64 -w 76", script)
+            self.assertIn("diagnostic-base64: ", script)
         detector = steps_by_name(audit)["Document detector scope"]["run"]
         self.assertIn("does not prevent that write", detector)
         self.assertIn("never authorizes mutation", detector)
 
     def test_default_github_commit_receipt_binds_exact_provider_payload(self) -> None:
         repository = "Joey-Tools/codex-session-retrospective-history"
+        repository_id = 1_246_526_548
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "repo"
             subprocess.run(["git", "init", "--quiet", str(root)], check=True)
@@ -1189,13 +1311,47 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     },
                 },
             }
+            pull_number = 4
+            pull_node_id = "PR_kwDOSyntheticReceipt"
+            candidate_head = "d" * len(head)
+            merged_at = verified_at
+            associated = [{"number": pull_number, "node_id": pull_node_id}]
+            pull_payload = {
+                "number": pull_number,
+                "node_id": pull_node_id,
+                "state": "closed",
+                "merged": True,
+                "merged_at": merged_at,
+                "draft": False,
+                "merge_commit_sha": head,
+                "base": {
+                    "ref": "master",
+                    "sha": base,
+                    "repo": {"full_name": repository, "id": repository_id},
+                },
+                "head": {
+                    "ref": "wip/session-retrospective-v2-history",
+                    "sha": candidate_head,
+                    "repo": {"full_name": repository, "id": repository_id},
+                },
+            }
             with mock.patch.object(
                 CI_MODULE,
                 "github_json",
-                return_value=api_payload,
+                side_effect=[
+                    api_payload,
+                    associated,
+                    [],
+                    associated,
+                    pull_payload,
+                    associated,
+                    [],
+                    associated,
+                ],
             ) as github_api:
                 receipt = CI_MODULE.verify_default_github_commit(
                     repository=repository,
+                    repository_id=repository_id,
                     git_dir=root / ".git",
                     base_sha=base,
                     head_sha=head,
@@ -1204,15 +1360,111 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             self.assertEqual(receipt["base_sha"], base)
             self.assertEqual(receipt["head_sha"], head)
             self.assertEqual(receipt["tree_sha"], tree_oid)
+            self.assertEqual(receipt["schema_version"], 2)
             self.assertEqual(receipt["github_committer_login"], "web-flow")
             self.assertEqual(receipt["verification_reason"], "valid")
-            self.assertNotIn("maintainer@example.net", json.dumps(receipt))
-            github_api.assert_called_once_with(
-                "GET",
-                repository,
-                f"/commits/{head}",
-                token="synthetic-read-token",
-                max_bytes=CI_MODULE.MAX_HTTP_RESPONSE_BYTES,
+            self.assertEqual(receipt["pull_request_number"], pull_number)
+            self.assertEqual(
+                receipt["repository_identity_sha256"],
+                hashlib.sha256(
+                    f"{repository_id}:{repository}".encode("utf-8")
+                ).hexdigest(),
+            )
+            expected_provenance = {
+                "base_ref": "master",
+                "base_repository": repository,
+                "base_repository_id": repository_id,
+                "base_sha": base,
+                "head_repository": repository,
+                "head_repository_id": repository_id,
+                "merge_commit_sha": head,
+                "merged_at": merged_at,
+                "node_identity_sha256": hashlib.sha256(
+                    pull_node_id.encode("utf-8")
+                ).hexdigest(),
+                "number": pull_number,
+            }
+            self.assertEqual(
+                receipt["pull_request_provenance_sha256"],
+                hashlib.sha256(
+                    json.dumps(
+                        expected_provenance,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+            )
+            self.assertEqual(receipt["pull_request_merged_at"], merged_at)
+            self.assertEqual(
+                receipt["pull_request_node_identity_sha256"],
+                hashlib.sha256(pull_node_id.encode("utf-8")).hexdigest(),
+            )
+            VALIDATOR_MODULE.validate_history_v2_github_squash_receipt(
+                receipt,
+                commit=parsed,
+                repository=repository,
+                repository_id=repository_id,
+                before_rev=base,
+                head_rev=head,
+            )
+            serialized_receipt = json.dumps(receipt, sort_keys=True)
+            self.assertNotIn("maintainer@example.net", serialized_receipt)
+            self.assertNotIn("SyntheticMaintainer", serialized_receipt)
+            self.assertNotIn(pull_node_id, serialized_receipt)
+            self.assertNotIn(candidate_head, serialized_receipt)
+            self.assertEqual(
+                github_api.call_args_list,
+                [
+                    mock.call(
+                        "GET",
+                        repository,
+                        f"/commits/{head}",
+                        token="synthetic-read-token",
+                        max_bytes=CI_MODULE.MAX_HTTP_RESPONSE_BYTES,
+                    ),
+                    mock.call(
+                        "GET",
+                        repository,
+                        f"/commits/{head}/pulls?per_page=100&page=1",
+                        token="synthetic-read-token",
+                    ),
+                    mock.call(
+                        "GET",
+                        repository,
+                        f"/commits/{head}/pulls?per_page=100&page=2",
+                        token="synthetic-read-token",
+                    ),
+                    mock.call(
+                        "GET",
+                        repository,
+                        f"/commits/{head}/pulls?per_page=100&page=1",
+                        token="synthetic-read-token",
+                    ),
+                    mock.call(
+                        "GET",
+                        repository,
+                        f"/pulls/{pull_number}",
+                        token="synthetic-read-token",
+                    ),
+                    mock.call(
+                        "GET",
+                        repository,
+                        f"/commits/{head}/pulls?per_page=100&page=1",
+                        token="synthetic-read-token",
+                    ),
+                    mock.call(
+                        "GET",
+                        repository,
+                        f"/commits/{head}/pulls?per_page=100&page=2",
+                        token="synthetic-read-token",
+                    ),
+                    mock.call(
+                        "GET",
+                        repository,
+                        f"/commits/{head}/pulls?per_page=100&page=1",
+                        token="synthetic-read-token",
+                    ),
+                ],
             )
 
             mutations = (
@@ -1263,17 +1515,170 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         mock.patch.object(
                             CI_MODULE,
                             "github_json",
-                            return_value=changed,
+                            side_effect=[
+                                changed,
+                                associated,
+                                [],
+                                associated,
+                                pull_payload,
+                                associated,
+                                [],
+                                associated,
+                            ],
                         ),
                         self.assertRaises(CI_MODULE.GateError),
                     ):
                         CI_MODULE.verify_default_github_commit(
                             repository=repository,
+                            repository_id=repository_id,
                             git_dir=root / ".git",
                             base_sha=base,
                             head_sha=head,
                             token="synthetic-read-token",
                         )
+
+            pull_mutations = (
+                ("open", lambda value: value.__setitem__("state", "open")),
+                ("unmerged", lambda value: value.__setitem__("merged", False)),
+                ("draft", lambda value: value.__setitem__("draft", True)),
+                (
+                    "merge commit",
+                    lambda value: value.__setitem__("merge_commit_sha", "a" * len(head)),
+                ),
+                (
+                    "base ref",
+                    lambda value: value["base"].__setitem__("ref", "other"),
+                ),
+                (
+                    "base sha",
+                    lambda value: value["base"].__setitem__("sha", "b" * len(base)),
+                ),
+                (
+                    "base repository",
+                    lambda value: value["base"]["repo"].__setitem__(
+                        "full_name", "Joey-Tools/other-history"
+                    ),
+                ),
+                (
+                    "head repository",
+                    lambda value: value["head"]["repo"].__setitem__(
+                        "full_name", "Joey-Tools/other-history"
+                    ),
+                ),
+                (
+                    "base repository identity",
+                    lambda value: value["base"]["repo"].__setitem__(
+                        "id", repository_id + 1
+                    ),
+                ),
+                (
+                    "head repository identity",
+                    lambda value: value["head"]["repo"].__setitem__(
+                        "id", repository_id + 1
+                    ),
+                ),
+                (
+                    "node identity",
+                    lambda value: value.__setitem__("node_id", "different-node"),
+                ),
+                ("number", lambda value: value.__setitem__("number", pull_number + 1)),
+            )
+            for label, mutate in pull_mutations:
+                with self.subTest(pull_mutation=label):
+                    changed_pull = copy.deepcopy(pull_payload)
+                    mutate(changed_pull)
+                    with (
+                        mock.patch.object(
+                            CI_MODULE,
+                            "github_json",
+                            side_effect=[
+                                api_payload,
+                                associated,
+                                [],
+                                associated,
+                                changed_pull,
+                                associated,
+                                [],
+                                associated,
+                            ],
+                        ),
+                        self.assertRaises(CI_MODULE.GateError),
+                    ):
+                        CI_MODULE.verify_default_github_commit(
+                            repository=repository,
+                            repository_id=repository_id,
+                            git_dir=root / ".git",
+                            base_sha=base,
+                            head_sha=head,
+                            token="synthetic-read-token",
+                        )
+
+            ambiguous_associations = (
+                [],
+                [
+                    *associated,
+                    {"number": pull_number + 1, "node_id": "PR_other"},
+                ],
+            )
+            for associated_pulls in ambiguous_associations:
+                with (
+                    self.subTest(associated_count=len(associated_pulls)),
+                    mock.patch.object(
+                        CI_MODULE,
+                        "github_json",
+                        side_effect=[
+                            api_payload,
+                            associated_pulls,
+                            [],
+                            associated_pulls,
+                        ],
+                    ),
+                    self.assertRaisesRegex(
+                        CI_MODULE.GateError,
+                        "missing or ambiguous",
+                    ),
+                ):
+                    CI_MODULE.verify_default_github_commit(
+                        repository=repository,
+                        repository_id=repository_id,
+                        git_dir=root / ".git",
+                        base_sha=base,
+                        head_sha=head,
+                        token="synthetic-read-token",
+                    )
+
+            changed_association = [
+                *associated,
+                {"number": pull_number + 1, "node_id": "PR_inserted"},
+            ]
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    side_effect=[
+                        api_payload,
+                        associated,
+                        [],
+                        associated,
+                        pull_payload,
+                        associated,
+                        [],
+                        changed_association,
+                    ],
+                ),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "missing or ambiguous|association changed|changed during collection",
+                ),
+            ):
+                CI_MODULE.verify_default_github_commit(
+                    repository=repository,
+                    repository_id=repository_id,
+                    git_dir=root / ".git",
+                    base_sha=base,
+                    head_sha=head,
+                    token="synthetic-read-token",
+                )
 
     def test_only_trusted_base_is_checked_out_and_actions_are_pinned(self) -> None:
         action_steps = [step for step in workflow_job()["steps"] if "uses" in step]
@@ -2417,6 +2822,26 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 side_effect=([{"number": 16}], [{"number": 99}]),
             ),
             self.assertRaisesRegex(CI_MODULE.GateError, "not terminal"),
+        ):
+            CI_MODULE.github_paginated_list(
+                repository=TEST_REPOSITORY,
+                route="/commits/" + "a" * 40 + "/pulls",
+                token="read-only",
+                label="synthetic pull",
+            )
+
+        first_page = [{"number": 16, "node_id": "PR_original"}]
+        changed_first_page = [
+            {"number": 99, "node_id": "PR_inserted"},
+            *first_page,
+        ]
+        with (
+            mock.patch.object(
+                CI_MODULE,
+                "github_json",
+                side_effect=(first_page, [], changed_first_page),
+            ),
+            self.assertRaisesRegex(CI_MODULE.GateError, "changed during collection"),
         ):
             CI_MODULE.github_paginated_list(
                 repository=TEST_REPOSITORY,

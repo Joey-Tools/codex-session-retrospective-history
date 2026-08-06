@@ -98,7 +98,7 @@ BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH = Path(
     ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
 )
 BOOTSTRAP_V2_LEGACY_CI_BLOB_OID = "145e8de8a055794b85af6461a69e50715913ea6f"
-BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID = "447169b470b9b6fb16c7fc1832253389c4c7f410"
+BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID = "cf4bb43951954a2bca5603398baec84ff35f9cf0"
 BOOTSTRAP_SECURITY_WORKFLOW_PATHS = frozenset(
     {BOOTSTRAP_WORKFLOW_PATH, BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH}
 )
@@ -120,7 +120,7 @@ def _trusted_sha256_values_hex(values: tuple[int, ...]) -> str:
 
 INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     BOOTSTRAP_V2_CI_PATH: (
-        "1fd0cf45cb88a94581acd0c05bac77d8c334fd205b25a94f2d1408996c40900a"
+        "bc1db63b7f477b5e87f0996d008c2f8951ee5c5ee518f6e22801870357fab92a"
     ),
     Path(".github/bootstrap/session-retrospective-v2-permanent-ci.yml"): bytes(
         (
@@ -169,109 +169,109 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     Path("scripts/trusted_history_ci.py"): bytes(
         (
             0xA8,
-            0xBA,
-            0x2D,
-            0x19,
-            0xA3,
-            0x93,
-            0x81,
-            0xC3,
-            0xD4,
-            0x62,
+            0x50,
+            0xD3,
+            0x3E,
             0x14,
-            0xEE,
-            0x4C,
-            0x71,
-            0x22,
-            0x16,
-            0xA4,
-            0xBB,
-            0x11,
-            0x1F,
-            0x62,
-            0x5A,
-            0xF7,
-            0x14,
+            0xD1,
+            0xF6,
+            0xE2,
             0x3F,
-            0x9C,
-            0xBC,
-            0xDD,
-            0x4D,
-            0x33,
-            0xE6,
-            0xDE,
+            0x3D,
+            0xBD,
+            0x58,
+            0x25,
+            0x9F,
+            0x0F,
+            0x0B,
+            0x76,
+            0x0A,
+            0x24,
+            0x5E,
+            0x19,
+            0x1A,
+            0xAA,
+            0xB4,
+            0x62,
+            0x13,
+            0xD5,
+            0xFB,
+            0xCA,
+            0x7B,
+            0xD0,
+            0xDF,
         )
     ).hex(),
     Path("scripts/validate_retained_history.py"): bytes(
         (
-            0x60,
-            0xEA,
-            0x93,
-            0x4E,
-            0x01,
-            0x7B,
-            0x49,
-            0x8A,
-            0x24,
-            0x33,
-            0x4F,
-            0x2B,
-            0x7F,
-            0x31,
-            0x00,
-            0xB2,
-            0x48,
+            0x76,
+            0x35,
+            0x5C,
             0xAF,
-            0x0A,
-            0x8A,
-            0x7D,
+            0x85,
+            0x16,
+            0x4D,
+            0xC1,
+            0x8C,
+            0xEB,
+            0x17,
+            0xAB,
             0xE8,
-            0x04,
-            0xF8,
-            0xD0,
-            0x7C,
-            0x1D,
-            0x4A,
-            0xCB,
-            0x5F,
-            0x81,
-            0x86,
+            0x22,
+            0x08,
+            0x3F,
+            0x2D,
+            0x35,
+            0xAB,
+            0xAE,
+            0xB7,
+            0xA5,
+            0xB0,
+            0xBA,
+            0x47,
+            0xC1,
+            0xA1,
+            0xE0,
+            0xD9,
+            0x52,
+            0xBF,
+            0x2F,
         )
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
         (
-            0x93,
-            0x87,
-            0xD8,
-            0xD9,
-            0x48,
-            0x48,
-            0xED,
-            0x2F,
-            0xEF,
-            0xF3,
-            0x36,
-            0x7C,
-            0xD1,
-            0x2A,
+            0x94,
+            0x01,
+            0xEE,
+            0x50,
+            0xAD,
+            0x54,
             0x10,
-            0x16,
-            0x65,
-            0x5A,
-            0x30,
-            0x1F,
-            0x2A,
-            0x97,
+            0x15,
+            0x6C,
+            0x83,
+            0x0B,
+            0x44,
+            0x8B,
+            0x0B,
+            0xF8,
+            0x43,
+            0x7C,
             0x6E,
-            0x86,
-            0x9A,
-            0x3F,
-            0xC8,
-            0x97,
-            0xB4,
-            0xD9,
-            0xE6,
+            0xF2,
+            0xC6,
+            0xD2,
+            0x74,
             0xF5,
+            0xF3,
+            0xAC,
+            0xB6,
+            0xBD,
+            0x08,
+            0xFC,
+            0x41,
+            0x93,
+            0xC4,
         )
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
@@ -376,7 +376,7 @@ BOOTSTRAP_V2_PUBLIC_KEY_SHA256 = {
 }
 BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256 = {
     BOOTSTRAP_V2_CI_PATH: (
-        "9672c13cf5466e2884fc01617e0be64194382f6de56ace2992ae82681429fbda"
+        "0134a3638edb3283afa51f74ba7f995454986c75f9e1c9098c96e940f126a3b4"
     ),
     Path("README.md"): (
         "e4ee136a3770d0ea019d7d389205ba4ed203a739ea9b2591caf8f2a2ee48e421"
@@ -470,74 +470,74 @@ BOOTSTRAP_V2_TRUSTED_DECODED_RISK_VALUES_SHA256 = {
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0xBA,
-            0x72,
-            0x2F,
-            0xC9,
-            0xED,
-            0x01,
-            0xFE,
-            0x60,
-            0x9D,
-            0xDE,
-            0x52,
-            0xB2,
-            0xBC,
-            0x8D,
-            0xA5,
-            0x81,
-            0x24,
-            0x52,
-            0x37,
-            0x83,
-            0x4E,
-            0x69,
-            0xEE,
-            0x1B,
-            0x0F,
-            0xBB,
-            0x78,
-            0x0F,
-            0xDA,
+            0x12,
+            0x5A,
+            0x82,
+            0x7F,
+            0xC7,
+            0xF6,
+            0x87,
             0x05,
-            0xD8,
-            0x84,
+            0x20,
+            0x20,
+            0x8F,
+            0x19,
+            0x99,
+            0x74,
+            0x11,
+            0xE8,
+            0xCF,
+            0x4B,
+            0xB8,
+            0xC3,
+            0x6B,
+            0x5F,
+            0x15,
+            0xAE,
+            0x82,
+            0xF4,
+            0x37,
+            0x44,
+            0x7D,
+            0x1D,
+            0xF6,
+            0xF4,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0xAD,
-            0xD3,
-            0x78,
-            0xB4,
-            0xC5,
-            0xB7,
-            0x0F,
-            0x56,
-            0xF2,
-            0xD2,
-            0x0A,
-            0x50,
-            0xE1,
             0xF4,
-            0xA6,
-            0x7B,
-            0x96,
-            0x53,
+            0x54,
+            0xE9,
+            0x61,
+            0x24,
+            0x8C,
+            0x6A,
+            0x6A,
+            0xF3,
+            0xE8,
+            0x01,
+            0x69,
+            0x58,
+            0x2E,
             0x67,
-            0x3D,
-            0x03,
-            0x4B,
-            0x5A,
-            0x6E,
-            0x8E,
-            0x0D,
-            0xEF,
-            0xFA,
-            0xFF,
-            0xF7,
+            0xAB,
+            0x2A,
             0x77,
-            0x8A,
+            0x82,
+            0x2C,
+            0xCC,
+            0xB4,
+            0x4D,
+            0x53,
+            0x31,
+            0xD2,
+            0x88,
+            0x08,
+            0x0D,
+            0xA8,
+            0xD0,
+            0x3B,
         )
     ),
 }
@@ -619,9 +619,7 @@ HISTORY_V2_GITHUB_SQUASH_IDENTITY_RE = re.compile(
     rb"(?P<timezone>[+-](?:0[0-9]|1[0-4])[0-5][0-9])$"
 )
 HISTORY_V2_GITHUB_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-HISTORY_V2_GITHUB_LOGIN_RE = re.compile(
-    r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
-)
+HISTORY_V2_DEFAULT_BRANCH = "master"
 HISTORY_V2_GITHUB_COMMITTER_IDENTITY = b"GitHub <noreply@github.com>"
 HISTORY_V2_GITHUB_SQUASH_RECEIPT_KIND = (
     "retrospective-history-v2-github-squash-verification"
@@ -13382,6 +13380,7 @@ def validate_history_v2_github_squash_receipt(
     *,
     commit: HistoryV2GitHubSquashCommit,
     repository: str,
+    repository_id: int,
     before_rev: str,
     head_rev: str,
 ) -> None:
@@ -13396,19 +13395,27 @@ def validate_history_v2_github_squash_receipt(
         "signature_sha256",
         "author_identity_sha256",
         "committer_identity_sha256",
-        "github_author_login",
         "github_committer_login",
         "verification_reason",
         "verified_at",
+        "pull_request_number",
+        "pull_request_node_identity_sha256",
+        "repository_identity_sha256",
+        "pull_request_provenance_sha256",
+        "pull_request_merged_at",
     }
-    if not isinstance(payload, dict) or set(payload) != expected_keys:
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != expected_keys
+        or type(payload.get("schema_version")) is not int
+    ):
         raise ValueError(
             "history-v2 GitHub squash verification receipt shape is invalid"
         )
     if (
         not isinstance(repository, str)
         or HISTORY_V2_GITHUB_REPOSITORY_RE.fullmatch(repository) is None
-        or payload.get("schema_version") != 1
+        or payload.get("schema_version") != 2
         or payload.get("kind") != HISTORY_V2_GITHUB_SQUASH_RECEIPT_KIND
         or payload.get("repository") != repository
         or payload.get("base_sha") != before_rev
@@ -13426,16 +13433,63 @@ def validate_history_v2_github_squash_receipt(
         raise ValueError(
             "history-v2 GitHub squash verification receipt differs from the exact commit"
         )
-    author_login = payload.get("github_author_login")
     verified_at = payload.get("verified_at")
+    pull_request_number = payload.get("pull_request_number")
+    pull_request_node_identity_sha256 = payload.get(
+        "pull_request_node_identity_sha256"
+    )
+    repository_identity_sha256 = payload.get("repository_identity_sha256")
+    pull_request_provenance_sha256 = payload.get(
+        "pull_request_provenance_sha256"
+    )
+    pull_request_merged_at = payload.get("pull_request_merged_at")
     if (
-        not isinstance(author_login, str)
-        or HISTORY_V2_GITHUB_LOGIN_RE.fullmatch(author_login) is None
-        or not isinstance(verified_at, str)
+        not isinstance(verified_at, str)
         or TIMESTAMP_RE.fullmatch(verified_at) is None
+        or type(pull_request_number) is not int
+        or pull_request_number <= 0
+        or type(repository_id) is not int
+        or repository_id <= 0
+        or not isinstance(pull_request_node_identity_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", pull_request_node_identity_sha256) is None
+        or not isinstance(repository_identity_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", repository_identity_sha256) is None
+        or not isinstance(pull_request_provenance_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", pull_request_provenance_sha256) is None
+        or not isinstance(pull_request_merged_at, str)
+        or TIMESTAMP_RE.fullmatch(pull_request_merged_at) is None
     ):
         raise ValueError(
-            "history-v2 GitHub squash verification receipt identity is invalid"
+            "history-v2 GitHub squash verification receipt provenance is invalid"
+        )
+    expected_repository_identity = hashlib.sha256(
+        f"{repository_id}:{repository}".encode("utf-8")
+    ).hexdigest()
+    expected_provenance = {
+        "base_ref": HISTORY_V2_DEFAULT_BRANCH,
+        "base_repository": repository,
+        "base_repository_id": repository_id,
+        "base_sha": before_rev,
+        "head_repository": repository,
+        "head_repository_id": repository_id,
+        "merge_commit_sha": head_rev,
+        "merged_at": pull_request_merged_at,
+        "node_identity_sha256": pull_request_node_identity_sha256,
+        "number": pull_request_number,
+    }
+    expected_provenance_sha256 = hashlib.sha256(
+        json.dumps(
+            expected_provenance,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if (
+        repository_identity_sha256 != expected_repository_identity
+        or pull_request_provenance_sha256 != expected_provenance_sha256
+    ):
+        raise ValueError(
+            "history-v2 GitHub squash verification receipt provenance differs"
         )
 
 
@@ -14640,6 +14694,38 @@ def validate_fixed_head_snapshot(
     return validate_history_v2_tree(root)
 
 
+def validate_history_v2_generic_append_only_changes(
+    root: Path,
+    *,
+    base_rev: str,
+    head_rev: str,
+    changed: list[tuple[str, Path]],
+    work_budget: HistoryV2WorkBudget,
+    rewrite_error: str,
+    append_error: str,
+) -> None:
+    for status, relative in changed:
+        jsonl_kind = allowed_retained_jsonl_artifact(relative)
+        if status == "D" or (status == "M" and jsonl_kind is None):
+            raise ValueError(rewrite_error)
+        if status != "M":
+            continue
+        base_value = history_v2_read_path_value(
+            root,
+            base_rev,
+            relative,
+            work_budget=work_budget,
+        )
+        head_value = history_v2_read_path_value(
+            root,
+            head_rev,
+            relative,
+            work_budget=work_budget,
+        )
+        if len(head_value) <= len(base_value) or not head_value.startswith(base_value):
+            raise ValueError(append_error)
+
+
 def validate_append_only_event_range(
     root: Path,
     before_rev: str,
@@ -14690,6 +14776,19 @@ def validate_append_only_event_range(
         )
         if classify_history_v2_transaction(changed) != "publication":
             raise ValueError("history-v2 prospective squash is not a publication")
+        validate_history_v2_generic_append_only_changes(
+            root,
+            base_rev=before_rev,
+            head_rev=head_rev,
+            changed=changed,
+            work_budget=budget,
+            rewrite_error=(
+                "history-v2 prospective squash rewrites a retained artifact"
+            ),
+            append_error=(
+                "history-v2 prospective JSONL update is not strict append-only"
+            ),
+        )
         if any(history_v2_run_artifact(relative) for _status, relative in changed):
             return validate_history_v2_domain_default_range(
                 root,
@@ -14698,31 +14797,6 @@ def validate_append_only_event_range(
                 changed=changed,
                 work_budget=budget,
             )
-        for status, relative in changed:
-            jsonl_kind = allowed_retained_jsonl_artifact(relative)
-            if status == "M" and jsonl_kind is None:
-                raise ValueError(
-                    "history-v2 prospective squash rewrites a retained artifact"
-                )
-            if status == "M":
-                base_value = history_v2_read_path_value(
-                    root,
-                    before_rev,
-                    relative,
-                    work_budget=budget,
-                )
-                head_value = history_v2_read_path_value(
-                    root,
-                    head_rev,
-                    relative,
-                    work_budget=budget,
-                )
-                if len(head_value) <= len(base_value) or not head_value.startswith(
-                    base_value
-                ):
-                    raise ValueError(
-                        "history-v2 prospective JSONL update is not strict append-only"
-                    )
     except (OSError, UnicodeError, ValueError) as exc:
         return [safe_exception_message(exc)]
     return []
@@ -14780,6 +14854,7 @@ def validate_history_v2_bootstrap_transaction(
     work_budget: HistoryV2WorkBudget | None = None,
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
+    repository_id: int | None = None,
 ) -> dict[str, Any]:
     root, base_rev, head_rev = validated_history_v2_range_checkout(
         root,
@@ -14818,6 +14893,7 @@ def validate_history_v2_bootstrap_transaction(
             head_rev=head_rev,
             github_commit_receipt=github_commit_receipt,
             repository=repository,
+            repository_id=repository_id,
         )
     budget.add_parent_edges(len(parents))
     if parents != (base_rev,):
@@ -14916,6 +14992,7 @@ def history_v2_single_parent_squash_coordinates(
     head_rev: str,
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
+    repository_id: int | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     before_rev = canonical_history_v2_oid(
         before_rev,
@@ -14943,7 +15020,11 @@ def history_v2_single_parent_squash_coordinates(
         max_bytes=HISTORY_V2_MAX_COMMIT_BYTES,
     )
     if b"\ngpgsig " in b"\n" + raw_commit.partition(b"\n\n")[0]:
-        if github_commit_receipt is None or repository is None:
+        if (
+            github_commit_receipt is None
+            or repository is None
+            or repository_id is None
+        ):
             raise ValueError(
                 "history-v2 GitHub squash commit lacks exact provider verification"
             )
@@ -14955,12 +15036,16 @@ def history_v2_single_parent_squash_coordinates(
             github_commit_receipt,
             commit=parsed,
             repository=repository,
+            repository_id=repository_id,
             before_rev=before_rev,
             head_rev=head_rev,
         )
         head_tree_oid, parents = parsed.tree_oid, parsed.parents
     else:
-        if github_commit_receipt is not None or repository is not None:
+        if any(
+            value is not None
+            for value in (github_commit_receipt, repository, repository_id)
+        ):
             raise ValueError("history-v2 default squash is not GitHub provider-signed")
         head_tree_oid, parents = parse_history_v2_unsigned_squash_commit(
             raw_commit,
@@ -14989,6 +15074,7 @@ def validated_history_v2_default_event_checkout(
     work_budget: HistoryV2WorkBudget | None = None,
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
+    repository_id: int | None = None,
 ) -> tuple[Path, str, str]:
     if any(
         type(value) is not bool
@@ -15022,6 +15108,7 @@ def validated_history_v2_default_event_checkout(
         head_rev=head_rev,
         github_commit_receipt=github_commit_receipt,
         repository=repository,
+        repository_id=repository_id,
     )
     if work_budget is not None:
         work_budget.authorized_domain_revisions.add((root, before_rev))
@@ -15036,6 +15123,7 @@ def validate_history_v2_actual_squash_transaction(
     work_budget: HistoryV2WorkBudget | None = None,
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
+    repository_id: int | None = None,
 ) -> dict[str, Any]:
     root, before_rev, head_rev = validated_history_v2_range_checkout(
         root,
@@ -15049,6 +15137,7 @@ def validate_history_v2_actual_squash_transaction(
         head_rev=head_rev,
         github_commit_receipt=github_commit_receipt,
         repository=repository,
+        repository_id=repository_id,
     )
     budget.authorized_domain_revisions.add((root, before_rev))
     changed = parse_history_v2_changed_paths(
@@ -15066,6 +15155,20 @@ def validate_history_v2_actual_squash_transaction(
         history_v2_run_artifact(relative)
         for _status, relative in changed
     )
+    if role == "publication":
+        validate_history_v2_generic_append_only_changes(
+            root,
+            base_rev=before_rev,
+            head_rev=head_rev,
+            changed=changed,
+            work_budget=budget,
+            rewrite_error=(
+                "history-v2 default squash deletes or rewrites retained history"
+            ),
+            append_error=(
+                "history-v2 default JSONL update is not strict append-only"
+            ),
+        )
     if has_v2_runs:
         domain_issues = validate_history_v2_domain_default_range(
             root,
@@ -15076,34 +15179,6 @@ def validate_history_v2_actual_squash_transaction(
         )
         if domain_issues:
             raise ValueError(domain_issues[0])
-    else:
-        for status, relative in changed:
-            if role == "admin":
-                continue
-            jsonl_kind = allowed_retained_jsonl_artifact(relative)
-            if status == "D" or (status == "M" and jsonl_kind is None):
-                raise ValueError(
-                    "history-v2 default squash deletes or rewrites retained history"
-                )
-            if status == "M":
-                base_value = history_v2_read_path_value(
-                    root,
-                    before_rev,
-                    relative,
-                    work_budget=budget,
-                )
-                head_value = history_v2_read_path_value(
-                    root,
-                    head_rev,
-                    relative,
-                    work_budget=budget,
-                )
-                if len(head_value) <= len(base_value) or not head_value.startswith(
-                    base_value
-                ):
-                    raise ValueError(
-                        "history-v2 default JSONL update is not strict append-only"
-                    )
     return {
         "schema_version": 1,
         "kind": "retrospective-history-v2-default-transaction",
@@ -15130,6 +15205,7 @@ def validate_history_v2_default_transaction(
     work_budget: HistoryV2WorkBudget | None = None,
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
+    repository_id: int | None = None,
 ) -> dict[str, Any]:
     root, before_rev, head_rev = validated_history_v2_default_event_checkout(
         root,
@@ -15141,6 +15217,7 @@ def validate_history_v2_default_transaction(
         work_budget=work_budget,
         github_commit_receipt=github_commit_receipt,
         repository=repository,
+        repository_id=repository_id,
     )
 
     markers = history_v2_bootstrap_markers(root, before_rev)
@@ -15155,6 +15232,7 @@ def validate_history_v2_default_transaction(
             work_budget=work_budget,
             github_commit_receipt=github_commit_receipt,
             repository=repository,
+            repository_id=repository_id,
         )
     return validate_history_v2_actual_squash_transaction(
         root,
@@ -15163,6 +15241,7 @@ def validate_history_v2_default_transaction(
         work_budget=work_budget,
         github_commit_receipt=github_commit_receipt,
         repository=repository,
+        repository_id=repository_id,
     )
 
 
@@ -15546,6 +15625,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-rev")
     parser.add_argument("--head-rev")
     parser.add_argument("--repository")
+    parser.add_argument("--repository-id", type=int)
     parser.add_argument("--github-commit-receipt", type=Path)
     parser.add_argument("--write-merge-plan", type=Path)
     parser.add_argument("--event-created", choices=("true", "false"))
@@ -15574,6 +15654,7 @@ def main(argv: list[str] | None = None) -> int:
             or args.event_deleted is not None
             or args.event_forced is not None
             or args.repository is not None
+            or args.repository_id is not None
             or args.github_commit_receipt is not None
         ):
             parser.error(
@@ -15595,6 +15676,7 @@ def main(argv: list[str] | None = None) -> int:
             or args.head_rev is None
             or args.write_merge_plan is None
             or args.repository is not None
+            or args.repository_id is not None
             or args.github_commit_receipt is not None
         ):
             parser.error(
@@ -15626,10 +15708,11 @@ def main(argv: list[str] | None = None) -> int:
             or args.event_deleted is None
             or args.event_forced is None
             or args.repository is None
+            or args.repository_id is None
             or args.github_commit_receipt is None
         ):
             parser.error(
-                "history-v2-actual-default-squash mode requires --root, --base-rev, --head-rev, --repository, --github-commit-receipt, and every event flag"
+                "history-v2-actual-default-squash mode requires --root, --base-rev, --head-rev, --repository, --repository-id, --github-commit-receipt, and every event flag"
             )
         root = Path(args.root or ".")
         work_budget = HistoryV2WorkBudget()
@@ -15647,6 +15730,7 @@ def main(argv: list[str] | None = None) -> int:
                 work_budget=work_budget,
                 github_commit_receipt=github_commit_receipt,
                 repository=args.repository,
+                repository_id=args.repository_id,
             )
         except (OSError, UnicodeError, ValueError) as exc:
             issues = [safe_exception_message(exc)]
@@ -15669,6 +15753,7 @@ def main(argv: list[str] | None = None) -> int:
                     work_budget=work_budget,
                     github_commit_receipt=github_commit_receipt,
                     repository=args.repository,
+                    repository_id=args.repository_id,
                 )
             except (OSError, UnicodeError, ValueError) as exc:
                 issues.append(safe_exception_message(exc))
@@ -15683,6 +15768,7 @@ def main(argv: list[str] | None = None) -> int:
             or args.event_deleted is not None
             or args.event_forced is not None
             or args.repository is not None
+            or args.repository_id is not None
             or args.github_commit_receipt is not None
         ):
             parser.error("ordinary mode accepts --root only")

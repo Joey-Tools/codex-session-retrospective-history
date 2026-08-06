@@ -119,7 +119,7 @@ BOOTSTRAP_CI_TEMPLATE_PATH = (
     ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
 )
 LEGACY_CI_BLOB_OID = "145e8de8a055794b85af6461a69e50715913ea6f"
-PERMANENT_CI_BLOB_OID = "447169b470b9b6fb16c7fc1832253389c4c7f410"
+PERMANENT_CI_BLOB_OID = "cf4bb43951954a2bca5603398baec84ff35f9cf0"
 _TRUSTED_VALIDATOR_MODULE: Any | None = None
 _FORBIDDEN_CANDIDATE_COMPONENTS = frozenset(
     {
@@ -1010,12 +1010,17 @@ def canonical_github_timestamp(value: Any, label: str) -> tuple[str, dt.datetime
 def verify_default_github_commit(
     *,
     repository: str,
+    repository_id: int,
     git_dir: Path,
     base_sha: str,
     head_sha: str,
     token: str,
 ) -> dict[str, Any]:
     repository = canonical_repository(repository)
+    repository_id = canonical_positive_integer(
+        repository_id,
+        "default event repository ID",
+    )
     base_sha = canonical_oid(base_sha, "default event base")
     head_sha = canonical_oid(head_sha, "default event head")
     if base_sha == head_sha:
@@ -1116,7 +1121,7 @@ def verify_default_github_commit(
         raise GateError(
             "GitHub verification differs from the exact local squash commit"
         )
-    author_login = canonical_github_login(
+    canonical_github_login(
         author.get("login"),
         "GitHub default commit author",
     )
@@ -1126,8 +1131,15 @@ def verify_default_github_commit(
     )
     if committer_login != "web-flow":
         raise GateError("GitHub default commit provider identity is invalid")
+    pull_evidence = verify_default_merged_pull_request(
+        repository=repository,
+        repository_id=repository_id,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        token=token,
+    )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": GITHUB_SQUASH_RECEIPT_KIND,
         "repository": repository,
         "base_sha": base_sha,
@@ -1137,10 +1149,10 @@ def verify_default_github_commit(
         "signature_sha256": hashlib.sha256(parsed.signature_armor).hexdigest(),
         "author_identity_sha256": parsed.author_identity_sha256,
         "committer_identity_sha256": parsed.committer_identity_sha256,
-        "github_author_login": author_login,
         "github_committer_login": committer_login,
         "verification_reason": "valid",
         "verified_at": verified_at_text,
+        **pull_evidence,
     }
 
 
@@ -1224,6 +1236,7 @@ def github_paginated_list(
     label: str,
 ) -> list[Any]:
     items: list[Any] = []
+    first_page_bytes: bytes | None = None
     terminal_page = 0
     for page in range(1, MAX_GITHUB_PAGES + 1):
         page_items = github_json(
@@ -1234,6 +1247,8 @@ def github_paginated_list(
         )
         if not isinstance(page_items, list) or len(page_items) > GITHUB_PAGE_SIZE:
             raise GateError(f"{label} pagination is invalid")
+        if page == 1:
+            first_page_bytes = compact_json_bytes(page_items)
         items.extend(object_value(item, label) for item in page_items)
         if len(page_items) < GITHUB_PAGE_SIZE:
             terminal_page = page + 1
@@ -1250,7 +1265,141 @@ def github_paginated_list(
         != []
     ):
         raise GateError(f"{label} pagination is not terminal")
+    revalidated_first_page = github_json(
+        "GET",
+        repository,
+        _paged_route(route, 1),
+        token=token,
+    )
+    if (
+        first_page_bytes is None
+        or not isinstance(revalidated_first_page, list)
+        or len(revalidated_first_page) > GITHUB_PAGE_SIZE
+        or compact_json_bytes(revalidated_first_page) != first_page_bytes
+    ):
+        raise GateError(f"{label} pagination changed during collection")
     return items
+
+
+def default_associated_pull_request_identity(
+    associated: list[Any],
+) -> tuple[int, str]:
+    if len(associated) != 1:
+        raise GateError("default squash pull request evidence is missing or ambiguous")
+    associated_pull = object_value(
+        associated[0],
+        "default squash pull request evidence",
+    )
+    number = canonical_positive_integer(
+        associated_pull.get("number"),
+        "default squash pull request number",
+    )
+    node_id = associated_pull.get("node_id")
+    if (
+        not isinstance(node_id, str)
+        or not node_id
+        or len(node_id.encode("utf-8")) > 256
+        or any(ord(character) < 0x21 or ord(character) > 0x7E for character in node_id)
+    ):
+        raise GateError("default squash pull request node identity is invalid")
+    return number, node_id
+
+
+def verify_default_merged_pull_request(
+    *,
+    repository: str,
+    repository_id: int,
+    base_sha: str,
+    head_sha: str,
+    token: str,
+) -> dict[str, Any]:
+    encoded_sha = parse.quote(head_sha, safe="")
+    associated_before = github_paginated_list(
+        repository=repository,
+        route=f"/commits/{encoded_sha}/pulls",
+        token=token,
+        label="default squash pull request evidence",
+    )
+    number, node_id = default_associated_pull_request_identity(associated_before)
+
+    pull = object_value(
+        github_json(
+            "GET",
+            repository,
+            f"/pulls/{number}",
+            token=token,
+        ),
+        "default squash pull request",
+    )
+    base = object_value(pull.get("base"), "default squash pull request base")
+    head = object_value(pull.get("head"), "default squash pull request head")
+    base_repository = object_value(
+        base.get("repo"),
+        "default squash pull request base repository",
+    )
+    head_repository = object_value(
+        head.get("repo"),
+        "default squash pull request head repository",
+    )
+    merged_at, _merged_time = canonical_github_timestamp(
+        pull.get("merged_at"),
+        "default squash pull request merge",
+    )
+    if (
+        pull.get("number") != number
+        or pull.get("node_id") != node_id
+        or pull.get("state") != "closed"
+        or pull.get("merged") is not True
+        or pull.get("draft") is not False
+        or pull.get("merge_commit_sha") != head_sha
+        or base_repository.get("full_name") != repository
+        or base_repository.get("id") != repository_id
+        or base.get("ref") != DEFAULT_BRANCH
+        or base.get("sha") != base_sha
+        or head_repository.get("full_name") != repository
+        or head_repository.get("id") != repository_id
+    ):
+        raise GateError("default squash pull request provenance is stale or lookalike")
+    associated_after = github_paginated_list(
+        repository=repository,
+        route=f"/commits/{encoded_sha}/pulls",
+        token=token,
+        label="default squash pull request evidence revalidation",
+    )
+    if default_associated_pull_request_identity(associated_after) != (
+        number,
+        node_id,
+    ):
+        raise GateError("default squash pull request association changed")
+    node_identity_sha256 = hashlib.sha256(node_id.encode("utf-8")).hexdigest()
+    provenance = {
+        "base_ref": DEFAULT_BRANCH,
+        "base_repository": repository,
+        "base_repository_id": repository_id,
+        "base_sha": base_sha,
+        "head_repository": repository,
+        "head_repository_id": repository_id,
+        "merge_commit_sha": head_sha,
+        "merged_at": merged_at,
+        "node_identity_sha256": node_identity_sha256,
+        "number": number,
+    }
+    provenance_bytes = json.dumps(
+        provenance,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "pull_request_number": number,
+        "pull_request_node_identity_sha256": node_identity_sha256,
+        "repository_identity_sha256": hashlib.sha256(
+            f"{repository_id}:{repository}".encode("utf-8")
+        ).hexdigest(),
+        "pull_request_provenance_sha256": hashlib.sha256(
+            provenance_bytes
+        ).hexdigest(),
+        "pull_request_merged_at": merged_at,
+    }
 
 
 def _validate_predecessor_pull_request(
@@ -4686,6 +4835,11 @@ def main(argv: list[str] | None = None) -> int:
 
     verify_github_commit_parser = subparsers.add_parser("verify-default-github-commit")
     verify_github_commit_parser.add_argument("--repository", required=True)
+    verify_github_commit_parser.add_argument(
+        "--repository-id",
+        required=True,
+        type=int,
+    )
     verify_github_commit_parser.add_argument("--git-dir", required=True, type=Path)
     verify_github_commit_parser.add_argument("--base-sha", required=True)
     verify_github_commit_parser.add_argument("--head-sha", required=True)
@@ -4791,6 +4945,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "verify-default-github-commit":
             receipt = verify_default_github_commit(
                 repository=args.repository,
+                repository_id=args.repository_id,
                 git_dir=args.git_dir,
                 base_sha=args.base_sha,
                 head_sha=args.head_sha,

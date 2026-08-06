@@ -132,7 +132,7 @@ jobs:
         name: Set up trusted Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
-          python-version: "3.13"
+          python-version: "3.13.12"
           cache: false
       -
         name: Bind live PR
@@ -516,14 +516,18 @@ jobs:
     name: Post-merge default audit
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}"
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     permissions:
       contents: read
+      pull-requests: read
     env:
+      DEFAULT_AUTHORITY_ROOT: "${{ github.workspace }}/candidate-default"
       EVENT_BEFORE_SHA: "${{ github.event.before }}"
       EVENT_CREATED: "${{ github.event.created }}"
       EVENT_DELETED: "${{ github.event.deleted }}"
       EVENT_FORCED: "${{ github.event.forced }}"
+      EVENT_REPOSITORY_ID: "${{ github.repository_id }}"
+      TRUSTED_BASELINE_ROOT: "${{ github.workspace }}/trusted-default"
     steps:
       -
         name: Reject unsupported default event shapes
@@ -552,7 +556,21 @@ jobs:
         with:
           repository: "${{ github.repository }}"
           ref: "${{ github.sha }}"
+          path: candidate-default
           fetch-depth: 65
+          clean: true
+          lfs: false
+          submodules: false
+          set-safe-directory: false
+          persist-credentials: false
+      -
+        name: Checkout exact trusted B0
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: "${{ github.repository }}"
+          ref: "${{ github.event.before }}"
+          path: trusted-default
+          fetch-depth: 1
           clean: true
           lfs: false
           submodules: false
@@ -562,34 +580,32 @@ jobs:
         name: Set up trusted Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
-          python-version: "3.13"
+          python-version: "3.13.12"
           cache: false
       -
-        name: Install locked default dependencies
+        name: Bind trusted control Python
         shell: bash
         run: |
           set -euo pipefail
-          ulimit -f 8192
-          ulimit -n 256
-          TRUSTED_VENV="$RUNNER_TEMP/default-history-ci/venv"
-          TRUSTED_HOME="$RUNNER_TEMP/default-history-ci/home"
-          install -d -m 700 "$TRUSTED_HOME"
-          python -I -m venv "$TRUSTED_VENV"
-          output="$RUNNER_TEMP/default-history-ci/pip.log"
-          if ! timeout --signal=TERM --kill-after=5s 180s \
-              env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
-                HOME="$TRUSTED_HOME" \
-                PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1 \
-                "$TRUSTED_VENV/bin/python" -I -m pip install \
-                  --isolated --no-cache-dir --no-input --only-binary=:all: \
-                  --require-hashes --requirement requirements-v2.txt \
-                  --quiet >"$output" 2>&1; then
-            tail -n 80 "$output" >&2
+          control_python="$(command -v python)"
+          case "$control_python" in
+            /*) ;;
+            *)
+              echo "Trusted control Python is not absolute." >&2
+              exit 1
+              ;;
+          esac
+          [ -x "$control_python" ]
+          control_version="$("$control_python" -I -B --version 2>&1)"
+          if [ "$control_version" != "Python 3.13.12" ]; then
+            echo "Trusted control Python version is invalid." >&2
             exit 1
           fi
+          control_home="$RUNNER_TEMP/default-history-ci/control-home"
+          install -d -m 700 "$control_home"
           {
-            printf 'TRUSTED_HOME=%s\n' "$TRUSTED_HOME"
-            printf 'TRUSTED_PYTHON=%s\n' "$TRUSTED_VENV/bin/python"
+            printf 'CONTROL_HOME=%s\n' "$control_home"
+            printf 'CONTROL_PYTHON=%s\n' "$control_python"
           } >>"$GITHUB_ENV"
       -
         name: Verify exact GitHub squash commit
@@ -603,15 +619,17 @@ jobs:
           ulimit -n 256
           github_commit_receipt="$RUNNER_TEMP/default-history-ci/github-commit-receipt.json"
           if ! timeout --signal=TERM --kill-after=5s 120s \
-              /usr/bin/env -i HOME="$TRUSTED_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+              /usr/bin/env -i HOME="$CONTROL_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
                 PATH="$PATH" GH_TOKEN="$GH_TOKEN" \
                 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
                 GIT_OPTIONAL_LOCKS=0 PYTHONDONTWRITEBYTECODE=1 \
                 PYTHONHASHSEED=0 \
-                "$TRUSTED_PYTHON" -I -B scripts/trusted_history_ci.py \
+                "$CONTROL_PYTHON" -I -B \
+                  "$TRUSTED_BASELINE_ROOT/scripts/trusted_history_ci.py" \
                   verify-default-github-commit \
                   --repository "$GITHUB_REPOSITORY" \
-                  --git-dir .git \
+                  --repository-id "$EVENT_REPOSITORY_ID" \
+                  --git-dir "$DEFAULT_AUTHORITY_ROOT/.git" \
                   --base-sha "$EVENT_BEFORE_SHA" \
                   --head-sha "$GITHUB_SHA" \
                   --output "$github_commit_receipt"; then
@@ -627,8 +645,8 @@ jobs:
           trusted_gnupg="$RUNNER_TEMP/default-history-ci/gnupg"
           install -d -m 700 "$trusted_gnupg"
           key_files=(
-            retrospective-history-v2-admin-public.asc
-            retrospective-history-v2-publisher.asc
+            "$TRUSTED_BASELINE_ROOT/retrospective-history-v2-admin-public.asc"
+            "$TRUSTED_BASELINE_ROOT/retrospective-history-v2-publisher.asc"
           )
           for key_file in "${key_files[@]}"; do
             records="$(
@@ -662,23 +680,41 @@ jobs:
           ulimit -t 300
           output="$RUNNER_TEMP/default-history-ci/validation.log"
           if ! timeout --signal=TERM --kill-after=5s 600s \
-              env -i HOME="$TRUSTED_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+              env -i HOME="$CONTROL_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
                 PATH="$PATH" GNUPGHOME="$TRUSTED_GNUPGHOME" \
                 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
                 GIT_OPTIONAL_LOCKS=0 PYTHONDONTWRITEBYTECODE=1 \
                 PYTHONHASHSEED=0 \
-                "$TRUSTED_PYTHON" -I scripts/validate_retained_history.py \
+                "$CONTROL_PYTHON" -I -B \
+                  "$TRUSTED_BASELINE_ROOT/scripts/validate_retained_history.py" \
                   --mode history-v2-actual-default-squash \
-                  --root . \
+                  --root "$DEFAULT_AUTHORITY_ROOT" \
                   --base-rev "$EVENT_BEFORE_SHA" \
                   --head-rev "$GITHUB_SHA" \
                   --repository "$GITHUB_REPOSITORY" \
+                  --repository-id "$EVENT_REPOSITORY_ID" \
                   --github-commit-receipt "$GITHUB_COMMIT_RECEIPT" \
                   --event-created "$EVENT_CREATED" \
                   --event-deleted "$EVENT_DELETED" \
                   --event-forced "$EVENT_FORCED" \
                   >"$output" 2>&1; then
-            tail -n 120 "$output" >&2
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+      -
+        name: Remove temporary provider receipt
+        if: "${{ always() }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/default-history-ci/github-commit-receipt.json"
+          if [ -e "$receipt" ] || [ -L "$receipt" ]; then
+            rm -f -- "$receipt"
+          fi
+          if [ -e "$receipt" ] || [ -L "$receipt" ]; then
+            echo "Temporary provider receipt cleanup failed." >&2
             exit 1
           fi
       -
@@ -692,9 +728,10 @@ jobs:
           pycache_root="$RUNNER_TEMP/default-history-ci/pycache"
           test_home="$RUNNER_TEMP/default-history-ci/test-home"
           install -d -m 700 "$pycache_root" "$test_home"
-          "$TRUSTED_PYTHON" -I -B scripts/trusted_history_ci.py \
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_BASELINE_ROOT/scripts/trusted_history_ci.py" \
             prepare-default-execution \
-            --authority-root . \
+            --authority-root "$DEFAULT_AUTHORITY_ROOT" \
             --execution-root "$execution_root" \
             --expected-head "$GITHUB_SHA" \
             --output "$authority_receipt"
@@ -708,6 +745,31 @@ jobs:
             printf 'DEFAULT_PYCACHE_ROOT=%s\n' "$pycache_root"
             printf 'DEFAULT_TEST_HOME=%s\n' "$test_home"
           } >>"$GITHUB_ENV"
+      -
+        name: Install validated default test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 8192
+          ulimit -n 256
+          test_venv="$RUNNER_TEMP/default-history-ci/test-venv"
+          "$CONTROL_PYTHON" -I -B -m venv "$test_venv"
+          output="$RUNNER_TEMP/default-history-ci/pip.log"
+          if ! timeout --signal=TERM --kill-after=5s 180s \
+              env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+                HOME="$DEFAULT_TEST_HOME" \
+                PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1 \
+                "$test_venv/bin/python" -I -m pip install \
+                  --isolated --no-cache-dir --no-input --only-binary=:all: \
+                  --require-hashes \
+                  --requirement "$DEFAULT_EXECUTION_ROOT/requirements-v2.txt" \
+                  --quiet >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+          printf 'TEST_PYTHON=%s\n' "$test_venv/bin/python" >>"$GITHUB_ENV"
       -
         name: Run tests after dropping UID and cwd
         shell: bash
@@ -725,9 +787,11 @@ jobs:
                   GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
                   PYTHONDONTWRITEBYTECODE=1 PYTHONHASHSEED=0 \
                   PYTHONPYCACHEPREFIX="$DEFAULT_PYCACHE_ROOT" \
-                  "$TRUSTED_PYTHON" -I -B -m compileall -q -f scripts tests \
+                  "$TEST_PYTHON" -I -B -m compileall -q -f scripts tests \
                   >"$output" 2>&1; then
-            tail -n 80 "$output" >&2
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
             exit 1
           fi
           if ! timeout --signal=TERM --kill-after=5s 900s \
@@ -738,9 +802,11 @@ jobs:
                   GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
                   PYTHONDONTWRITEBYTECODE=1 PYTHONHASHSEED=0 \
                   PYTHONPYCACHEPREFIX="$DEFAULT_PYCACHE_ROOT" \
-                  "$TRUSTED_PYTHON" -I -B -m unittest discover -s tests \
+                  "$TEST_PYTHON" -I -B -m unittest discover -s tests \
                   >"$output" 2>&1; then
-            tail -n 120 "$output" >&2
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
             exit 1
           fi
       -
@@ -749,9 +815,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$TRUSTED_PYTHON" -I -B scripts/trusted_history_ci.py \
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_BASELINE_ROOT/scripts/trusted_history_ci.py" \
             verify-default-authority \
-            --authority-root . \
+            --authority-root "$DEFAULT_AUTHORITY_ROOT" \
             --expected-head "$GITHUB_SHA" \
             --receipt "$AUTHORITY_RECEIPT"
       -

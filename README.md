@@ -72,7 +72,11 @@ explicitly ineligible. Until that producer is proven, cutover is blocked and
 the existing branch rules remain unchanged.
 
 The post-merge default audit also binds the exact local squash object to
-GitHub's read-only commit API. It requires a valid provider signature, exact
-payload and signature equality, the `web-flow` committer, and a temporary
-digest-only receipt before the offline retained-history transaction validator
-runs. Raw author or committer identities are not copied into that receipt.
+GitHub's read-only commit and pull-request APIs. Before any candidate dependency
+or Python entry point runs, the audit uses the exact `before` revision's helper,
+validator, and public keys to require a valid provider signature, exact payload
+and signature equality, the `web-flow` committer, and one uniquely associated
+merged same-repository pull request whose base and merge commit match the push.
+Only then may the validated candidate run in the disposable test tree. The
+temporary receipt retains commit and pull-request provenance digests but no raw
+author or committer identity, and an `always()` step removes it after use.

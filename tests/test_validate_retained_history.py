@@ -40,6 +40,7 @@ TRUSTED_CI_HELPER = (
 )
 FIXTURE_TIMESTAMP = 1_784_073_600
 FIXTURE_SIGNER_FINGERPRINT = "0123456789ABCDEF0123456789ABCDEF01234567"
+FIXTURE_REPOSITORY_ID = 1_246_526_548
 SCHEMA = (
     Path(__file__).resolve().parents[1]
     / "schemas"
@@ -412,9 +413,27 @@ def github_squash_receipt(
     base_sha: str,
     head_sha: str,
     repository: str = "Joey-Tools/codex-session-retrospective-history",
+    repository_id: int = FIXTURE_REPOSITORY_ID,
 ) -> dict[str, object]:
+    pull_request_number = 4
+    pull_request_merged_at = "2026-07-15T00:00:00Z"
+    node_identity_sha256 = hashlib.sha256(
+        b"PR_kwDOSyntheticReceipt"
+    ).hexdigest()
+    provenance = {
+        "base_ref": MODULE.HISTORY_V2_DEFAULT_BRANCH,
+        "base_repository": repository,
+        "base_repository_id": repository_id,
+        "base_sha": base_sha,
+        "head_repository": repository,
+        "head_repository_id": repository_id,
+        "merge_commit_sha": head_sha,
+        "merged_at": pull_request_merged_at,
+        "node_identity_sha256": node_identity_sha256,
+        "number": pull_request_number,
+    }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": MODULE.HISTORY_V2_GITHUB_SQUASH_RECEIPT_KIND,
         "repository": repository,
         "base_sha": base_sha,
@@ -424,10 +443,22 @@ def github_squash_receipt(
         "signature_sha256": hashlib.sha256(parsed.signature_armor).hexdigest(),
         "author_identity_sha256": parsed.author_identity_sha256,
         "committer_identity_sha256": parsed.committer_identity_sha256,
-        "github_author_login": "SyntheticMaintainer",
         "github_committer_login": "web-flow",
         "verification_reason": "valid",
         "verified_at": "2026-07-15T00:00:01Z",
+        "pull_request_number": pull_request_number,
+        "pull_request_node_identity_sha256": node_identity_sha256,
+        "repository_identity_sha256": hashlib.sha256(
+            f"{repository_id}:{repository}".encode("utf-8")
+        ).hexdigest(),
+        "pull_request_provenance_sha256": hashlib.sha256(
+            json.dumps(
+                provenance,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+        "pull_request_merged_at": pull_request_merged_at,
     }
 
 
@@ -4779,6 +4810,70 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(transaction["base_sha"], base)
         self.assertEqual(transaction["head_sha"], head)
 
+    def test_runs_domain_cannot_bypass_generic_append_only_validation(self) -> None:
+        cases = (
+            (
+                "retained text rewrite",
+                Path("reports/daily/2026/07/15.md"),
+                "# Rewritten retrospective\n",
+                "rewrites a retained artifact",
+                "deletes or rewrites retained history",
+            ),
+            (
+                "retained JSONL rewrite",
+                Path("data/episodes/2026/07/episodes.jsonl"),
+                json.dumps({**valid_episode(), "topic": "Rewritten topic"}) + "\n",
+                "strict append-only",
+                "strict append-only",
+            ),
+        )
+        for label, relative, replacement, prospective_error, default_error in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw) / "repo"
+                write_bootstrap_v2_candidate(root)
+                write_synthetic_history_v2_domain_sources(root)
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                initial = (
+                    json.dumps(valid_episode()) + "\n"
+                    if relative.suffix == ".jsonl"
+                    else "# Original retrospective\n"
+                )
+                target.write_text(initial, encoding="utf-8")
+                base = fixture_commit_all(root, "trusted domain base")
+
+                manifest = (
+                    root
+                    / "runs"
+                    / "daily"
+                    / "2026-07-15"
+                    / "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    / "manifest.json"
+                )
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text('{"schema_version":2}\n', encoding="utf-8")
+                target.write_text(replacement, encoding="utf-8")
+                head = fixture_commit_all(
+                    root,
+                    "Publish session retrospective v2 daily 2026-07-15 "
+                    "run_ref_v2:aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    include_signature=False,
+                )
+
+                prospective_issues = MODULE.validate_append_only_event_range(
+                    root,
+                    base,
+                    head,
+                    forced=False,
+                )
+                self.assertIn(prospective_error, "\n".join(prospective_issues))
+                with self.assertRaisesRegex(ValueError, default_error):
+                    validate_synthetic_history_v2_default_transaction(
+                        root,
+                        before_rev=base,
+                        head_rev=head,
+                    )
+
     def test_actual_default_rejects_nonparent_domain_before_execution(
         self,
     ) -> None:
@@ -4849,6 +4944,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     head,
                     "--repository",
                     "Joey-Tools/codex-session-retrospective-history",
+                    "--repository-id",
+                    str(FIXTURE_REPOSITORY_ID),
                     "--github-commit-receipt",
                     str(receipt_path),
                     "--event-created",
@@ -5593,6 +5690,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     head_rev=squash,
                     github_commit_receipt=receipt,
                     repository=repository,
+                    repository_id=FIXTURE_REPOSITORY_ID,
                 ),
                 (tree_oid, (base,)),
             )
@@ -5627,27 +5725,84 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         {**receipt, field: value},
                         commit=parsed,
                         repository=repository,
+                        repository_id=FIXTURE_REPOSITORY_ID,
                         before_rev=base,
                         head_rev=squash,
                     )
             for field, value in (
-                ("github_author_login", "bad--login-"),
                 ("verified_at", "not-a-timestamp"),
+                ("pull_request_number", True),
+                ("pull_request_number", 0),
+                ("pull_request_node_identity_sha256", "not-a-digest"),
+                ("repository_identity_sha256", "not-a-digest"),
+                ("pull_request_provenance_sha256", "not-a-digest"),
+                ("pull_request_merged_at", "not-a-timestamp"),
             ):
                 with (
                     self.subTest(field=field),
                     self.assertRaisesRegex(
                         ValueError,
-                        "identity is invalid",
+                        "provenance is invalid",
                     ),
                 ):
                     MODULE.validate_history_v2_github_squash_receipt(
                         {**receipt, field: value},
                         commit=parsed,
                         repository=repository,
+                        repository_id=FIXTURE_REPOSITORY_ID,
                         before_rev=base,
                         head_rev=squash,
                     )
+
+            for field, value in (
+                ("pull_request_number", receipt["pull_request_number"] + 1),
+                ("pull_request_node_identity_sha256", "3" * 64),
+                ("repository_identity_sha256", "4" * 64),
+                ("pull_request_provenance_sha256", "5" * 64),
+                ("pull_request_merged_at", "2026-07-15T00:00:02Z"),
+            ):
+                with (
+                    self.subTest(valid_shape_wrong_value=field),
+                    self.assertRaisesRegex(ValueError, "provenance differs"),
+                ):
+                    MODULE.validate_history_v2_github_squash_receipt(
+                        {**receipt, field: value},
+                        commit=parsed,
+                        repository=repository,
+                        repository_id=FIXTURE_REPOSITORY_ID,
+                        before_rev=base,
+                        head_rev=squash,
+                    )
+
+            with self.assertRaisesRegex(ValueError, "provenance is invalid"):
+                MODULE.validate_history_v2_github_squash_receipt(
+                    receipt,
+                    commit=parsed,
+                    repository=repository,
+                    repository_id=True,
+                    before_rev=base,
+                    head_rev=squash,
+                )
+
+            with self.assertRaisesRegex(ValueError, "shape is invalid"):
+                MODULE.validate_history_v2_github_squash_receipt(
+                    {**receipt, "schema_version": 2.0},
+                    commit=parsed,
+                    repository=repository,
+                    repository_id=FIXTURE_REPOSITORY_ID,
+                    before_rev=base,
+                    head_rev=squash,
+                )
+
+            with self.assertRaisesRegex(ValueError, "shape is invalid"):
+                MODULE.validate_history_v2_github_squash_receipt(
+                    {**receipt, "github_author_login": "synthetic-maintainer"},
+                    commit=parsed,
+                    repository=repository,
+                    repository_id=FIXTURE_REPOSITORY_ID,
+                    before_rev=base,
+                    head_rev=squash,
+                )
 
             invalid_provider_commits = (
                 {
