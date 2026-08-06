@@ -24,7 +24,7 @@ PERMANENT_CI = ROOT / ".github/bootstrap/session-retrospective-v2-permanent-ci.y
 VALIDATOR = ROOT / "scripts/validate_retained_history.py"
 CI_HELPER = ROOT / "scripts/trusted_history_ci.py"
 EXPECTED_WORKFLOW_POLICY_SHA256 = (
-    "6d980fe19b516087fbc9e87273bdce9bf57d43e758bedfe2725e2eadce789d32"
+    "177e02a02952b41a438a94f73af95c46aee1b4640a32e95e306e20ae559a6100"
 )
 CLOSED_GIT_WORKFLOW_ENV = {
     "GIT_ALTERNATE_OBJECT_DIRECTORIES": "",
@@ -1057,7 +1057,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertNotIn("merge_group", workflow["on"])
         job = workflow_job()
         self.assertEqual(job["runs-on"], "ubuntu-24.04")
-        self.assertEqual(job["timeout-minutes"], 25)
+        self.assertEqual(job["timeout-minutes"], 45)
         self.assertEqual(job["name"], "Trusted history gate")
         self.assertEqual(
             job["permissions"],
@@ -1095,6 +1095,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         )
         candidate = permanent["jobs"]["trusted_history_gate"]
         audit = permanent["jobs"]["trusted_default_audit"]
+        self.assertEqual(candidate["timeout-minutes"], 45)
         self.assertEqual(
             candidate["permissions"],
             {"contents": "read", "pull-requests": "read"},
@@ -1122,6 +1123,38 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             "${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}",
         )
         audit_steps = steps_by_name(audit)
+        candidate_steps = steps_by_name(candidate)
+        self.assertEqual(
+            candidate_steps["Set up trusted Python"]["with"],
+            {"python-version": "3.13.12", "cache": False},
+        )
+        candidate_control_binding = candidate_steps["Bind trusted control Python"][
+            "run"
+        ]
+        self.assertIn(
+            '[ "$control_version" != "Python 3.13.12" ]',
+            candidate_control_binding,
+        )
+        candidate_names = [step["name"] for step in candidate["steps"]]
+        candidate_runtime_order = (
+            "Validate B0/H candidate feedback",
+            "Prepare sealed candidate runtime tree",
+            "Install sealed candidate test dependencies",
+            "Run sealed candidate compile and tests",
+            "Verify candidate runtime authority remains pristine",
+            "Release read-only H mount",
+            "Publish gate evidence",
+        )
+        candidate_offsets = [
+            candidate_names.index(name) for name in candidate_runtime_order
+        ]
+        self.assertEqual(candidate_offsets, sorted(candidate_offsets))
+        permanent_fetch = candidate_steps["Fetch bounded graph without checkout"]["run"]
+        self.assertIn('--depth=65 "$TRUSTED_ROOT"', permanent_fetch)
+        self.assertIn(
+            "authenticated_fetch --depth=66 --filter=blob:none",
+            permanent_fetch,
+        )
         step_names = [step["name"] for step in audit["steps"]]
         ordered = (
             "Checkout exact default S",
@@ -1879,7 +1912,16 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertEqual(checkout["with"]["ref"], "${{ env.TRUSTED_SHA }}")
         self.assertIs(checkout["with"]["persist-credentials"], False)
         self.assertNotIn("candidate", checkout["with"]["path"])
-        self.assertEqual(setup["with"], {"python-version": "3.13", "cache": False})
+        self.assertEqual(
+            setup["with"],
+            {"python-version": "3.13.12", "cache": False},
+        )
+        control_binding = steps_by_name()["Bind trusted control Python"]["run"]
+        self.assertIn(
+            'control_version="$("$control_python" -I -B --version 2>&1)"',
+            control_binding,
+        )
+        self.assertIn('[ "$control_version" != "Python 3.13.12" ]', control_binding)
         for step in action_steps:
             self.assertRegex(
                 step["uses"], r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$"
@@ -1890,21 +1932,30 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
     ) -> None:
         names = [step["name"] for step in workflow_job()["steps"]]
         ordered = (
+            "Bind trusted control Python",
             "Fetch bounded bootstrap graph without checkout",
             "Preflight exact signed bootstrap H",
             "Materialize only preflight-bounded blobs",
             "Verify signature and materialize H as data",
             "Establish read-only H mount",
             "Validate B0/H candidate feedback",
+            "Prepare sealed candidate runtime tree",
+            "Install sealed candidate test dependencies",
+            "Run sealed candidate compile and tests",
+            "Verify candidate runtime authority remains pristine",
         )
         offsets = [names.index(name) for name in ordered]
         self.assertEqual(offsets, sorted(offsets))
         named = steps_by_name()
-        metadata_fetch = named[ordered[0]]["run"]
-        blob_fetch = named[ordered[2]]["run"]
-        materialize = named[ordered[3]]["run"]
+        metadata_fetch = named["Fetch bounded bootstrap graph without checkout"]["run"]
+        blob_fetch = named["Materialize only preflight-bounded blobs"]["run"]
+        materialize = named["Verify signature and materialize H as data"]["run"]
         self.assertIn("--filter=blob:none", metadata_fetch)
-        self.assertIn("--depth=2", metadata_fetch)
+        self.assertIn('--depth=2 "$TRUSTED_ROOT"', metadata_fetch)
+        self.assertIn(
+            "authenticated_fetch --depth=3 --filter=blob:none",
+            metadata_fetch,
+        )
         self.assertIn("remote get-url", metadata_fetch)
         self.assertIn('remote remove "${remotes[0]}"', metadata_fetch)
         self.assertIn(
@@ -1943,27 +1994,80 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 self.assertIn("Partial clone cleanup failed.", script)
                 self.assertNotIn("|| :", script)
 
-    def test_candidate_code_is_never_imported_or_executed(self) -> None:
-        job = workflow_job()
-        run_scripts = "\n".join(step["run"] for step in job["steps"] if "run" in step)
-        for forbidden in (
-            "candidate/scripts/",
-            "$CANDIDATE_ROOT/scripts/",
-            "python -m unittest",
-            "pip install",
-            "working-directory:",
-            "actions/cache",
-        ):
-            self.assertNotIn(forbidden, run_scripts)
-        validation = steps_by_name()["Validate B0/H candidate feedback"]["run"]
-        self.assertIn(
-            'python -I "$TRUSTED_ROOT/scripts/validate_retained_history.py"',
-            validation,
-        )
-        self.assertIn('--candidate-root "$CANDIDATE_ROOT"', validation)
-        self.assertIn("env -i", validation)
-        self.assertNotIn("GH_TOKEN", validation)
-        self.assertNotIn("GITHUB_TOKEN", validation)
+    def test_candidate_code_executes_only_in_the_sealed_runtime_profile(self) -> None:
+        for workflow_path in (WORKFLOW, PERMANENT_CI):
+            with self.subTest(workflow=workflow_path.name):
+                workflow = load_workflow(workflow_path)
+                job = workflow["jobs"]["trusted_history_gate"]
+                named = steps_by_name(job)
+                run_scripts = "\n".join(
+                    step["run"] for step in job["steps"] if "run" in step
+                )
+                for forbidden in (
+                    "candidate/scripts/",
+                    "$CANDIDATE_ROOT/scripts/",
+                    "working-directory:",
+                    "actions/cache",
+                ):
+                    self.assertNotIn(forbidden, run_scripts)
+                validation = named["Validate B0/H candidate feedback"]["run"]
+                expected_validator_python = (
+                    '"$CONTROL_PYTHON" -I -B'
+                    if workflow_path == WORKFLOW
+                    else '"$TRUSTED_PYTHON" -I'
+                )
+                self.assertIn(expected_validator_python, validation)
+                self.assertIn(
+                    '"$TRUSTED_ROOT/scripts/validate_retained_history.py"',
+                    validation,
+                )
+                candidate_root_argument = (
+                    '--candidate-root "$CANDIDATE_ROOT"'
+                    if workflow_path == WORKFLOW
+                    else '--root "$CANDIDATE_ROOT"'
+                )
+                self.assertIn(candidate_root_argument, validation)
+                self.assertIn("env -i", validation)
+                self.assertNotIn("GH_TOKEN", validation)
+                self.assertNotIn("GITHUB_TOKEN", validation)
+
+                dependencies = named["Install sealed candidate test dependencies"][
+                    "run"
+                ]
+                self.assertGreaterEqual(
+                    dependencies.count("verify_runtime_python"),
+                    3,
+                )
+                self.assertIn('readlink -f -- "$runtime_python"', dependencies)
+                self.assertIn("/usr/bin/sha256sum", dependencies)
+                self.assertIn("runtime_venv_config_sha256", dependencies)
+                self.assertIn("chmod -R a-w", dependencies)
+                self.assertIn("RUNTIME_TEST_PYTHON_TARGET", dependencies)
+                self.assertIn("RUNTIME_TEST_PYTHON_SHA256", dependencies)
+                self.assertIn("RUNTIME_TEST_VENV_CONFIG_SHA256", dependencies)
+
+                runtime = named["Run sealed candidate compile and tests"]["run"]
+                self.assertIn("sudo -u nobody --", runtime)
+                self.assertIn("/usr/bin/env -i -C", runtime)
+                self.assertIn(
+                    '-I -B -X "pycache_prefix=$RUNTIME_PYCACHE_ROOT"',
+                    runtime,
+                )
+                self.assertIn("-m compileall -q -f scripts tests", runtime)
+                self.assertIn("-m unittest discover -s tests", runtime)
+                self.assertIn("RUNTIME_TEST_PYTHON_TARGET", runtime)
+                self.assertIn("RUNTIME_TEST_PYTHON_SHA256", runtime)
+                self.assertIn("RUNTIME_TEST_VENV_CONFIG_SHA256", runtime)
+                self.assertNotIn("PYTHONPYCACHEPREFIX=", runtime)
+                self.assertNotIn("GH_TOKEN", runtime)
+                self.assertNotIn("GITHUB_TOKEN", runtime)
+                preparation = named["Prepare sealed candidate runtime tree"]["run"]
+                self.assertIn("prepare-runtime-execution", preparation)
+                self.assertIn("test ! -w", preparation)
+                verification = named[
+                    "Verify candidate runtime authority remains pristine"
+                ]["run"]
+                self.assertIn("verify-runtime-authority", verification)
 
     def test_network_and_validation_steps_have_explicit_resource_bounds(self) -> None:
         named = steps_by_name()
@@ -1971,6 +2075,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             "Fetch bounded bootstrap graph without checkout",
             "Materialize only preflight-bounded blobs",
             "Validate B0/H candidate feedback",
+            "Install sealed candidate test dependencies",
+            "Run sealed candidate compile and tests",
         ):
             script = named[name]["run"]
             self.assertIn("timeout --signal=TERM --kill-after=5s", script)
@@ -1991,6 +2097,14 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertIn("candidate feedback only", script)
         self.assertIn("external admission", script)
         self.assertIn("history authority CAS", script)
+        self.assertIn("credential-free, nonprivileged compile and tests", script)
+        for outcome in (
+            "RUNTIME_PREPARE_OUTCOME",
+            "RUNTIME_DEPENDENCIES_OUTCOME",
+            "RUNTIME_TESTS_OUTCOME",
+            "RUNTIME_AUTHORITY_OUTCOME",
+        ):
+            self.assertIn(f'[ "${outcome}" = success ]', script)
         self.assertNotIn("QUEUE_SHA", script)
         self.assertNotIn("finalize-merge-group", script)
         self.assertNotIn(" status \\", script)
@@ -2027,6 +2141,10 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         "PREFLIGHT_OUTCOME": "success",
                         "RELEASE_OUTCOME": "success",
                         "RESULT_PATH": str(result),
+                        "RUNTIME_AUTHORITY_OUTCOME": "success",
+                        "RUNTIME_DEPENDENCIES_OUTCOME": "success",
+                        "RUNTIME_PREPARE_OUTCOME": "success",
+                        "RUNTIME_TESTS_OUTCOME": "success",
                         "VALIDATION_OUTCOME": "success",
                     }
                     completed = subprocess.run(
@@ -2298,8 +2416,15 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertIn("must not handle `merge_group` events", readme)
         self.assertIn("an external admission service must be installed", readme)
         self.assertIn("merge-group-snapshot --admission-app-id", readme)
+        self.assertIn("`admit-merge-group`", readme)
+        self.assertIn("`--expected-python-sha256`", readme)
+        self.assertIn("parent-owned runtime receipt", readme)
+        self.assertIn("exact `Q` tree", readme)
         self.assertIn("GitHub Actions App is\nexplicitly ineligible", readme)
-        self.assertIn("Until that producer is proven, cutover is blocked", readme)
+        self.assertIn(
+            "Until that external producer and receipt flow are proven, cutover is blocked",
+            readme.replace("\n", " "),
+        )
 
         workflow_text = "\n".join(
             (
@@ -2320,6 +2445,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             "already-converged",
         ):
             self.assertNotIn(prohibited, workflow_text)
+        helper_text = CI_HELPER.read_text(encoding="utf-8")
+        self.assertIn('subparsers.add_parser("admit-merge-group")', helper_text)
+        self.assertIn('"--runtime-evidence"', helper_text)
         for obsolete in (
             "create_merge_authorization",
             "consume_merge_authorization",
@@ -3173,6 +3301,109 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             self.assertEqual(calls[2][2], queue_base)
             self.assertEqual(calls[2][3], projection.prospective_sha)
             self.assertIs(calls[2][4], False)
+            self.assertEqual(
+                projection.prospective_tree_sha,
+                projection.queue_tree_sha,
+            )
+            requirements = CI_MODULE.git_output(
+                graph.git_dir,
+                "cat-file",
+                "blob",
+                f"{queue}:requirements-v2.txt",
+                max_bytes=CI_MODULE.MAX_BLOB_BYTES,
+            )
+            evidence = CI_MODULE.MergeGroupRuntimeEvidence(
+                policy="history-v2",
+                queue_base_sha=queue_base,
+                candidate_sha=candidate,
+                queue_sha=queue,
+                queue_tree_sha=projection.queue_tree_sha,
+                prospective_sha=projection.prospective_sha,
+                prospective_tree_sha=projection.prospective_tree_sha,
+                projection_sha256=CI_MODULE.merge_group_projection_sha256(projection),
+                python_version=CI_MODULE.QUEUE_RUNTIME_PYTHON_VERSION,
+                python_executable_sha256="a" * 64,
+                requirements_sha256=hashlib.sha256(requirements).hexdigest(),
+                runtime_profile=CI_MODULE.QUEUE_RUNTIME_PROFILE,
+                compile_command_sha256=(CI_MODULE.QUEUE_RUNTIME_COMPILE_COMMAND_SHA256),
+                test_command_sha256=CI_MODULE.QUEUE_RUNTIME_TEST_COMMAND_SHA256,
+                compile_exit_code=0,
+                test_exit_code=0,
+                authority_uid=os.geteuid(),
+                execution_uid=65534,
+                credential_environment="empty",
+                authority_write_access=False,
+                source_authority_pristine=True,
+            )
+            CI_MODULE.validate_merge_group_runtime_evidence(
+                git_dir=graph.git_dir,
+                snapshot=snapshot,
+                projection=projection,
+                evidence=evidence,
+                expected_python_executable_sha256=(evidence.python_executable_sha256),
+            )
+            admission = CI_MODULE.merge_group_admission_payload(
+                snapshot=snapshot,
+                projection=projection,
+                evidence=evidence,
+            )
+            self.assertEqual(admission["kind"], CI_MODULE.MERGE_GROUP_ADMISSION_KIND)
+            self.assertEqual(admission["decision"], "accepted")
+
+            invalid = (
+                ("queue_sha", "f" * 40, "stale or cross-transaction"),
+                ("test_exit_code", 1, "exact profile"),
+                ("authority_write_access", True, "exact profile"),
+                ("requirements_sha256", "b" * 64, "requirements digest"),
+            )
+            for field, value, expected in invalid:
+                with (
+                    self.subTest(field=field),
+                    self.assertRaisesRegex(CI_MODULE.GateError, expected),
+                ):
+                    changed = type(evidence)(
+                        **{**evidence.__dict__, field: value},
+                    )
+                    CI_MODULE.validate_merge_group_runtime_evidence(
+                        git_dir=graph.git_dir,
+                        snapshot=snapshot,
+                        projection=projection,
+                        evidence=changed,
+                        expected_python_executable_sha256=(
+                            evidence.python_executable_sha256
+                        ),
+                    )
+            with self.assertRaisesRegex(CI_MODULE.GateError, "exact profile"):
+                CI_MODULE.validate_merge_group_runtime_evidence(
+                    git_dir=graph.git_dir,
+                    snapshot=snapshot,
+                    projection=projection,
+                    evidence=evidence,
+                    expected_python_executable_sha256="f" * 64,
+                )
+            evidence_path = temporary / "runtime-evidence.json"
+            CI_MODULE.write_json(evidence_path, evidence.as_dict())
+            self.assertEqual(
+                CI_MODULE.load_merge_group_runtime_evidence(evidence_path),
+                evidence,
+            )
+            mismatched_owner = type(evidence)(
+                **{
+                    **evidence.__dict__,
+                    "authority_uid": os.geteuid() + 1,
+                }
+            )
+            CI_MODULE.write_json(evidence_path, mismatched_owner.as_dict())
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "authority differs from the receipt owner",
+            ):
+                CI_MODULE.load_merge_group_runtime_evidence(evidence_path)
+            unknown = evidence.as_dict()
+            unknown["untrusted"] = True
+            CI_MODULE.write_json(evidence_path, unknown)
+            with self.assertRaisesRegex(CI_MODULE.GateError, "schema is invalid"):
+                CI_MODULE.load_merge_group_runtime_evidence(evidence_path)
 
     def test_admin_and_bootstrap_require_queue_base_to_equal_candidate_base(
         self,
@@ -4148,6 +4379,15 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 [
                     entry.object_id
                     for entry in CI_MODULE.allowed_blob_entries(preflight)
+                    if entry.object_id
+                    not in {
+                        base_entry.object_id
+                        for base_entry in CI_MODULE.git_tree_entries(
+                            bare,
+                            graph.base,
+                        )
+                        if base_entry.object_type == "blob"
+                    }
                 ],
             )
             self.assertTrue(
@@ -4678,6 +4918,101 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     for candidate in CI_MODULE.allowed_blob_entries(preflight)
                 )
             )
+            blob_loader = mock.Mock(
+                side_effect=AssertionError("base blob reached the GitHub blob API")
+            )
+            CI_MODULE.materialize_preflight_blobs(
+                bare,
+                preflight,
+                repository="Joey-Tools/codex-session-retrospective-history",
+                token="synthetic",
+                blob_loader=blob_loader,
+            )
+            blob_loader.assert_not_called()
+            CI_MODULE.verify_preflight_objects(bare, preflight)
+
+    def test_oid_only_preflight_reuses_blob_reachable_from_base_history(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            source = temporary / "source"
+            subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+            configure_git(source)
+            (source / "stable.txt").write_text("stable base blob\n", encoding="utf-8")
+            historical = source / "historical.txt"
+            historical.write_text("authenticated historical blob\n", encoding="utf-8")
+            historical_commit = commit_all(source, "retain historical blob")
+            historical_oid = git(
+                source, "rev-parse", f"{historical_commit}:historical.txt"
+            )
+            historical.unlink()
+            base = commit_all(source, "remove historical blob")
+            historical.write_text("authenticated historical blob\n", encoding="utf-8")
+            candidate = commit_all(source, "restore historical blob")
+            git(source, "config", "uploadpack.allowFilter", "true")
+
+            bare = temporary / "candidate.git"
+            subprocess.run(["git", "init", "--bare", "--quiet", str(bare)], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={bare}",
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    "--depth=2",
+                    source.as_uri(),
+                    base,
+                ],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={bare}",
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    "--depth=3",
+                    "--filter=blob:none",
+                    source.as_uri(),
+                    f"+{candidate}:refs/candidate/head",
+                ],
+                check=True,
+            )
+            seal_partial_bare_store(bare, expected_url=source.as_uri())
+            self.assertTrue(bare_object_exists_without_lazy_fetch(bare, historical_oid))
+            self.assertNotIn(
+                historical_oid,
+                {
+                    entry.object_id
+                    for entry in CI_MODULE.git_tree_entries(bare, base)
+                    if entry.object_type == "blob"
+                },
+            )
+
+            preflight = CI_MODULE.preflight_git_candidate(
+                bare,
+                base_sha=base,
+                head_sha=candidate,
+                tree_payload=tree_api_payload(source, candidate),
+                policy="history-v2",
+            )
+            blob_loader = mock.Mock(
+                side_effect=AssertionError(
+                    "authenticated base-history blob reached the GitHub API"
+                )
+            )
+            CI_MODULE.materialize_preflight_blobs(
+                bare,
+                preflight,
+                repository="Joey-Tools/codex-session-retrospective-history",
+                token="synthetic",
+                blob_loader=blob_loader,
+            )
+            blob_loader.assert_not_called()
+            CI_MODULE.verify_preflight_objects(bare, preflight)
 
     def test_git_object_access_policy_is_closed_and_rejects_alternates(
         self,
@@ -4913,7 +5248,6 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             pycache.mkdir(mode=0o700)
             environment = {
                 **os.environ,
-                "PYTHONPYCACHEPREFIX": str(pycache),
                 "PYTHONHASHSEED": "0",
             }
             subprocess.run(
@@ -4921,6 +5255,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     sys.executable,
                     "-I",
                     "-B",
+                    "-X",
+                    f"pycache_prefix={pycache}",
                     "-m",
                     "compileall",
                     "-q",
@@ -4937,6 +5273,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     sys.executable,
                     "-I",
                     "-B",
+                    "-X",
+                    f"pycache_prefix={pycache}",
                     "-m",
                     "unittest",
                     "discover",
@@ -5042,6 +5380,163 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     expected_head=head,
                 )
             self.assertFalse((execution / "payload.txt").exists())
+
+    def test_runtime_execution_tree_is_exact_sealed_and_revalidated(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            source = temporary / "source"
+            subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+            configure_git(source)
+            (source / "requirements-v2.txt").write_text("", encoding="utf-8")
+            scripts = source / "scripts"
+            scripts.mkdir()
+            executable = scripts / "tool.py"
+            executable.write_text("VALUE = 1\n", encoding="utf-8")
+            executable.chmod(0o755)
+            tests = source / "tests"
+            tests.mkdir()
+            (tests / "test_smoke.py").write_text(
+                "import unittest\n\n"
+                "class SmokeTests(unittest.TestCase):\n"
+                "    def test_smoke(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            head = commit_all(source, "runtime authority fixture")
+            bare = temporary / "authority.git"
+            subprocess.run(["git", "init", "--bare", "--quiet", str(bare)], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={bare}",
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    str(source),
+                    head,
+                ],
+                check=True,
+            )
+            execution = temporary / "execution"
+            receipt = CI_MODULE.prepare_runtime_execution_tree(
+                bare,
+                execution,
+                expected_head=head,
+            )
+            self.assertEqual(receipt.authority_uid, os.geteuid())
+            self.assertEqual(stat.S_IMODE(execution.stat().st_mode), 0o555)
+            self.assertEqual(stat.S_IMODE(scripts.stat().st_mode), 0o755)
+            self.assertEqual(
+                stat.S_IMODE((execution / "scripts").stat().st_mode),
+                0o555,
+            )
+            self.assertEqual(
+                stat.S_IMODE((execution / "scripts/tool.py").stat().st_mode),
+                0o555,
+            )
+            self.assertEqual(
+                stat.S_IMODE((execution / "requirements-v2.txt").stat().st_mode),
+                0o444,
+            )
+            pycache_root = temporary / "pycache"
+            pycache_root.mkdir(mode=0o700)
+            runtime_commands = (
+                (
+                    "-I",
+                    "-B",
+                    "-X",
+                    f"pycache_prefix={pycache_root}",
+                    "-m",
+                    "compileall",
+                    "-q",
+                    "-f",
+                    "scripts",
+                    "tests",
+                ),
+                (
+                    "-I",
+                    "-B",
+                    "-X",
+                    f"pycache_prefix={pycache_root}",
+                    "-m",
+                    "unittest",
+                    "discover",
+                    "-s",
+                    "tests",
+                ),
+            )
+            for arguments in runtime_commands:
+                completed = subprocess.run(
+                    [sys.executable, *arguments],
+                    cwd=execution,
+                    env={
+                        "HOME": str(temporary / "home"),
+                        "LANG": "C",
+                        "LC_ALL": "C",
+                        "PATH": "/usr/bin:/bin",
+                        "TMPDIR": str(temporary),
+                    },
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                    check=False,
+                )
+                self.assertEqual(
+                    completed.returncode,
+                    0,
+                    completed.stderr.decode("utf-8", errors="replace"),
+                )
+            self.assertTrue(any(pycache_root.rglob("*.pyc")))
+            self.assertFalse(any(execution.rglob("__pycache__")))
+            CI_MODULE.verify_runtime_authority(
+                bare,
+                execution,
+                expected_head=head,
+                receipt=receipt,
+            )
+            receipt_path = temporary / "runtime-authority.json"
+            CI_MODULE.write_json(
+                receipt_path,
+                CI_MODULE.runtime_authority_snapshot_payload(receipt),
+            )
+            self.assertEqual(
+                CI_MODULE.load_runtime_authority_snapshot(receipt_path),
+                receipt,
+            )
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "root owner differs from the authority",
+            ):
+                CI_MODULE._execution_tree_inventory(
+                    execution,
+                    expected_directory_mode=0o555,
+                    expected_owner_uid=os.geteuid() + 1,
+                )
+            (execution / "requirements-v2.txt").chmod(0o644)
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "access policy changed",
+            ):
+                CI_MODULE.verify_runtime_authority(
+                    bare,
+                    execution,
+                    expected_head=head,
+                    receipt=receipt,
+                )
+            (execution / "requirements-v2.txt").chmod(0o444)
+            original_execution = temporary / "original-execution"
+            execution.rename(original_execution)
+            shutil.copytree(original_execution, execution)
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "root object identity changed",
+            ):
+                CI_MODULE.verify_runtime_authority(
+                    bare,
+                    execution,
+                    expected_head=head,
+                    receipt=receipt,
+                )
 
     def test_default_execution_verifier_distinguishes_protected_properties(
         self,

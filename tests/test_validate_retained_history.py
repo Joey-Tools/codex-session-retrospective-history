@@ -7201,6 +7201,47 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     )
                 )
 
+    def test_bootstrap_validator_keeps_a_machine_enforced_maintenance_margin(
+        self,
+    ) -> None:
+        self.assertEqual(
+            MODULE.BOOTSTRAP_V2_MAX_VALIDATOR_SOURCE_BYTES,
+            MODULE.BOOTSTRAP_V2_MAX_PYTHON_SOURCE_BYTES
+            - MODULE.BOOTSTRAP_V2_VALIDATOR_SOURCE_MAINTENANCE_RESERVE_BYTES,
+        )
+        self.assertGreaterEqual(
+            MODULE.BOOTSTRAP_V2_VALIDATOR_SOURCE_MAINTENANCE_RESERVE_BYTES,
+            512 * 1024,
+        )
+        self.assertLessEqual(
+            SCRIPT.stat().st_size,
+            MODULE.BOOTSTRAP_V2_MAX_VALIDATOR_SOURCE_BYTES,
+        )
+        self.assertGreaterEqual(
+            MODULE.BOOTSTRAP_V2_MAX_VALIDATOR_SOURCE_BYTES - SCRIPT.stat().st_size,
+            MODULE.BOOTSTRAP_V2_VALIDATOR_SOURCE_MAINTENANCE_RESERVE_BYTES,
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            workspace = Path(raw)
+            base = workspace / "base"
+            candidate = workspace / "candidate"
+            write_bootstrap_v2_base(base)
+            write_bootstrap_v2_candidate(candidate)
+            validator = candidate / MODULE.BOOTSTRAP_V2_VALIDATOR_SOURCE_PATH
+            validator.write_bytes(
+                b"#" * (MODULE.BOOTSTRAP_V2_MAX_VALIDATOR_SOURCE_BYTES + 1)
+            )
+            run_fixture_git(candidate, "add", "--all")
+            issues = "\n".join(
+                validate_synthetic_bootstrap_v2_candidate(
+                    candidate,
+                    base_root=base,
+                    synchronize_allowed_index=False,
+                )
+            )
+        self.assertIn("Python source exceeds the trusted AST size limit", issues)
+
     def test_history_v2_helper_uses_python_ast_privacy_scan(self) -> None:
         relative = Path("scripts/trusted_history_ci.py")
         expected = risky_github_classic_token()
@@ -14279,6 +14320,15 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             (
                 "writable remount",
                 workflow_text.replace("remount,bind,ro", "remount,bind,rw", 1),
+                "bootstrap workflow structure differs from the trusted policy",
+            ),
+            (
+                "floating Python patch",
+                workflow_text.replace(
+                    'python-version: "3.13.12"',
+                    'python-version: "3.13"',
+                    1,
+                ),
                 "bootstrap workflow structure differs from the trusted policy",
             ),
         )

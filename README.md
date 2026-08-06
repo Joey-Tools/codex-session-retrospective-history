@@ -60,7 +60,15 @@ python scripts/validate_retained_history.py --root .
 The repository-owned `pull_request_target` workflow provides baseline-owned
 candidate feedback only. It must not handle `merge_group` events or authorize a
 queue SHA: candidate repository code cannot be the authority that admits its
-own formal-history mutation.
+own formal-history mutation. That feedback pins CPython `3.13.12`, copies exact
+`H` from the verified object store into a sealed execution tree, and runs
+credential-free compile and unit-test commands as a nonprivileged UID before
+the check can succeed. The trusted parent revalidates the source authority and
+sealed tree after execution. This exact-`H` evidence is necessary feedback, but
+it is not reusable as exact-`Q` admission evidence. Dependency installation
+must preserve the pre-bound CPython target, executable digest, version, and
+`pyvenv.cfg`; the venv is sealed against writes before UID drop. The fixed
+commands use an explicit CLI `pycache_prefix` outside the read-only source tree.
 
 Before branch policy enables the v2 merge queue and its `Trusted history gate`
 required check, an external admission service must be installed. That service
@@ -68,8 +76,22 @@ validates the exact queue SHA from independently trusted code, publishes the
 queue check through its bound GitHub App identity, and performs the history
 authority compare-and-swap. Its trusted configuration supplies that dedicated
 App ID to `merge-group-snapshot --admission-app-id`; the GitHub Actions App is
-explicitly ineligible. Until that producer is proven, cutover is blocked and
-the existing branch rules remain unchanged.
+explicitly ineligible. Before publishing success or attempting CAS, it must
+materialize the exact `Q` tree with `prepare-runtime-execution`, run the fixed
+CPython `3.13.12` compile and unittest commands without GitHub or CAS
+credentials as a nonprivileged UID, revalidate with
+`verify-runtime-authority`, and produce a parent-owned runtime receipt. The
+receipt binds `B1`, `H`, `Q`, the `Q` and prospective trees, the structural
+projection digest, Python executable and requirements digests, fixed command
+digests, UIDs, empty credential environment, denied authority write access,
+and successful exit codes. `admit-merge-group` recomputes the structural
+projection and rejects a missing, stale, cross-`Q`, writable-authority, failed,
+or otherwise mismatched receipt. Its required
+`--expected-python-sha256` value comes from the external service's independent
+trusted runtime configuration, never from the receipt or candidate tree. Only
+the resulting admission record may feed CAS.
+Until that external producer and receipt flow are proven, cutover is blocked
+and the existing branch rules remain unchanged.
 
 The post-merge default audit also binds the exact local squash object to
 GitHub's read-only commit and pull-request APIs. Before any candidate dependency

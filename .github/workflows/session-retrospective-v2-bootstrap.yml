@@ -36,7 +36,7 @@ jobs:
     name: Trusted history gate
     if: "${{ github.event_name == 'pull_request_target' && github.event.pull_request.draft == false && github.event.pull_request.base.repo.full_name == github.repository && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == 'master' && github.event.pull_request.head.ref == 'wip/session-retrospective-v2-history-bootstrap' }}"
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     permissions:
       contents: read
       pull-requests: read
@@ -125,8 +125,33 @@ jobs:
         name: Set up trusted Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
-          python-version: "3.13"
+          python-version: "3.13.12"
           cache: false
+      -
+        name: Bind trusted control Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          control_python="$(command -v python)"
+          case "$control_python" in
+            /*) ;;
+            *)
+              echo "Trusted control Python is not absolute." >&2
+              exit 1
+              ;;
+          esac
+          [ -x "$control_python" ]
+          control_version="$("$control_python" -I -B --version 2>&1)"
+          if [ "$control_version" != "Python 3.13.12" ]; then
+            echo "Trusted control Python version is invalid." >&2
+            exit 1
+          fi
+          control_home="$RUNNER_TEMP/bootstrap-history-ci/control-home"
+          install -d -m 700 "$control_home"
+          {
+            printf 'CONTROL_HOME=%s\n' "$control_home"
+            printf 'CONTROL_PYTHON=%s\n' "$control_python"
+          } >>"$GITHUB_ENV"
       -
         name: Bind live PR
         shell: bash
@@ -141,7 +166,8 @@ jobs:
           GH_TOKEN: "${{ github.token }}"
         run: |
           set -euo pipefail
-          python -I "$TRUSTED_ROOT/scripts/trusted_history_ci.py" snapshot \
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_ROOT/scripts/trusted_history_ci.py" snapshot \
             --repository "$GITHUB_REPOSITORY" \
             --pr-number "$EVENT_NUMBER" \
             --pr-node-id "$EVENT_NODE_ID" \
@@ -210,7 +236,7 @@ jobs:
           timeout --signal=TERM --kill-after=5s 60s \
             git --git-dir="$CANDIDATE_GIT_DIR" fetch \
               --quiet --no-tags --depth=2 "$TRUSTED_ROOT" "$TRUSTED_SHA"
-          authenticated_fetch --depth=2 --filter=blob:none \
+          authenticated_fetch --depth=3 --filter=blob:none \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" \
             "+refs/pull/$PR_NUMBER/head:refs/bootstrap/candidate"
           clear_partial_clone
@@ -240,7 +266,8 @@ jobs:
           ulimit -f 32768
           ulimit -n 256
           ulimit -t 180
-          python -I "$TRUSTED_ROOT/scripts/trusted_history_ci.py" preflight \
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_ROOT/scripts/trusted_history_ci.py" preflight \
             --git-dir "$CANDIDATE_GIT_DIR" \
             --base-sha "$B0_SHA" \
             --head-sha "$CANDIDATE_SHA" \
@@ -259,7 +286,8 @@ jobs:
           ulimit -n 256
           ulimit -t 600
           timeout --signal=TERM --kill-after=5s 900s \
-            python -I "$TRUSTED_ROOT/scripts/trusted_history_ci.py" \
+            "$CONTROL_PYTHON" -I -B \
+              "$TRUSTED_ROOT/scripts/trusted_history_ci.py" \
               materialize-blobs \
               --git-dir "$CANDIDATE_GIT_DIR" \
               --manifest "$PREFLIGHT_MANIFEST" \
@@ -273,7 +301,8 @@ jobs:
           ulimit -n 256
           ulimit -t 300
           env -u GH_TOKEN -u GITHUB_TOKEN \
-            python -I "$TRUSTED_ROOT/scripts/trusted_history_ci.py" \
+            "$CONTROL_PYTHON" -I -B \
+              "$TRUSTED_ROOT/scripts/trusted_history_ci.py" \
               verify-objects \
               --git-dir "$CANDIDATE_GIT_DIR" \
               --manifest "$PREFLIGHT_MANIFEST"
@@ -322,7 +351,8 @@ jobs:
           ulimit -t 600
           output="$RUNNER_TEMP/bootstrap-validation.log"
           command=(
-            python -I "$TRUSTED_ROOT/scripts/validate_retained_history.py"
+            "$CONTROL_PYTHON" -I -B \
+              "$TRUSTED_ROOT/scripts/validate_retained_history.py"
             --base-root "$TRUSTED_ROOT"
             --candidate-root "$CANDIDATE_ROOT"
             --mode bootstrap-v2-candidate
@@ -336,6 +366,182 @@ jobs:
             tail -n 120 "$output" >&2
             exit 1
           fi
+      -
+        name: Prepare sealed candidate runtime tree
+        id: prepare-runtime-execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_state="$RUNNER_TEMP/bootstrap-history-ci/runtime"
+          authority_receipt="$runtime_state/authority-receipt.json"
+          execution_root="$runtime_state/execution"
+          pycache_root="$runtime_state/pycache"
+          test_home="$runtime_state/home"
+          test_tmp="$runtime_state/tmp"
+          install -d -m 755 "$runtime_state"
+          install -d -m 700 "$pycache_root" "$test_home" "$test_tmp"
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_ROOT/scripts/trusted_history_ci.py" \
+            prepare-runtime-execution \
+            --git-dir "$CANDIDATE_GIT_DIR" \
+            --execution-root "$execution_root" \
+            --expected-head "$CANDIDATE_SHA" \
+            --output "$authority_receipt"
+          test_uid="$(id -u nobody)"
+          test_gid="$(id -g nobody)"
+          sudo chown -R "$test_uid:$test_gid" \
+            "$pycache_root" "$test_home" "$test_tmp"
+          sudo -u nobody -- test -r "$execution_root/requirements-v2.txt"
+          sudo -u nobody -- test ! -w "$execution_root"
+          {
+            printf 'RUNTIME_AUTHORITY_RECEIPT=%s\n' "$authority_receipt"
+            printf 'RUNTIME_EXECUTION_ROOT=%s\n' "$execution_root"
+            printf 'RUNTIME_PYCACHE_ROOT=%s\n' "$pycache_root"
+            printf 'RUNTIME_TEST_HOME=%s\n' "$test_home"
+            printf 'RUNTIME_TEST_TMP=%s\n' "$test_tmp"
+          } >>"$GITHUB_ENV"
+      -
+        name: Install sealed candidate test dependencies
+        id: runtime-dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 8192
+          ulimit -n 256
+          test_venv="$RUNNER_TEMP/bootstrap-history-ci/runtime-venv"
+          "$CONTROL_PYTHON" -I -B -m venv "$test_venv"
+          runtime_python="$test_venv/bin/python"
+          runtime_python_target="$(readlink -f -- "$runtime_python")"
+          case "$runtime_python_target" in
+            /*) ;;
+            *)
+              echo "Candidate runtime Python target is not absolute." >&2
+              exit 1
+              ;;
+          esac
+          [ -f "$runtime_python_target" ]
+          [ -x "$runtime_python_target" ]
+          runtime_python_sha256="$(/usr/bin/sha256sum -- "$runtime_python_target")"
+          runtime_python_sha256="${runtime_python_sha256%% *}"
+          runtime_venv_config="$test_venv/pyvenv.cfg"
+          runtime_venv_config_sha256="$(/usr/bin/sha256sum -- "$runtime_venv_config")"
+          runtime_venv_config_sha256="${runtime_venv_config_sha256%% *}"
+          runtime_python_version="$($runtime_python -I -B --version 2>&1)"
+          [ "$runtime_python_version" = "Python 3.13.12" ]
+          verify_runtime_python() {
+            local observed_target observed_sha256 observed_config_sha256
+            observed_target="$(readlink -f -- "$runtime_python")"
+            [ "$observed_target" = "$runtime_python_target" ]
+            observed_sha256="$(/usr/bin/sha256sum -- "$observed_target")"
+            observed_sha256="${observed_sha256%% *}"
+            [ "$observed_sha256" = "$runtime_python_sha256" ]
+            observed_config_sha256="$(/usr/bin/sha256sum -- "$runtime_venv_config")"
+            observed_config_sha256="${observed_config_sha256%% *}"
+            [ "$observed_config_sha256" = "$runtime_venv_config_sha256" ]
+            [ "$($runtime_python -I -B --version 2>&1)" = "Python 3.13.12" ]
+          }
+          output="$RUNNER_TEMP/bootstrap-history-ci/runtime-pip.log"
+          if ! timeout --signal=TERM --kill-after=5s 180s \
+              env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+                HOME="$RUNTIME_TEST_HOME" \
+                PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1 \
+                "$test_venv/bin/python" -I -m pip install \
+                  --isolated --no-cache-dir --no-input --only-binary=:all: \
+                  --require-hashes \
+                  --requirement "$RUNTIME_EXECUTION_ROOT/requirements-v2.txt" \
+                  --quiet >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+          verify_runtime_python
+          chmod -R u+rwX,go=rX "$test_venv"
+          chmod -R a-w "$test_venv"
+          verify_runtime_python
+          sudo -u nobody -- test -x "$test_venv/bin/python"
+          sudo -u nobody -- test ! -w "$test_venv"
+          sudo -u nobody -- test ! -w "$runtime_python_target"
+          {
+            printf 'RUNTIME_TEST_PYTHON=%s\n' "$runtime_python"
+            printf 'RUNTIME_TEST_PYTHON_SHA256=%s\n' "$runtime_python_sha256"
+            printf 'RUNTIME_TEST_PYTHON_TARGET=%s\n' "$runtime_python_target"
+            printf 'RUNTIME_TEST_VENV_CONFIG=%s\n' "$runtime_venv_config"
+            printf 'RUNTIME_TEST_VENV_CONFIG_SHA256=%s\n' \
+              "$runtime_venv_config_sha256"
+          } >>"$GITHUB_ENV"
+      -
+        name: Run sealed candidate compile and tests
+        id: runtime-tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 16384
+          ulimit -n 256
+          ulimit -t 600
+          output="$RUNNER_TEMP/bootstrap-history-ci/runtime-tests.log"
+          observed_target="$(readlink -f -- "$RUNTIME_TEST_PYTHON")"
+          [ "$observed_target" = "$RUNTIME_TEST_PYTHON_TARGET" ]
+          observed_sha256="$(/usr/bin/sha256sum -- "$observed_target")"
+          observed_sha256="${observed_sha256%% *}"
+          [ "$observed_sha256" = "$RUNTIME_TEST_PYTHON_SHA256" ]
+          observed_config_sha256="$(
+            /usr/bin/sha256sum -- "$RUNTIME_TEST_VENV_CONFIG"
+          )"
+          observed_config_sha256="${observed_config_sha256%% *}"
+          [ "$observed_config_sha256" = "$RUNTIME_TEST_VENV_CONFIG_SHA256" ]
+          [ "$($RUNTIME_TEST_PYTHON -I -B --version 2>&1)" = "Python 3.13.12" ]
+          sudo -u nobody -- test ! -w "$(dirname "$RUNTIME_TEST_PYTHON")/.."
+          sudo -u nobody -- test ! -w "$observed_target"
+          run_as_test_uid=(
+            sudo -u nobody --
+            /usr/bin/env -i -C "$RUNTIME_EXECUTION_ROOT"
+            HOME="$RUNTIME_TEST_HOME"
+            LANG=C.UTF-8
+            LC_ALL=C.UTF-8
+            PATH=/usr/bin:/bin
+            TMPDIR="$RUNTIME_TEST_TMP"
+            GIT_CONFIG_GLOBAL=/dev/null
+            GIT_CONFIG_NOSYSTEM=1
+            GIT_OPTIONAL_LOCKS=0
+            PYTHONDONTWRITEBYTECODE=1
+            PYTHONHASHSEED=0
+            "$RUNTIME_TEST_PYTHON"
+          )
+          if ! timeout --signal=TERM --kill-after=5s 900s \
+              "${run_as_test_uid[@]}" \
+                -I -B -X "pycache_prefix=$RUNTIME_PYCACHE_ROOT" \
+                -m compileall -q -f scripts tests \
+                >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+          if ! timeout --signal=TERM --kill-after=5s 900s \
+              "${run_as_test_uid[@]}" \
+                -I -B -X "pycache_prefix=$RUNTIME_PYCACHE_ROOT" \
+                -m unittest discover -s tests \
+                >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+      -
+        name: Verify candidate runtime authority remains pristine
+        id: verify-runtime-authority
+        if: "${{ always() && steps.prepare-runtime-execution.outcome == 'success' }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_ROOT/scripts/trusted_history_ci.py" \
+            verify-runtime-authority \
+            --git-dir "$CANDIDATE_GIT_DIR" \
+            --execution-root "$RUNTIME_EXECUTION_ROOT" \
+            --expected-head "$CANDIDATE_SHA" \
+            --receipt "$RUNTIME_AUTHORITY_RECEIPT"
       -
         name: Release read-only H mount
         id: release-data
@@ -387,6 +593,10 @@ jobs:
         shell: bash
         env:
           PREFLIGHT_OUTCOME: "${{ steps.preflight.outcome }}"
+          RUNTIME_AUTHORITY_OUTCOME: "${{ steps.verify-runtime-authority.outcome }}"
+          RUNTIME_DEPENDENCIES_OUTCOME: "${{ steps.runtime-dependencies.outcome }}"
+          RUNTIME_PREPARE_OUTCOME: "${{ steps.prepare-runtime-execution.outcome }}"
+          RUNTIME_TESTS_OUTCOME: "${{ steps.runtime-tests.outcome }}"
           RELEASE_OUTCOME: "${{ steps.release-data.outcome }}"
           VALIDATION_OUTCOME: "${{ steps.trusted-validation.outcome }}"
         run: |
@@ -401,8 +611,14 @@ jobs:
             printf '%s\n' \
               '- This baseline-owned result is candidate feedback only.'
             printf '%s\n' \
+              '- Exact H passed credential-free, nonprivileged compile and tests from a sealed execution tree.'
+            printf '%s\n' \
               '- It cannot authorize formal-history mutation; external admission and the history authority CAS remain mandatory.'
           } >>"$GITHUB_STEP_SUMMARY"
           [ "$PREFLIGHT_OUTCOME" = success ]
+          [ "$RUNTIME_PREPARE_OUTCOME" = success ]
+          [ "$RUNTIME_DEPENDENCIES_OUTCOME" = success ]
+          [ "$RUNTIME_TESTS_OUTCOME" = success ]
+          [ "$RUNTIME_AUTHORITY_OUTCOME" = success ]
           [ "$VALIDATION_OUTCOME" = success ]
           [ "$RELEASE_OUTCOME" = success ]

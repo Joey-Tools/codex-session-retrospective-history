@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 import datetime as dt
 import hashlib
 import importlib.util
@@ -31,7 +31,12 @@ GITHUB_TIMESTAMP_RE = re.compile(
     r"[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z$"
 )
 MERGE_GROUP_SNAPSHOT_KIND = "retrospective-history-v2-merge-group-snapshot"
+MERGE_GROUP_RUNTIME_EVIDENCE_KIND = (
+    "retrospective-history-v2-merge-group-runtime-evidence"
+)
+MERGE_GROUP_ADMISSION_KIND = "retrospective-history-v2-merge-group-admission"
 DEFAULT_AUTHORITY_RECEIPT_KIND = "retrospective-history-v2-default-authority"
+RUNTIME_AUTHORITY_RECEIPT_KIND = "retrospective-history-v2-runtime-authority"
 GITHUB_SQUASH_RECEIPT_KIND = "retrospective-history-v2-github-squash-verification"
 DEFAULT_BRANCH = "master"
 DEFAULT_BRANCH_REF = f"refs/heads/{DEFAULT_BRANCH}"
@@ -109,6 +114,43 @@ MAX_TREE_PATH_DEPTH = 32
 GIT_TIMEOUT_SECONDS = 20.0
 HTTP_TIMEOUT_SECONDS = 20.0
 PROCESS_TERMINATE_GRACE_SECONDS = 0.5
+QUEUE_RUNTIME_PROFILE = "credential-free-nonprivileged-exact-q-v1"
+QUEUE_RUNTIME_PYTHON_VERSION = "3.13.12"
+QUEUE_RUNTIME_COMPILE_COMMAND = (
+    "-I",
+    "-B",
+    "-X",
+    "pycache_prefix=<runtime-private>",
+    "-m",
+    "compileall",
+    "-q",
+    "-f",
+    "scripts",
+    "tests",
+)
+QUEUE_RUNTIME_TEST_COMMAND = (
+    "-I",
+    "-B",
+    "-X",
+    "pycache_prefix=<runtime-private>",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+)
+
+
+def _runtime_command_sha256(arguments: tuple[str, ...]) -> str:
+    return hashlib.sha256(
+        b"\0".join(value.encode("ascii") for value in arguments)
+    ).hexdigest()
+
+
+QUEUE_RUNTIME_COMPILE_COMMAND_SHA256 = _runtime_command_sha256(
+    QUEUE_RUNTIME_COMPILE_COMMAND
+)
+QUEUE_RUNTIME_TEST_COMMAND_SHA256 = _runtime_command_sha256(QUEUE_RUNTIME_TEST_COMMAND)
 BOOTSTRAP_TEMPORARY_PATHS = (
     ".github/bootstrap/session-retrospective-v2-permanent-ci.yml",
     ".github/workflows/session-retrospective-v2-bootstrap.yml",
@@ -119,7 +161,7 @@ BOOTSTRAP_CI_TEMPLATE_PATH = (
     ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
 )
 LEGACY_CI_BLOB_OID = "145e8de8a055794b85af6461a69e50715913ea6f"
-PERMANENT_CI_BLOB_OID = "cf4bb43951954a2bca5603398baec84ff35f9cf0"
+PERMANENT_CI_BLOB_OID = "08fce9a00fd907b65771cc4a1bcf5d6edfd096b0"
 _TRUSTED_VALIDATOR_MODULE: Any | None = None
 _FORBIDDEN_CANDIDATE_COMPONENTS = frozenset(
     {
@@ -252,6 +294,15 @@ class AuthoritySnapshot:
 
 
 @dataclass(frozen=True)
+class RuntimeAuthoritySnapshot:
+    head_sha: str
+    tree_sha: str
+    authority_uid: int
+    execution_root_device: int
+    execution_root_inode: int
+
+
+@dataclass(frozen=True)
 class MergeGroupSnapshot:
     repository: str
     base_ref: str
@@ -329,6 +380,7 @@ class MergeGroupProjection:
     candidate_tree_sha: str
     queue_tree_sha: str
     prospective_sha: str
+    prospective_tree_sha: str
     squash_subject: str
     trust_generation: str
     changed_path_count: int
@@ -348,6 +400,7 @@ class MergeGroupProjection:
             "candidate_tree_sha": self.candidate_tree_sha,
             "queue_tree_sha": self.queue_tree_sha,
             "prospective_sha": self.prospective_sha,
+            "prospective_tree_sha": self.prospective_tree_sha,
             "squash_subject": self.squash_subject,
             "trust_generation": self.trust_generation,
             "changed_path_count": self.changed_path_count,
@@ -355,9 +408,47 @@ class MergeGroupProjection:
         }
 
 
+@dataclass(frozen=True)
+class MergeGroupRuntimeEvidence:
+    policy: str
+    queue_base_sha: str
+    candidate_sha: str
+    queue_sha: str
+    queue_tree_sha: str
+    prospective_sha: str
+    prospective_tree_sha: str
+    projection_sha256: str
+    python_version: str
+    python_executable_sha256: str
+    requirements_sha256: str
+    runtime_profile: str
+    compile_command_sha256: str
+    test_command_sha256: str
+    compile_exit_code: int
+    test_exit_code: int
+    authority_uid: int
+    execution_uid: int
+    credential_environment: str
+    authority_write_access: bool
+    source_authority_pristine: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "kind": MERGE_GROUP_RUNTIME_EVIDENCE_KIND,
+            **asdict(self),
+        }
+
+
 def canonical_oid(value: Any, label: str) -> str:
     if not isinstance(value, str) or OID_RE.fullmatch(value) is None:
         raise GateError(f"{label} is not a canonical lowercase object ID")
+    return value
+
+
+def canonical_sha256(value: Any, label: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise GateError(f"{label} is not a canonical SHA-256 digest")
     return value
 
 
@@ -468,7 +559,13 @@ def _read_policy_file_descriptor(descriptor: int, *, max_bytes: int) -> bytes:
     return bytes(value)
 
 
-def read_stable_policy_file(path: Path, label: str, *, max_bytes: int) -> bytes:
+def read_stable_policy_file(
+    path: Path,
+    label: str,
+    *,
+    max_bytes: int,
+    expected_owner_uid: int | None = None,
+) -> bytes:
     # The protected properties are path object identity, returned content, and
     # absence of group/other write access. Timestamps and link count are metadata
     # only and intentionally do not participate in the decision.
@@ -488,6 +585,8 @@ def read_stable_policy_file(path: Path, label: str, *, max_bytes: int) -> bytes:
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode):
             raise GateError(f"{label} is not a regular file")
+        if expected_owner_uid is not None and opened.st_uid != expected_owner_uid:
+            raise GateError(f"{label} owner differs from the trusted authority")
         if opened.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
             raise GateError(f"{label} access policy is unsafe")
         if opened.st_size <= 0 or opened.st_size > max_bytes:
@@ -508,6 +607,8 @@ def read_stable_policy_file(path: Path, label: str, *, max_bytes: int) -> bytes:
         raise GateError(f"{label} content changed while being read")
     if (final.st_dev, final.st_ino) != (opened.st_dev, opened.st_ino):
         raise GateError(f"{label} object identity changed while being read")
+    if expected_owner_uid is not None and final.st_uid != expected_owner_uid:
+        raise GateError(f"{label} owner changed while being read")
     if final.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
         raise GateError(f"{label} access policy changed while being read")
 
@@ -526,6 +627,8 @@ def read_stable_policy_file(path: Path, label: str, *, max_bytes: int) -> bytes:
         opened.st_ino,
     ):
         raise GateError(f"{label} object identity changed while being read")
+    if expected_owner_uid is not None and current.st_uid != expected_owner_uid:
+        raise GateError(f"{label} owner changed during identity revalidation")
     if current.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
         raise GateError(f"{label} access policy changed while being read")
     return first
@@ -536,11 +639,13 @@ def read_bounded_json_file(
     label: str,
     *,
     max_bytes: int = MAX_POLICY_JSON_BYTES,
+    expected_owner_uid: int | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     raw = read_stable_policy_file(
         path,
         label,
         max_bytes=max_bytes,
+        expected_owner_uid=expected_owner_uid,
     )
     try:
         payload = json.loads(raw, object_pairs_hook=reject_duplicate_object)
@@ -3116,21 +3221,55 @@ def git_object_metadata(
     return result
 
 
+def reachable_base_blob_oids(git_dir: Path, base_sha: str) -> frozenset[str]:
+    base_sha = canonical_oid(base_sha, "candidate base")
+    raw = git_output(
+        git_dir,
+        "rev-list",
+        "--objects",
+        "--no-object-names",
+        base_sha,
+        max_bytes=MAX_GIT_OUTPUT_BYTES,
+    )
+    try:
+        lines = raw.decode("ascii").splitlines()
+    except UnicodeDecodeError as exc:
+        raise GateError("authenticated base object inventory is not ASCII") from exc
+    object_ids = tuple(dict.fromkeys(lines))
+    if (
+        not object_ids
+        or len(object_ids) != len(lines)
+        or len(object_ids) > MAX_RANGE_TREE_ENTRIES
+        or any(
+            canonical_oid(object_id, "authenticated base object") != object_id
+            or len(object_id) != len(base_sha)
+            for object_id in object_ids
+        )
+    ):
+        raise GateError("authenticated base object inventory is invalid")
+    metadata = git_object_metadata(git_dir, object_ids)
+    if any(value is None for value in metadata.values()):
+        raise GateError("authenticated base object closure is incomplete")
+    return frozenset(
+        object_id
+        for object_id, value in metadata.items()
+        if value is not None and value[0] == "blob"
+    )
+
+
 def validate_oid_only_candidate_store(
     git_dir: Path,
     *,
-    base_entries: tuple[TreeEntry, ...],
+    base_sha: str,
     candidate_trees: tuple[CandidateTree, ...],
-) -> None:
+) -> frozenset[str]:
     # Base content is authenticated and intentionally present. Every blob OID
     # introduced by the candidate range must remain absent until its path and
     # size have been admitted to the complete per-commit API manifest.
     validate_closed_candidate_repository(git_dir)
     if git_text(git_dir, "remote", max_bytes=1024).strip():
         raise GateError("candidate object store retained a remote fallback")
-    base_blob_oids = {
-        entry.object_id for entry in base_entries if entry.object_type == "blob"
-    }
+    base_blob_oids = reachable_base_blob_oids(git_dir, base_sha)
     candidate_blob_oids = {
         entry.object_id
         for tree in candidate_trees
@@ -3149,6 +3288,7 @@ def validate_oid_only_candidate_store(
         raise GateError("authenticated base blob closure is incomplete")
     if any(metadata[object_id] is not None for object_id in candidate_only_oids):
         raise GateError("candidate blob was present before allowlisted acquisition")
+    return frozenset(candidate_only_oids)
 
 
 def preflight_git_candidate(
@@ -3183,7 +3323,7 @@ def preflight_git_candidate(
         )
     validate_oid_only_candidate_store(
         git_dir,
-        base_entries=base_entries,
+        base_sha=base_sha,
         candidate_trees=local_trees,
     )
 
@@ -3603,6 +3743,175 @@ def load_merge_group_snapshot(path: Path) -> MergeGroupSnapshot:
         candidate_sha=candidate_sha,
         required_check=REQUIRED_CHECK_CONTEXT,
         tcb_sha256=tcb_sha256,
+    )
+
+
+def load_merge_group_projection(path: Path) -> MergeGroupProjection:
+    payload, _raw = read_bounded_json_file(path, "merge-group projection")
+    exact_keys(
+        payload,
+        {
+            "schema_version",
+            "kind",
+            "validation_mode",
+            "policy",
+            "role",
+            "candidate_base_sha",
+            "queue_base_sha",
+            "candidate_sha",
+            "queue_sha",
+            "candidate_tree_sha",
+            "queue_tree_sha",
+            "prospective_sha",
+            "prospective_tree_sha",
+            "squash_subject",
+            "trust_generation",
+            "changed_path_count",
+            "delta_sha256",
+        },
+        "merge-group projection",
+    )
+    policy = payload.get("policy")
+    role = payload.get("role")
+    subject = payload.get("squash_subject")
+    changed_path_count = payload.get("changed_path_count")
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("kind") != "retrospective-history-v2-merge-group-projection"
+        or policy not in {"bootstrap-v2", "history-v2"}
+        or payload.get("validation_mode") != f"{policy}-prospective-squash"
+        or role not in {"admin", "publication"}
+        or not isinstance(subject, str)
+        or not subject
+        or len(subject.encode("utf-8")) > 256
+        or any(character in subject for character in "\r\n\0")
+        or type(changed_path_count) is not int
+        or changed_path_count < 0
+    ):
+        raise GateError("merge-group projection schema is invalid")
+    oid_fields = (
+        "candidate_base_sha",
+        "queue_base_sha",
+        "candidate_sha",
+        "queue_sha",
+        "candidate_tree_sha",
+        "queue_tree_sha",
+        "prospective_sha",
+        "prospective_tree_sha",
+    )
+    oids = {
+        field: canonical_oid(payload.get(field), f"merge-group projection {field}")
+        for field in oid_fields
+    }
+    if len({len(value) for value in oids.values()}) != 1:
+        raise GateError("merge-group projection hash formats differ")
+    return MergeGroupProjection(
+        policy=policy,
+        role=role,
+        candidate_base_sha=oids["candidate_base_sha"],
+        queue_base_sha=oids["queue_base_sha"],
+        candidate_sha=oids["candidate_sha"],
+        queue_sha=oids["queue_sha"],
+        candidate_tree_sha=oids["candidate_tree_sha"],
+        queue_tree_sha=oids["queue_tree_sha"],
+        prospective_sha=oids["prospective_sha"],
+        prospective_tree_sha=oids["prospective_tree_sha"],
+        squash_subject=subject,
+        trust_generation=canonical_sha256(
+            payload.get("trust_generation"),
+            "merge-group projection trust generation",
+        ),
+        changed_path_count=changed_path_count,
+        delta_sha256=canonical_sha256(
+            payload.get("delta_sha256"),
+            "merge-group projection delta",
+        ),
+    )
+
+
+def load_merge_group_runtime_evidence(path: Path) -> MergeGroupRuntimeEvidence:
+    authority_uid = os.geteuid()
+    payload, _raw = read_bounded_json_file(
+        path,
+        "merge-group runtime evidence",
+        expected_owner_uid=authority_uid,
+    )
+    field_names = {field.name for field in fields(MergeGroupRuntimeEvidence)}
+    exact_keys(
+        payload,
+        {"schema_version", "kind", *field_names},
+        "merge-group runtime evidence",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("kind") != MERGE_GROUP_RUNTIME_EVIDENCE_KIND
+    ):
+        raise GateError("merge-group runtime evidence identity is invalid")
+    policy = payload.get("policy")
+    if policy not in {"bootstrap-v2", "history-v2"}:
+        raise GateError("merge-group runtime evidence policy is invalid")
+    oid_names = (
+        "queue_base_sha",
+        "candidate_sha",
+        "queue_sha",
+        "queue_tree_sha",
+        "prospective_sha",
+        "prospective_tree_sha",
+    )
+    oids = {
+        name: canonical_oid(payload.get(name), f"runtime evidence {name}")
+        for name in oid_names
+    }
+    if len({len(value) for value in oids.values()}) != 1:
+        raise GateError("merge-group runtime evidence hash formats differ")
+    integer_names = (
+        "compile_exit_code",
+        "test_exit_code",
+        "authority_uid",
+        "execution_uid",
+    )
+    integers = {name: payload.get(name) for name in integer_names}
+    if any(type(value) is not int or value < 0 for value in integers.values()):
+        raise GateError("merge-group runtime evidence integers are invalid")
+    if integers["authority_uid"] != authority_uid:
+        raise GateError(
+            "merge-group runtime evidence authority differs from the receipt owner"
+        )
+    boolean_names = ("authority_write_access", "source_authority_pristine")
+    if any(type(payload.get(name)) is not bool for name in boolean_names):
+        raise GateError("merge-group runtime evidence booleans are invalid")
+    return MergeGroupRuntimeEvidence(
+        policy=policy,
+        **oids,
+        projection_sha256=canonical_sha256(
+            payload.get("projection_sha256"),
+            "runtime evidence projection",
+        ),
+        python_version=payload.get("python_version"),
+        python_executable_sha256=canonical_sha256(
+            payload.get("python_executable_sha256"),
+            "runtime evidence Python executable",
+        ),
+        requirements_sha256=canonical_sha256(
+            payload.get("requirements_sha256"),
+            "runtime evidence requirements",
+        ),
+        runtime_profile=payload.get("runtime_profile"),
+        compile_command_sha256=canonical_sha256(
+            payload.get("compile_command_sha256"),
+            "runtime evidence compile command",
+        ),
+        test_command_sha256=canonical_sha256(
+            payload.get("test_command_sha256"),
+            "runtime evidence test command",
+        ),
+        compile_exit_code=integers["compile_exit_code"],
+        test_exit_code=integers["test_exit_code"],
+        authority_uid=integers["authority_uid"],
+        execution_uid=integers["execution_uid"],
+        credential_environment=payload.get("credential_environment"),
+        authority_write_access=payload.get("authority_write_access"),
+        source_authority_pristine=payload.get("source_authority_pristine"),
     )
 
 
@@ -4052,6 +4361,14 @@ def _validate_merge_group_graph(
                 squash_subject=subject,
             )
 
+    prospective_commit = validate_candidate_commit_object(
+        git_dir,
+        prospective_sha,
+        strict_bootstrap_metadata=False,
+    )
+    if prospective_commit.tree_oid != queue_commit.tree_oid:
+        raise GateError("prospective commit does not preserve the exact Q tree")
+
     delta_sha256 = hashlib.sha256(compact_json_bytes(candidate_delta)).hexdigest()
     return MergeGroupProjection(
         policy=policy,
@@ -4063,6 +4380,7 @@ def _validate_merge_group_graph(
         candidate_tree_sha=candidate_commit.tree_oid,
         queue_tree_sha=queue_commit.tree_oid,
         prospective_sha=prospective_sha,
+        prospective_tree_sha=prospective_commit.tree_oid,
         squash_subject=subject,
         trust_generation=trust_generation,
         changed_path_count=len(candidate_delta),
@@ -4153,6 +4471,91 @@ def validate_merge_group_transaction(
     return projection
 
 
+def merge_group_projection_sha256(projection: MergeGroupProjection) -> str:
+    return hashlib.sha256(compact_json_bytes(projection.as_dict())).hexdigest()
+
+
+def validate_merge_group_runtime_evidence(
+    *,
+    git_dir: Path,
+    snapshot: MergeGroupSnapshot,
+    projection: MergeGroupProjection,
+    evidence: MergeGroupRuntimeEvidence,
+    expected_python_executable_sha256: str,
+) -> None:
+    expected_python_executable_sha256 = canonical_sha256(
+        expected_python_executable_sha256,
+        "trusted runtime Python executable",
+    )
+    if (
+        evidence.policy != projection.policy
+        or evidence.queue_base_sha != snapshot.base_sha
+        or evidence.candidate_sha != snapshot.candidate_sha
+        or evidence.queue_sha != snapshot.queue_sha
+        or evidence.queue_tree_sha != projection.queue_tree_sha
+        or evidence.prospective_sha != projection.prospective_sha
+        or evidence.prospective_tree_sha != projection.prospective_tree_sha
+        or projection.queue_base_sha != snapshot.base_sha
+        or projection.candidate_sha != snapshot.candidate_sha
+        or projection.queue_sha != snapshot.queue_sha
+        or projection.queue_tree_sha != projection.prospective_tree_sha
+    ):
+        raise GateError("merge-group runtime evidence is stale or cross-transaction")
+    if evidence.projection_sha256 != merge_group_projection_sha256(projection):
+        raise GateError("merge-group runtime evidence projection digest differs")
+    if (
+        evidence.python_version != QUEUE_RUNTIME_PYTHON_VERSION
+        or evidence.python_executable_sha256 != expected_python_executable_sha256
+        or evidence.runtime_profile != QUEUE_RUNTIME_PROFILE
+        or evidence.compile_command_sha256 != QUEUE_RUNTIME_COMPILE_COMMAND_SHA256
+        or evidence.test_command_sha256 != QUEUE_RUNTIME_TEST_COMMAND_SHA256
+        or evidence.compile_exit_code != 0
+        or evidence.test_exit_code != 0
+        or evidence.execution_uid == 0
+        or evidence.execution_uid == evidence.authority_uid
+        or evidence.credential_environment != "empty"
+        or evidence.authority_write_access is not False
+        or evidence.source_authority_pristine is not True
+    ):
+        raise GateError("merge-group runtime evidence did not prove the exact profile")
+    requirements = git_output(
+        git_dir.resolve(),
+        "cat-file",
+        "blob",
+        f"{snapshot.queue_sha}:requirements-v2.txt",
+        max_bytes=MAX_BLOB_BYTES,
+    )
+    if hashlib.sha256(requirements).hexdigest() != evidence.requirements_sha256:
+        raise GateError("merge-group runtime evidence requirements digest differs")
+
+
+def merge_group_admission_payload(
+    *,
+    snapshot: MergeGroupSnapshot,
+    projection: MergeGroupProjection,
+    evidence: MergeGroupRuntimeEvidence,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "kind": MERGE_GROUP_ADMISSION_KIND,
+        "decision": "accepted",
+        "policy": projection.policy,
+        "queue_base_sha": snapshot.base_sha,
+        "candidate_sha": snapshot.candidate_sha,
+        "queue_sha": snapshot.queue_sha,
+        "queue_tree_sha": projection.queue_tree_sha,
+        "prospective_sha": projection.prospective_sha,
+        "prospective_tree_sha": projection.prospective_tree_sha,
+        "snapshot_sha256": hashlib.sha256(
+            compact_json_bytes(snapshot.as_dict())
+        ).hexdigest(),
+        "projection_sha256": merge_group_projection_sha256(projection),
+        "runtime_evidence_sha256": hashlib.sha256(
+            compact_json_bytes(evidence.as_dict())
+        ).hexdigest(),
+    }
+
+
 def git_blob_object_id(value: bytes, *, expected_length: int) -> str:
     if expected_length == 40:
         digest = hashlib.sha1(usedforsecurity=False)
@@ -4216,12 +4619,14 @@ def materialize_preflight_blobs(
         raise GateError("candidate bare Git directory is unavailable")
     repository = canonical_repository(repository)
     validate_closed_candidate_repository(git_dir)
-    validate_oid_only_candidate_store(
+    candidate_only_oids = validate_oid_only_candidate_store(
         git_dir,
-        base_entries=git_tree_entries(git_dir, manifest.base_sha),
+        base_sha=manifest.base_sha,
         candidate_trees=manifest.trees,
     )
     for entry in allowed_blob_entries(manifest):
+        if entry.object_id not in candidate_only_oids:
+            continue
         if blob_loader is None:
             encoded_oid = parse.quote(entry.object_id, safe="")
             payload = github_json(
@@ -4361,31 +4766,72 @@ def _read_authority_blob_objects(
         input_data=input_data,
         max_bytes=MAX_TREE_BYTES + len(object_ids) * 128 + 1,
     )
+    return _decode_blob_batch(
+        raw,
+        object_ids=object_ids,
+        expected_oid_length=expected_oid_length,
+        label="default authority",
+    )
+
+
+def _read_candidate_blob_objects(
+    git_dir: Path,
+    entries: tuple[TreeEntry, ...],
+    *,
+    expected_oid_length: int,
+) -> dict[str, bytes]:
+    object_ids = tuple(
+        sorted({entry.object_id for entry in entries if entry.object_type == "blob"})
+    )
+    raw = git_output(
+        git_dir,
+        "cat-file",
+        "--batch",
+        input_data="".join(f"{object_id}\n" for object_id in object_ids).encode(
+            "ascii"
+        ),
+        max_bytes=MAX_TREE_BYTES + len(object_ids) * 128 + 1,
+    )
+    return _decode_blob_batch(
+        raw,
+        object_ids=object_ids,
+        expected_oid_length=expected_oid_length,
+        label="runtime authority",
+    )
+
+
+def _decode_blob_batch(
+    raw: bytes,
+    *,
+    object_ids: tuple[str, ...],
+    expected_oid_length: int,
+    label: str,
+) -> dict[str, bytes]:
     values: dict[str, bytes] = {}
     cursor = 0
     total_bytes = 0
     for expected_oid in object_ids:
         line_end = raw.find(b"\n", cursor)
         if line_end < 0:
-            raise GateError("default authority blob metadata is incomplete")
+            raise GateError(f"{label} blob metadata is incomplete")
         try:
             fields = raw[cursor:line_end].decode("ascii").split(" ")
         except UnicodeDecodeError as exc:
-            raise GateError("default authority blob metadata is invalid") from exc
+            raise GateError(f"{label} blob metadata is invalid") from exc
         if (
             len(fields) != 3
             or fields[0] != expected_oid
             or fields[1] != "blob"
             or not fields[2].isdecimal()
         ):
-            raise GateError("default authority blob object is unavailable")
+            raise GateError(f"{label} blob object is unavailable")
         size = int(fields[2])
         if size > MAX_BLOB_BYTES:
-            raise GateError("default authority blob exceeds the trusted size limit")
+            raise GateError(f"{label} blob exceeds the trusted size limit")
         value_start = line_end + 1
         value_end = value_start + size
         if value_end >= len(raw) or raw[value_end : value_end + 1] != b"\n":
-            raise GateError("default authority blob payload is incomplete")
+            raise GateError(f"{label} blob payload is incomplete")
         value = raw[value_start:value_end]
         if (
             git_blob_object_id(
@@ -4394,14 +4840,14 @@ def _read_authority_blob_objects(
             )
             != expected_oid
         ):
-            raise GateError("default authority blob content differs from its object ID")
+            raise GateError(f"{label} blob content differs from its object ID")
         total_bytes += size
         if total_bytes > MAX_TREE_BYTES:
-            raise GateError("default authority blob closure exceeds the trusted limit")
+            raise GateError(f"{label} blob closure exceeds the trusted limit")
         values[expected_oid] = value
         cursor = value_end + 1
     if cursor != len(raw):
-        raise GateError("default authority blob response contains trailing data")
+        raise GateError(f"{label} blob response contains trailing data")
     return values
 
 
@@ -4409,6 +4855,7 @@ def _read_stable_execution_blob(
     path: Path,
     *,
     expected_mode: int,
+    expected_owner_uid: int | None = None,
 ) -> bytes:
     # Protected properties: regular-file identity, exact Git-derived access
     # mode, and stable bytes. Timestamps and other metadata-only churn are
@@ -4428,6 +4875,8 @@ def _read_stable_execution_blob(
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode):
             raise GateError("default execution blob is not a regular file")
+        if expected_owner_uid is not None and opened.st_uid != expected_owner_uid:
+            raise GateError("default execution blob owner differs from the authority")
         if stat.S_IMODE(opened.st_mode) != expected_mode:
             raise GateError("default execution blob access policy changed")
         if not 0 <= opened.st_size <= MAX_BLOB_BYTES:
@@ -4454,6 +4903,8 @@ def _read_stable_execution_blob(
         raise GateError("default execution blob content changed while being read")
     if (opened.st_dev, opened.st_ino) != (final.st_dev, final.st_ino):
         raise GateError("default execution blob was replaced while being read")
+    if expected_owner_uid is not None and final.st_uid != expected_owner_uid:
+        raise GateError("default execution blob owner changed while being read")
     if stat.S_IMODE(final.st_mode) != expected_mode:
         raise GateError("default execution blob access policy changed")
     try:
@@ -4473,12 +4924,19 @@ def _read_stable_execution_blob(
         opened.st_ino,
     ):
         raise GateError("default execution blob was replaced while being read")
+    if expected_owner_uid is not None and current.st_uid != expected_owner_uid:
+        raise GateError("default execution blob owner changed during revalidation")
     if stat.S_IMODE(current.st_mode) != expected_mode:
         raise GateError("default execution blob access policy changed")
     return first
 
 
-def _execution_tree_inventory(root: Path) -> dict[str, tuple[str, int]]:
+def _execution_tree_inventory(
+    root: Path,
+    *,
+    expected_directory_mode: int = 0o700,
+    expected_owner_uid: int | None = None,
+) -> dict[str, tuple[str, int, int]]:
     try:
         root_metadata = os.lstat(root)
     except FileNotFoundError as exc:
@@ -4489,10 +4947,12 @@ def _execution_tree_inventory(root: Path) -> dict[str, tuple[str, int]]:
         raise GateError("default execution tree could not be inspected") from exc
     if not stat.S_ISDIR(root_metadata.st_mode) or stat.S_ISLNK(root_metadata.st_mode):
         raise GateError("default execution tree is not a real directory")
-    if stat.S_IMODE(root_metadata.st_mode) != 0o700:
+    if stat.S_IMODE(root_metadata.st_mode) != expected_directory_mode:
         raise GateError("default execution root access policy changed")
+    if expected_owner_uid is not None and root_metadata.st_uid != expected_owner_uid:
+        raise GateError("default execution root owner differs from the authority")
 
-    inventory: dict[str, tuple[str, int]] = {}
+    inventory: dict[str, tuple[str, int, int]] = {}
     pending = [(root, "")]
     while pending:
         directory, prefix = pending.pop()
@@ -4533,7 +4993,11 @@ def _execution_tree_inventory(root: Path) -> dict[str, tuple[str, int]]:
                         raise GateError(
                             "default execution tree contains an unsupported object"
                         )
-                    inventory[path] = (kind, stat.S_IMODE(metadata.st_mode))
+                    inventory[path] = (
+                        kind,
+                        stat.S_IMODE(metadata.st_mode),
+                        metadata.st_uid,
+                    )
                     if len(inventory) > MAX_TREE_ENTRIES:
                         raise GateError(
                             "default execution tree exceeds the trusted entry limit"
@@ -4556,6 +5020,10 @@ def verify_default_execution_tree(
     *,
     entries: tuple[TreeEntry, ...],
     expected_tree_sha: str,
+    expected_directory_mode: int = 0o700,
+    expected_regular_mode: int = 0o644,
+    expected_executable_mode: int = 0o755,
+    expected_owner_uid: int | None = None,
 ) -> None:
     expected_tree_sha = canonical_oid(
         expected_tree_sha,
@@ -4571,7 +5039,11 @@ def verify_default_execution_tree(
         expected_tree_sha=expected_tree_sha,
     )
     expected = {entry.path: entry for entry in entries}
-    observed = _execution_tree_inventory(root)
+    observed = _execution_tree_inventory(
+        root,
+        expected_directory_mode=expected_directory_mode,
+        expected_owner_uid=expected_owner_uid,
+    )
     if set(observed) - set(expected):
         raise GateError("default execution tree contains unexpected paths")
     if set(expected) - set(observed):
@@ -4579,17 +5051,24 @@ def verify_default_execution_tree(
 
     total_bytes = 0
     for path, entry in expected.items():
-        observed_kind, observed_mode = observed[path]
+        observed_kind, observed_mode, observed_uid = observed[path]
+        if expected_owner_uid is not None and observed_uid != expected_owner_uid:
+            raise GateError("default execution entry owner differs from the authority")
         if entry.object_type == "tree":
-            if observed_kind != "tree" or observed_mode != 0o700:
+            if observed_kind != "tree" or observed_mode != expected_directory_mode:
                 raise GateError("default execution directory access policy changed")
             continue
-        expected_mode = 0o755 if entry.mode == "100755" else 0o644
+        expected_mode = (
+            expected_executable_mode
+            if entry.mode == "100755"
+            else expected_regular_mode
+        )
         if observed_kind != "blob" or observed_mode != expected_mode:
             raise GateError("default execution blob access policy changed")
         value = _read_stable_execution_blob(
             root / Path(*PurePosixPath(path).parts),
             expected_mode=expected_mode,
+            expected_owner_uid=expected_owner_uid,
         )
         total_bytes += len(value)
         if total_bytes > MAX_TREE_BYTES:
@@ -4688,12 +5167,192 @@ def prepare_default_execution_tree(
     return snapshot
 
 
+def capture_runtime_authority(
+    git_dir: Path,
+    *,
+    expected_head: str,
+) -> tuple[AuthoritySnapshot, tuple[TreeEntry, ...], dict[str, bytes]]:
+    git_dir = git_dir.resolve()
+    expected_head = canonical_oid(expected_head, "runtime authority head")
+    validate_closed_candidate_repository(git_dir)
+    if git_text(git_dir, "cat-file", "-t", expected_head, max_bytes=64).strip() != (
+        "commit"
+    ):
+        raise GateError("runtime authority head is not a commit")
+    tree_sha = canonical_oid(
+        git_text(
+            git_dir,
+            "rev-parse",
+            "--verify",
+            f"{expected_head}^{{tree}}",
+            max_bytes=128,
+        ).strip(),
+        "runtime authority tree",
+    )
+    entries = git_tree_entries(git_dir, expected_head)
+    if any(entry.object_type not in {"blob", "tree"} for entry in entries):
+        raise GateError("runtime authority tree contains an unsupported object")
+    reconstruct_candidate_tree_oid(entries, expected_tree_sha=tree_sha)
+    blobs = _read_candidate_blob_objects(
+        git_dir,
+        entries,
+        expected_oid_length=len(expected_head),
+    )
+    validate_closed_candidate_repository(git_dir)
+    return AuthoritySnapshot(expected_head, tree_sha), entries, blobs
+
+
+def _require_runtime_authority_directory(path: Path, authority_uid: int) -> None:
+    try:
+        metadata = os.lstat(path)
+    except FileNotFoundError as exc:
+        raise GateError("runtime authority directory is missing") from exc
+    except PermissionError as exc:
+        raise GateError("runtime authority directory is unreadable") from exc
+    except OSError as exc:
+        raise GateError("runtime authority directory could not be inspected") from exc
+    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise GateError("runtime authority directory is not a real directory")
+    if metadata.st_uid != authority_uid:
+        raise GateError("runtime authority directory owner differs")
+    if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise GateError("runtime authority directory access policy is unsafe")
+
+
+def prepare_runtime_execution_tree(
+    git_dir: Path,
+    execution_root: Path,
+    *,
+    expected_head: str,
+) -> RuntimeAuthoritySnapshot:
+    git_dir = git_dir.resolve()
+    execution_root = execution_root.resolve()
+    snapshot, entries, blob_values = capture_runtime_authority(
+        git_dir,
+        expected_head=expected_head,
+    )
+    if execution_root == git_dir or execution_root.is_relative_to(git_dir):
+        raise GateError("runtime execution tree overlaps the authority store")
+    if execution_root.exists():
+        raise GateError("runtime execution tree already exists")
+    execution_root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    authority_uid = os.geteuid()
+    _require_runtime_authority_directory(execution_root.parent, authority_uid)
+    execution_root.mkdir(mode=0o700)
+
+    directories = sorted(
+        (entry for entry in entries if entry.object_type == "tree"),
+        key=lambda entry: (len(PurePosixPath(entry.path).parts), entry.path),
+    )
+    try:
+        for entry in directories:
+            (execution_root / Path(*PurePosixPath(entry.path).parts)).mkdir(mode=0o700)
+        total_bytes = 0
+        for entry in sorted(
+            (entry for entry in entries if entry.object_type == "blob"),
+            key=lambda entry: entry.path,
+        ):
+            value = blob_values[entry.object_id]
+            total_bytes += len(value)
+            if total_bytes > MAX_TREE_BYTES:
+                raise GateError("runtime execution tree exceeds the trusted byte limit")
+            destination = execution_root / Path(*PurePosixPath(entry.path).parts)
+            with destination.open("xb") as stream:
+                stream.write(value)
+            destination.chmod(0o555 if entry.mode == "100755" else 0o444)
+        for entry in reversed(directories):
+            (execution_root / Path(*PurePosixPath(entry.path).parts)).chmod(0o555)
+        execution_root.chmod(0o555)
+    except GateError:
+        raise
+    except OSError as exc:
+        raise GateError("runtime execution tree could not be materialized") from exc
+    verify_default_execution_tree(
+        execution_root,
+        entries=entries,
+        expected_tree_sha=snapshot.tree_sha,
+        expected_directory_mode=0o555,
+        expected_regular_mode=0o444,
+        expected_executable_mode=0o555,
+        expected_owner_uid=authority_uid,
+    )
+    observed, _entries, _blobs = capture_runtime_authority(
+        git_dir,
+        expected_head=expected_head,
+    )
+    if observed != snapshot:
+        raise GateError("runtime authority changed during materialization")
+    try:
+        root_metadata = os.lstat(execution_root)
+    except OSError as exc:
+        raise GateError("runtime execution root identity is unavailable") from exc
+    return RuntimeAuthoritySnapshot(
+        head_sha=snapshot.head_sha,
+        tree_sha=snapshot.tree_sha,
+        authority_uid=authority_uid,
+        execution_root_device=root_metadata.st_dev,
+        execution_root_inode=root_metadata.st_ino,
+    )
+
+
+def verify_runtime_authority(
+    git_dir: Path,
+    execution_root: Path,
+    *,
+    expected_head: str,
+    receipt: RuntimeAuthoritySnapshot,
+) -> None:
+    if receipt.authority_uid != os.geteuid():
+        raise GateError("runtime authority receipt owner differs")
+    _require_runtime_authority_directory(
+        execution_root.resolve().parent,
+        receipt.authority_uid,
+    )
+    try:
+        root_metadata = os.lstat(execution_root)
+    except OSError as exc:
+        raise GateError("runtime execution root identity is unavailable") from exc
+    if (root_metadata.st_dev, root_metadata.st_ino) != (
+        receipt.execution_root_device,
+        receipt.execution_root_inode,
+    ):
+        raise GateError("runtime execution root object identity changed")
+    observed, entries, _blobs = capture_runtime_authority(
+        git_dir.resolve(),
+        expected_head=expected_head,
+    )
+    if (observed.head_sha, observed.tree_sha) != (
+        receipt.head_sha,
+        receipt.tree_sha,
+    ):
+        raise GateError("runtime authority changed after candidate tests")
+    verify_default_execution_tree(
+        execution_root.resolve(),
+        entries=entries,
+        expected_tree_sha=receipt.tree_sha,
+        expected_directory_mode=0o555,
+        expected_regular_mode=0o444,
+        expected_executable_mode=0o555,
+        expected_owner_uid=receipt.authority_uid,
+    )
+
+
 def authority_snapshot_payload(snapshot: AuthoritySnapshot) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "kind": DEFAULT_AUTHORITY_RECEIPT_KIND,
         "head_sha": snapshot.head_sha,
         "tree_sha": snapshot.tree_sha,
+    }
+
+
+def runtime_authority_snapshot_payload(
+    snapshot: RuntimeAuthoritySnapshot,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "kind": RUNTIME_AUTHORITY_RECEIPT_KIND,
+        **asdict(snapshot),
     }
 
 
@@ -4717,6 +5376,54 @@ def load_authority_snapshot(path: Path) -> AuthoritySnapshot:
     if len(head_sha) != len(tree_sha):
         raise GateError("default authority receipt hash formats differ")
     return AuthoritySnapshot(head_sha, tree_sha)
+
+
+def load_runtime_authority_snapshot(path: Path) -> RuntimeAuthoritySnapshot:
+    authority_uid = os.geteuid()
+    payload, _raw = read_bounded_json_file(
+        path,
+        "runtime authority receipt",
+        expected_owner_uid=authority_uid,
+    )
+    exact_keys(
+        payload,
+        {
+            "schema_version",
+            "kind",
+            "head_sha",
+            "tree_sha",
+            "authority_uid",
+            "execution_root_device",
+            "execution_root_inode",
+        },
+        "runtime authority receipt",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("kind") != RUNTIME_AUTHORITY_RECEIPT_KIND
+    ):
+        raise GateError("runtime authority receipt schema is invalid")
+    head_sha = canonical_oid(payload.get("head_sha"), "runtime receipt head")
+    tree_sha = canonical_oid(payload.get("tree_sha"), "runtime receipt tree")
+    if len(head_sha) != len(tree_sha):
+        raise GateError("runtime authority receipt hash formats differ")
+    integer_names = (
+        "authority_uid",
+        "execution_root_device",
+        "execution_root_inode",
+    )
+    integers = {name: payload.get(name) for name in integer_names}
+    if any(type(value) is not int or value < 0 for value in integers.values()):
+        raise GateError("runtime authority receipt identity is invalid")
+    if integers["authority_uid"] != authority_uid:
+        raise GateError("runtime authority receipt owner differs")
+    return RuntimeAuthoritySnapshot(
+        head_sha=head_sha,
+        tree_sha=tree_sha,
+        authority_uid=integers["authority_uid"],
+        execution_root_device=integers["execution_root_device"],
+        execution_root_inode=integers["execution_root_inode"],
+    )
 
 
 def verify_default_authority(
@@ -4843,6 +5550,26 @@ def main(argv: list[str] | None = None) -> int:
     verify_default_parser.add_argument("--expected-head", required=True)
     verify_default_parser.add_argument("--receipt", required=True, type=Path)
 
+    prepare_runtime_parser = subparsers.add_parser("prepare-runtime-execution")
+    prepare_runtime_parser.add_argument("--git-dir", required=True, type=Path)
+    prepare_runtime_parser.add_argument(
+        "--execution-root",
+        required=True,
+        type=Path,
+    )
+    prepare_runtime_parser.add_argument("--expected-head", required=True)
+    prepare_runtime_parser.add_argument("--output", required=True, type=Path)
+
+    verify_runtime_parser = subparsers.add_parser("verify-runtime-authority")
+    verify_runtime_parser.add_argument("--git-dir", required=True, type=Path)
+    verify_runtime_parser.add_argument(
+        "--execution-root",
+        required=True,
+        type=Path,
+    )
+    verify_runtime_parser.add_argument("--expected-head", required=True)
+    verify_runtime_parser.add_argument("--receipt", required=True, type=Path)
+
     verify_github_commit_parser = subparsers.add_parser("verify-default-github-commit")
     verify_github_commit_parser.add_argument("--repository", required=True)
     verify_github_commit_parser.add_argument(
@@ -4869,6 +5596,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     validate_group_parser.add_argument("--trusted-base-root", type=Path)
     validate_group_parser.add_argument("--output", required=True, type=Path)
+
+    admit_group_parser = subparsers.add_parser("admit-merge-group")
+    admit_group_parser.add_argument("--snapshot", required=True, type=Path)
+    admit_group_parser.add_argument("--git-dir", required=True, type=Path)
+    admit_group_parser.add_argument("--candidate-root", required=True, type=Path)
+    admit_group_parser.add_argument("--queue-root", required=True, type=Path)
+    admit_group_parser.add_argument(
+        "--policy", required=True, choices=("bootstrap-v2", "history-v2")
+    )
+    admit_group_parser.add_argument("--trusted-base-root", type=Path)
+    admit_group_parser.add_argument(
+        "--runtime-evidence",
+        required=True,
+        type=Path,
+    )
+    admit_group_parser.add_argument(
+        "--expected-python-sha256",
+        required=True,
+    )
+    admit_group_parser.add_argument("--output", required=True, type=Path)
 
     finalize_group_parser = subparsers.add_parser("finalize-merge-group")
     finalize_group_parser.add_argument("--snapshot", required=True, type=Path)
@@ -4952,6 +5699,20 @@ def main(argv: list[str] | None = None) -> int:
                 expected_head=args.expected_head,
                 receipt=load_authority_snapshot(args.receipt.resolve()),
             )
+        elif args.command == "prepare-runtime-execution":
+            snapshot = prepare_runtime_execution_tree(
+                args.git_dir.resolve(),
+                args.execution_root.resolve(),
+                expected_head=args.expected_head,
+            )
+            write_json(args.output, runtime_authority_snapshot_payload(snapshot))
+        elif args.command == "verify-runtime-authority":
+            verify_runtime_authority(
+                args.git_dir.resolve(),
+                args.execution_root.resolve(),
+                expected_head=args.expected_head,
+                receipt=load_runtime_authority_snapshot(args.receipt.resolve()),
+            )
         elif args.command == "verify-default-github-commit":
             receipt = verify_default_github_commit(
                 repository=args.repository,
@@ -5001,6 +5762,38 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             write_json(args.output, projection.as_dict())
+        elif args.command == "admit-merge-group":
+            snapshot = load_merge_group_snapshot(args.snapshot.resolve())
+            projection = validate_merge_group_transaction(
+                git_dir=args.git_dir.resolve(),
+                snapshot=snapshot,
+                candidate_root=args.candidate_root.resolve(),
+                queue_root=args.queue_root.resolve(),
+                policy=args.policy,
+                trusted_base_root=(
+                    args.trusted_base_root.resolve()
+                    if args.trusted_base_root is not None
+                    else None
+                ),
+            )
+            evidence = load_merge_group_runtime_evidence(
+                args.runtime_evidence.resolve()
+            )
+            validate_merge_group_runtime_evidence(
+                git_dir=args.git_dir.resolve(),
+                snapshot=snapshot,
+                projection=projection,
+                evidence=evidence,
+                expected_python_executable_sha256=(args.expected_python_sha256),
+            )
+            write_json(
+                args.output,
+                merge_group_admission_payload(
+                    snapshot=snapshot,
+                    projection=projection,
+                    evidence=evidence,
+                ),
+            )
         elif args.command == "finalize-merge-group":
             payload = verify_live_merge_group_authority(
                 expected=load_merge_group_snapshot(args.snapshot.resolve()),
