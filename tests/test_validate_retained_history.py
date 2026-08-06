@@ -5145,6 +5145,44 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertFalse(marker.exists())
 
+    def test_actual_default_cli_requires_explicit_root(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--base-root",
+                "/synthetic/base",
+                "--candidate-root",
+                "/synthetic/candidate",
+                "--mode",
+                "history-v2-actual-default-squash",
+                "--base-rev",
+                "a" * 40,
+                "--head-rev",
+                "b" * 40,
+                "--repository",
+                "Joey-Tools/codex-session-retrospective-history",
+                "--repository-id",
+                str(FIXTURE_REPOSITORY_ID),
+                "--github-commit-receipt",
+                "/synthetic/receipt.json",
+                "--event-created",
+                "false",
+                "--event-deleted",
+                "false",
+                "--event-forced",
+                "false",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("requires --root", result.stderr)
+
     def test_candidate_authorization_barrier_precedes_all_domain_control(
         self,
     ) -> None:

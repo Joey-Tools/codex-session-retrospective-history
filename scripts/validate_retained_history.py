@@ -19162,7 +19162,8 @@ def main(argv: list[str] | None = None) -> int:
                 issues.append(safe_exception_message(exc))
     elif args.mode == "history-v2-actual-default-squash":
         if (
-            args.base_root is None
+            args.root is None
+            or args.base_root is None
             or args.candidate_root is None
             or args.base_rev is None
             or args.head_rev is None
@@ -19177,7 +19178,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(
                 "history-v2-actual-default-squash mode requires --root, --base-root, --candidate-root, --base-rev, --head-rev, --repository, --repository-id, --github-commit-receipt, and every event flag"
             )
-        root = Path(args.root or ".")
+        root = Path(args.root)
         work_budget = HistoryV2WorkBudget()
         try:
             github_commit_receipt = load_history_v2_github_squash_receipt(
