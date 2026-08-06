@@ -39,9 +39,7 @@ TRUSTED_CI_HELPER = (
     Path(__file__).resolve().parents[1] / "scripts" / "trusted_history_ci.py"
 )
 FIXTURE_TIMESTAMP = 1_784_073_600
-FIXTURE_SIGNER_FINGERPRINT = (
-    "0123456789ABCDEF0123456789ABCDEF01234567"
-)
+FIXTURE_SIGNER_FINGERPRINT = "0123456789ABCDEF0123456789ABCDEF01234567"
 SCHEMA = (
     Path(__file__).resolve().parents[1]
     / "schemas"
@@ -107,7 +105,7 @@ LEGACY_CI = (
     "      - uses: actions/checkout@v4\n"
     "      - uses: actions/setup-python@v5\n"
     "        with:\n"
-    "          python-version: \"3.12\"\n"
+    '          python-version: "3.12"\n'
     "      - name: Validate JSON syntax\n"
     "        run: |\n"
     "          python -m json.tool schemas/session-retrospective-v1.schema.json >/dev/null\n"
@@ -246,9 +244,11 @@ def run_fixture_git_bytes(
 
 
 def fixture_mktree(root: Path, records: bytes) -> str:
-    return run_fixture_git_bytes(root, "mktree", "-z", input_data=records).decode(
-        "ascii"
-    ).strip()
+    return (
+        run_fixture_git_bytes(root, "mktree", "-z", input_data=records)
+        .decode("ascii")
+        .strip()
+    )
 
 
 def fixture_signature_armor(
@@ -323,15 +323,19 @@ def fixture_signature_headers(armor: bytes) -> tuple[bytes, ...]:
 
 
 def fixture_store_commit(root: Path, raw_commit: bytes) -> str:
-    return run_fixture_git_bytes(
-        root,
-        "hash-object",
-        "-t",
-        "commit",
-        "-w",
-        "--stdin",
-        input_data=raw_commit,
-    ).decode("ascii").strip()
+    return (
+        run_fixture_git_bytes(
+            root,
+            "hash-object",
+            "-t",
+            "commit",
+            "-w",
+            "--stdin",
+            input_data=raw_commit,
+        )
+        .decode("ascii")
+        .strip()
+    )
 
 
 def fixture_raw_commit(
@@ -349,6 +353,8 @@ def fixture_raw_commit(
     extra_headers: tuple[bytes, ...] = (),
     signature_armor: bytes | None = None,
     include_signature: bool = True,
+    message_trailing_newline: bool = True,
+    signature_trailing_blank_continuation: bool = False,
 ) -> str:
     signature = signature_armor or fixture_signature_armor(
         timestamp=committer_timestamp
@@ -363,9 +369,18 @@ def fixture_raw_commit(
             f"committer {committer} {committer_timestamp} {committer_timezone}"
         ).encode("utf-8"),
         *extra_headers,
-        *(fixture_signature_headers(signature) if include_signature else ()),
+        *(
+            (
+                *fixture_signature_headers(signature),
+                *((b" ",) if signature_trailing_blank_continuation else ()),
+            )
+            if include_signature
+            else ()
+        ),
     ]
-    raw_commit = b"\n".join(headers) + b"\n\n" + message.encode("utf-8") + b"\n"
+    raw_commit = b"\n".join(headers) + b"\n\n" + message.encode("utf-8")
+    if message_trailing_newline:
+        raw_commit += b"\n"
     return fixture_store_commit(root, raw_commit)
 
 
@@ -389,6 +404,31 @@ def fixture_commit_bytes(root: Path, commit_oid: str) -> bytes:
         "commit",
         commit_oid,
     )
+
+
+def github_squash_receipt(
+    parsed: object,
+    *,
+    base_sha: str,
+    head_sha: str,
+    repository: str = "Joey-Tools/codex-session-retrospective-history",
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "kind": MODULE.HISTORY_V2_GITHUB_SQUASH_RECEIPT_KIND,
+        "repository": repository,
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "tree_sha": parsed.tree_oid,
+        "signed_payload_sha256": hashlib.sha256(parsed.signed_payload).hexdigest(),
+        "signature_sha256": hashlib.sha256(parsed.signature_armor).hexdigest(),
+        "author_identity_sha256": parsed.author_identity_sha256,
+        "committer_identity_sha256": parsed.committer_identity_sha256,
+        "github_author_login": "SyntheticMaintainer",
+        "github_committer_login": "web-flow",
+        "verification_reason": "valid",
+        "verified_at": "2026-07-15T00:00:01Z",
+    }
 
 
 def fixture_commit_all(
@@ -554,8 +594,7 @@ def write_synthetic_history_v2_domain_sources(root: Path) -> None:
             'VALUE = "templates"\n'
         ),
         Path("scripts/retrospective_history_v2.py"): (
-            "def validate_v2_runs_with_inventory(*_args):\n"
-            "    return [], ()\n"
+            "def validate_v2_runs_with_inventory(*_args):\n    return [], ()\n"
         ),
     }
     for relative in MODULE.HISTORY_V2_DOMAIN_MODULE_PATHS:
@@ -603,9 +642,7 @@ def validate_synthetic_bootstrap_v2_candidate(
                 size=candidate_ci.stat().st_size,
                 expected_length=40,
             )
-            template = (
-                synthetic_base / MODULE.BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH
-            )
+            template = synthetic_base / MODULE.BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH
             template.write_bytes(candidate_ci.read_bytes())
             run_fixture_git(synthetic_base, "add", "--all")
             with mock.patch.object(
@@ -3363,10 +3400,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             )
 
             with mock.patch.object(MODULE, "BOOTSTRAP_V2_MAX_TREE_BYTES", 1):
-                bounded_issues = "\n".join(
-                    validate_synthetic_history_v2_tree(root)
-                )
-            self.assertIn("history-v2 tree exceeds the trusted size limit", bounded_issues)
+                bounded_issues = "\n".join(validate_synthetic_history_v2_tree(root))
+            self.assertIn(
+                "history-v2 tree exceeds the trusted size limit", bounded_issues
+            )
 
             report.write_text(
                 "Leaked endpoint " + risky_internal_url() + "\n",
@@ -3386,14 +3423,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 fixture_commit_all(root, "post migration base")
                 base = run_fixture_git(root, "rev-parse", "HEAD").stdout.strip()
                 if role == "publication":
-                    target = (
-                        root
-                        / "reports"
-                        / "daily"
-                        / "2026"
-                        / "07"
-                        / "15.md"
-                    )
+                    target = root / "reports" / "daily" / "2026" / "07" / "15.md"
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(
                         "# Daily retrospective\n",
@@ -3558,16 +3588,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as raw:
             trusted_root = Path(raw)
-            candidate_source = (
-                trusted_root / "retrospective_history_attestation_v2.py"
-            )
+            candidate_source = trusted_root / "retrospective_history_attestation_v2.py"
             candidate_source.write_text(
                 'VALUE = "candidate-path"\n',
                 encoding="utf-8",
             )
-            candidate_pyc = (
-                trusted_root / "retrospective_history_attestation_v2.pyc"
-            )
+            candidate_pyc = trusted_root / "retrospective_history_attestation_v2.pyc"
             py_compile.compile(
                 str(candidate_source),
                 cfile=str(candidate_pyc),
@@ -3911,10 +3937,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 )
             self.assertEqual(
                 snapshot_mutation_issues,
-                [
-                    "trusted history-v2 domain snapshot changed "
-                    "during validation"
-                ],
+                ["trusted history-v2 domain snapshot changed during validation"],
             )
 
     def test_domain_helper_diagnostics_are_closed_bounded_and_normalized(
@@ -3934,19 +3957,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             manifest.write_bytes(b'{"schema_version":2}\n')
             raw_session = risky_session_pointer()
             raw_url = risky_internal_url()
-            raw_issue = (
-                risky_local_path()
-                + " "
-                + raw_session
-                + " "
-                + raw_url
-            )
+            raw_issue = risky_local_path() + " " + raw_session + " " + raw_url
             cases: tuple[tuple[str, object, str], ...] = (
                 (
                     "valid but unsafe",
                     [raw_issue],
-                    "trusted history-v2 domain validator rejected "
-                    "the frozen snapshot",
+                    "trusted history-v2 domain validator rejected the frozen snapshot",
                 ),
                 (
                     "truthy object",
@@ -3966,7 +3982,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             )
             for label, helper_issues, expected in cases:
                 contract = MODULE.HistoryV2DomainContract(
-                    validate_v2_runs_with_inventory=lambda *_args, helper_issues=helper_issues: (
+                    validate_v2_runs_with_inventory=lambda *_args,
+                    helper_issues=helper_issues: (
                         helper_issues,
                         (relative,),
                     ),
@@ -4088,7 +4105,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     def test_frozen_file_reads_detect_identity_content_and_access_changes(
         self,
     ) -> None:
-        def snapshot(root: Path) -> tuple[
+        def snapshot(
+            root: Path,
+        ) -> tuple[
             tuple[object, ...] | None,
             str | None,
         ]:
@@ -4813,6 +4832,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     work_budget=MODULE.HistoryV2WorkBudget(),
                 )
             self.assertFalse(marker.exists())
+            receipt_path = Path(raw) / "github-commit-receipt.json"
+            receipt_path.write_text("{}\n", encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -4826,6 +4847,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     malicious_base,
                     "--head-rev",
                     head,
+                    "--repository",
+                    "Joey-Tools/codex-session-retrospective-history",
+                    "--github-commit-receipt",
+                    str(receipt_path),
                     "--event-created",
                     "false",
                     "--event-deleted",
@@ -4909,10 +4934,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("A", Path("README.md")),
             (
                 "A",
-                Path(
-                    "runs/daily/2026-07-15/"
-                    "aaaaaaaaaaaaaaaaaaaaaaaaaa/manifest.json"
-                ),
+                Path("runs/daily/2026-07-15/aaaaaaaaaaaaaaaaaaaaaaaaaa/manifest.json"),
             ),
         ]
         with (
@@ -4966,10 +4988,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         changed = [
             (
                 "A",
-                Path(
-                    "runs/daily/2026-07-15/"
-                    "aaaaaaaaaaaaaaaaaaaaaaaaaa/manifest.json"
-                ),
+                Path("runs/daily/2026-07-15/aaaaaaaaaaaaaaaaaaaaaaaaaa/manifest.json"),
             )
         ]
 
@@ -4995,13 +5014,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("truthy issues", (valid, {"accepted": True})),
         )
         for label, value in malformed:
-            payload, helper_issues = (
-                value if isinstance(value, tuple) else (value, [])
-            )
+            payload, helper_issues = value if isinstance(value, tuple) else (value, [])
             contract = MODULE.HistoryV2DomainContract(
                 validate_v2_runs_with_inventory=lambda *_args: ([], ()),
                 verify_publisher_attestation=lambda _blobs: True,
-                build_pull_request_merge_plan=lambda *_args, payload=payload, helper_issues=helper_issues: (
+                build_pull_request_merge_plan=lambda *_args,
+                payload=payload,
+                helper_issues=helper_issues: (
                     Plan(payload),
                     helper_issues,
                 ),
@@ -5343,10 +5362,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 tree_oid=tree_oid,
                 parents=(base,),
                 message="Publish retained history",
-                author=(
-                    "Joey Teng "
-                    "<12345+JoeyTeng@users.noreply.github.com>"
-                ),
+                author=("Joey Teng <12345+JoeyTeng@users.noreply.github.com>"),
                 committer="GitHub <noreply@github.com>",
                 include_signature=False,
             )
@@ -5418,7 +5434,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             header_cases = (
                 (
                     "unexpected",
-                    {"extra_headers": (b"x-provider safe",), "include_signature": False},
+                    {
+                        "extra_headers": (b"x-provider safe",),
+                        "include_signature": False,
+                    },
                 ),
                 (
                     "encoding",
@@ -5434,9 +5453,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     message="Publish retained history",
                     **options,
                 )
-                with self.subTest(label=label), self.assertRaisesRegex(
-                    ValueError,
-                    "header set",
+                with (
+                    self.subTest(label=label),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        "header set",
+                    ),
                 ):
                     MODULE.parse_history_v2_unsigned_squash_commit(
                         fixture_commit_bytes(root, commit_oid),
@@ -5447,10 +5469,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 ("author", "Raw user prompt"),
                 ("committer", "Tool output"),
             ):
-                squash_identity = (
-                    name
-                    + " <12345+Synthetic@users.noreply.github.com>"
-                )
+                squash_identity = name + " <12345+Synthetic@users.noreply.github.com>"
                 options = {
                     field: squash_identity,
                     "include_signature": False,
@@ -5475,9 +5494,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 )
                 self.assertNotIn(name, str(caught.exception))
 
-            private_identity = (
-                "Synthetic Publisher <" + risky_email() + ">"
-            )
+            private_identity = "Synthetic Publisher <" + risky_email() + ">"
             private_identity_oid = fixture_raw_commit(
                 root,
                 tree_oid=tree_oid,
@@ -5508,6 +5525,180 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     invalid_utf8_raw,
                     expected_oid=invalid_utf8_oid,
                 )
+
+    def test_github_squash_requires_exact_provider_receipt(self) -> None:
+        repository = "Joey-Tools/codex-session-retrospective-history"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "repo"
+            write_bootstrap_v2_candidate(root)
+            fixture_commit_all(root, "post migration base")
+            base = run_fixture_git(root, "rev-parse", "HEAD").stdout.strip()
+            tree_oid = run_fixture_git(
+                root,
+                "rev-parse",
+                f"{base}^{{tree}}",
+            ).stdout.strip()
+            squash = fixture_raw_commit(
+                root,
+                tree_oid=tree_oid,
+                parents=(base,),
+                message="Publish retained history",
+                author="Synthetic Maintainer <maintainer@example.net>",
+                committer="GitHub <noreply@github.com>",
+                author_timezone="+0100",
+                committer_timezone="+0100",
+                message_trailing_newline=False,
+                signature_trailing_blank_continuation=True,
+            )
+            fixture_set_head(root, squash)
+            parsed = MODULE.parse_history_v2_github_squash_commit(
+                fixture_commit_bytes(root, squash),
+                expected_oid=squash,
+            )
+            self.assertEqual(parsed.tree_oid, tree_oid)
+            self.assertEqual(parsed.parents, (base,))
+            self.assertTrue(parsed.signature_armor.endswith(b"\n"))
+            self.assertFalse(parsed.signed_payload.endswith(b"\n"))
+            multiline = fixture_raw_commit(
+                root,
+                tree_oid=tree_oid,
+                parents=(base,),
+                message=(
+                    "Publish retained history\n\n"
+                    "* Record the redacted retrospective summary"
+                ),
+                author="Synthetic Maintainer <maintainer@example.net>",
+                committer="GitHub <noreply@github.com>",
+                author_timezone="+0100",
+                committer_timezone="+0100",
+                message_trailing_newline=False,
+            )
+            self.assertEqual(
+                MODULE.parse_history_v2_github_squash_commit(
+                    fixture_commit_bytes(root, multiline),
+                    expected_oid=multiline,
+                ).tree_oid,
+                tree_oid,
+            )
+            receipt = github_squash_receipt(
+                parsed,
+                base_sha=base,
+                head_sha=squash,
+                repository=repository,
+            )
+            self.assertEqual(
+                MODULE.history_v2_single_parent_squash_coordinates(
+                    root,
+                    before_rev=base,
+                    head_rev=squash,
+                    github_commit_receipt=receipt,
+                    repository=repository,
+                ),
+                (tree_oid, (base,)),
+            )
+            with self.assertRaisesRegex(ValueError, "provider verification"):
+                MODULE.history_v2_single_parent_squash_coordinates(
+                    root,
+                    before_rev=base,
+                    head_rev=squash,
+                )
+
+            mutations = {
+                "repository": "Joey-Tools/other-history",
+                "base_sha": "a" * 40,
+                "head_sha": "b" * 40,
+                "tree_sha": "c" * 40,
+                "signed_payload_sha256": "d" * 64,
+                "signature_sha256": "e" * 64,
+                "author_identity_sha256": "f" * 64,
+                "committer_identity_sha256": "0" * 64,
+                "github_committer_login": "not-web-flow",
+                "verification_reason": "unknown_key",
+            }
+            for field, value in mutations.items():
+                with (
+                    self.subTest(field=field),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        "differs from the exact commit",
+                    ),
+                ):
+                    MODULE.validate_history_v2_github_squash_receipt(
+                        {**receipt, field: value},
+                        commit=parsed,
+                        repository=repository,
+                        before_rev=base,
+                        head_rev=squash,
+                    )
+            for field, value in (
+                ("github_author_login", "bad--login-"),
+                ("verified_at", "not-a-timestamp"),
+            ):
+                with (
+                    self.subTest(field=field),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        "identity is invalid",
+                    ),
+                ):
+                    MODULE.validate_history_v2_github_squash_receipt(
+                        {**receipt, field: value},
+                        commit=parsed,
+                        repository=repository,
+                        before_rev=base,
+                        head_rev=squash,
+                    )
+
+            invalid_provider_commits = (
+                {
+                    "message": "Publish retained history",
+                    "committer": "Synthetic Committer <committer@example.net>",
+                    "message_trailing_newline": False,
+                },
+                {
+                    "message": "Publish retained history",
+                    "committer": "GitHub <noreply@github.com>",
+                    "message_trailing_newline": True,
+                },
+                {
+                    "message": (
+                        "Publish retained history\n\nRaw user prompt: summarize this"
+                    ),
+                    "committer": "GitHub <noreply@github.com>",
+                    "message_trailing_newline": False,
+                },
+            )
+            for options in invalid_provider_commits:
+                invalid = fixture_raw_commit(
+                    root,
+                    tree_oid=tree_oid,
+                    parents=(base,),
+                    author="Synthetic Maintainer <maintainer@example.net>",
+                    author_timezone="+0100",
+                    committer_timezone="+0100",
+                    **options,
+                )
+                with self.subTest(options=options), self.assertRaises(ValueError):
+                    MODULE.parse_history_v2_github_squash_commit(
+                        fixture_commit_bytes(root, invalid),
+                        expected_oid=invalid,
+                    )
+
+            receipt_path = Path(raw) / "receipt.json"
+            receipt_path.write_text(
+                json.dumps(receipt, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            with receipt_path.open("a", encoding="utf-8") as receipt_stream:
+                receipt_stream.write("\n")
+            self.assertEqual(
+                MODULE.load_history_v2_github_squash_receipt(receipt_path),
+                receipt,
+            )
+            with receipt_path.open("a", encoding="utf-8") as receipt_stream:
+                receipt_stream.write("\n")
+            with self.assertRaisesRegex(ValueError, "is not canonical"):
+                MODULE.load_history_v2_github_squash_receipt(receipt_path)
 
     def test_default_transaction_accepts_append_and_rejects_event_force_flags(
         self,
@@ -5569,14 +5760,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw) / "repo"
                 write_bootstrap_v2_candidate(root)
-                episodes = (
-                    root
-                    / "data"
-                    / "episodes"
-                    / "2026"
-                    / "07"
-                    / "episodes.jsonl"
-                )
+                episodes = root / "data" / "episodes" / "2026" / "07" / "episodes.jsonl"
                 episodes.parent.mkdir(parents=True, exist_ok=True)
                 first = valid_episode()
                 episodes.write_text(json.dumps(first) + "\n", encoding="utf-8")
@@ -5951,14 +6135,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             write_bootstrap_v2_candidate(root)
             fixture_commit_all(root, "post migration base")
             base = run_fixture_git(root, "rev-parse", "HEAD").stdout.strip()
-            sensitive = (
-                root
-                / "reports"
-                / "daily"
-                / "2026"
-                / "07"
-                / "api-token.txt"
-            )
+            sensitive = root / "reports" / "daily" / "2026" / "07" / "api-token.txt"
             sensitive.parent.mkdir(parents=True, exist_ok=True)
             sensitive.write_text("must not be read\n", encoding="utf-8")
             run_fixture_git(root, "add", sensitive.relative_to(root).as_posix())
@@ -6148,7 +6325,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     with self.assertRaisesRegex(
                         ValueError, expected + ".*retained privacy policy"
                         if "identity" in expected
-                        else expected
+                        else expected,
                     ):
                         parse_fixture_commit(root, commit_oid)
             with self.assertRaisesRegex(ValueError, "timestamp is outside policy"):
@@ -6284,20 +6461,18 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     "Conversation transcript: user said hello",
                 ),
             ):
-                raw_commit = (
-                    header
-                    + b"\n\n"
-                    + message.encode("ascii")
-                    + b"\n"
-                )
+                raw_commit = header + b"\n\n" + message.encode("ascii") + b"\n"
                 commit_oid = MODULE.history_v2_commit_object_id(
                     raw_commit,
                     expected_length=40,
                 )
-                with self.subTest(label=label), self.assertRaisesRegex(
-                    ValueError,
-                    "message contains raw/sensitive evidence",
-                ) as caught:
+                with (
+                    self.subTest(label=label),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        "message contains raw/sensitive evidence",
+                    ) as caught,
+                ):
                     MODULE.parse_history_v2_commit_object(
                         raw_commit,
                         expected_oid=commit_oid,
@@ -6559,7 +6734,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             else:
                 self.fail("bounded process descendant remained alive")
 
-    def test_history_v2_duplicate_blob_paths_hit_path_budget_and_cache_reads(self) -> None:
+    def test_history_v2_duplicate_blob_paths_hit_path_budget_and_cache_reads(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "repo"
             write_bootstrap_v2_candidate(root)
@@ -6592,9 +6769,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     )
 
             payload = b"cached retained payload\n"
-            object_id = run_fixture_git_bytes(
-                root, "hash-object", "-w", "--stdin", input_data=payload
-            ).decode("ascii").strip()
+            object_id = (
+                run_fixture_git_bytes(
+                    root, "hash-object", "-w", "--stdin", input_data=payload
+                )
+                .decode("ascii")
+                .strip()
+            )
             budget = MODULE.HistoryV2WorkBudget()
             for relative in (Path("first.md"), Path("second.md")):
                 entry = MODULE.HistoryV2TreeEntry(
@@ -8179,9 +8360,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ("DEL", canonical.replace(b"\n", bytes((0x7F,)) + b"\n", 1)),
         )
         for label, attacked in control_cases:
-            with self.subTest(label=label), self.assertRaisesRegex(
-                ValueError,
-                "prohibited control bytes",
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "prohibited control bytes",
+                ),
             ):
                 MODULE.decode_bootstrap_v2_public_key_armor(attacked)
 
@@ -8195,8 +8379,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "armor header",
                 canonical.replace(
                     b"-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n",
-                    b"-----BEGIN PGP PUBLIC KEY BLOCK-----\n"
-                    b"Comment: hidden\n\n",
+                    b"-----BEGIN PGP PUBLIC KEY BLOCK-----\nComment: hidden\n\n",
                     1,
                 ),
                 "exactly one public-key armor block",
@@ -8217,9 +8400,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ),
         )
         for label, attacked, expected in malformed_cases:
-            with self.subTest(label=label), self.assertRaisesRegex(
-                ValueError,
-                expected,
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(
+                    ValueError,
+                    expected,
+                ),
             ):
                 MODULE.decode_bootstrap_v2_public_key_armor(attacked)
 
@@ -10178,7 +10364,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ),
             (
                 "replace across assignments",
-                f'seed = {expected.replace("hp", "xy", 1)!r}\n'
+                f"seed = {expected.replace('hp', 'xy', 1)!r}\n"
                 'middle = seed.replace("x", "h")\n'
                 'value = middle.replace("y", "p")\n',
             ),
@@ -10192,7 +10378,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ),
             (
                 "translate",
-                f'value = {expected.replace("h", "x", 1)!r}.translate('
+                f"value = {expected.replace('h', 'x', 1)!r}.translate("
                 'str.maketrans({"x": "h"}))\n',
             ),
             (
@@ -10280,7 +10466,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             (
                 'seed = "pxblic"\n'
                 'middle = seed.replace("x", "u")\n'
-                'value = middle.upper().lower()\n',
+                "value = middle.upper().lower()\n",
                 "public",
             ),
             ('value = "cilbup"[::-1]\n', "public"),
@@ -10300,7 +10486,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "public",
             ),
             (
-                'value = chr(112) + chr(117) + chr(98) + chr(108) + chr(105) + chr(99)\n',
+                "value = chr(112) + chr(117) + chr(98) + chr(108) + chr(105) + chr(99)\n",
                 "public",
             ),
             (
@@ -10334,11 +10520,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
         self.assert_python_privacy_layers_reject(
             'seed = "gxy_ABCDEFGHIJKLMNOP"\n'
-            'if enabled:\n'
+            "if enabled:\n"
             '    middle = seed.replace("x", "h")\n'
-            'else:\n'
-            '    middle = seed\n'
-            'alias = middle\n'
+            "else:\n"
+            "    middle = seed\n"
+            "alias = middle\n"
             'value = alias.replace("y", "p")\n',
             "string construction depends on an ambiguous name binding",
         )
@@ -10353,9 +10539,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "ambiguous text method results exceed the trusted byte limit",
             ):
                 MODULE.bootstrap_v2_python_string_constants(
-                    'if enabled:\n'
+                    "if enabled:\n"
                     '    middle = "aaaa"\n'
-                    'else:\n'
+                    "else:\n"
                     '    middle = "bbbb"\n'
                     'value = middle.replace("a", "cc")\n'
                 )
@@ -10366,13 +10552,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             )
 
         self.assert_python_privacy_layers_reject(
-            'payload = bytearray((112, 117, 98, 108, 105, 99))\n'
-            'payload.extend((33,))\n'
+            "payload = bytearray((112, 117, 98, 108, 105, 99))\n"
+            "payload.extend((33,))\n"
             'value = payload.decode("ascii")\n',
             "bytearray text method uses a mutable aliased receiver",
         )
         self.assert_python_privacy_layers_reject(
-            'payload = bytearray((112, 117, 98, 108, 105, 99))\n'
+            "payload = bytearray((112, 117, 98, 108, 105, 99))\n"
             "alias = payload\n"
             "alias[0] = 80\n"
             'value = payload.decode("ascii")\n',
@@ -10380,7 +10566,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         )
         self.assertEqual(
             MODULE.bootstrap_v2_python_string_constants(
-                'changed = bytearray((112, 117, 98))\n'
+                "changed = bytearray((112, 117, 98))\n"
                 "changed.append(33)\n"
                 'value = bytearray((112, 117, 98, 108, 105, 99)).decode("ascii")\n'
             )[-1],
@@ -10469,8 +10655,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 )
 
         self.assert_python_privacy_layers_reject(
-            "from base64 import *\n"
-            f'value = b64decode("{encoded}")\n',
+            f'from base64 import *\nvalue = b64decode("{encoded}")\n',
             "decoder module uses a wildcard import",
         )
         for source in (
@@ -10500,18 +10685,15 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         expected = risky_github_classic_token()
         encoded = base64.b64encode(expected.encode("ascii")).decode("ascii")
         rejected = (
-            "import base64\n"
-            f'value = getattr(base64, "b64decode")("{encoded}")\n',
+            f'import base64\nvalue = getattr(base64, "b64decode")("{encoded}")\n',
             "import base64\n"
             "lookup = getattr\n"
             f'value = lookup(base64, "b64decode")("{encoded}")\n',
-            "import base64\n"
-            f'value = base64.__dict__["b64decode"]("{encoded}")\n',
+            f'import base64\nvalue = base64.__dict__["b64decode"]("{encoded}")\n',
             "import base64\n"
             "namespace = base64.__dict__\n"
             f'value = namespace["b64decode"]("{encoded}")\n',
-            "import base64\n"
-            f'value = vars(base64).get("b64decode")("{encoded}")\n',
+            f'import base64\nvalue = vars(base64).get("b64decode")("{encoded}")\n',
             "import base64\n"
             "lookup = base64.__dict__.get\n"
             f'value = lookup("b64decode")("{encoded}")\n',
@@ -10593,8 +10775,13 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
     def test_bootstrap_v2_python_static_decoder_input_budget_is_shared(self) -> None:
         payload = ", ".join(str(index) for index in range(10))
-        source = "import base64\npayload = (" + payload + ",)\n" + "".join(
-            f"value_{index} = base64.b64decode(payload)\n" for index in range(5)
+        source = (
+            "import base64\npayload = ("
+            + payload
+            + ",)\n"
+            + "".join(
+                f"value_{index} = base64.b64decode(payload)\n" for index in range(5)
+            )
         )
         with mock.patch.object(
             MODULE,
@@ -10606,11 +10793,14 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 [],
             )
 
-        with mock.patch.object(
-            MODULE,
-            "BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS",
-            8,
-        ), self.assertRaisesRegex(ValueError, "operation limit"):
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS",
+                8,
+            ),
+            self.assertRaisesRegex(ValueError, "operation limit"),
+        ):
             MODULE.bootstrap_v2_python_privacy_risk_values(
                 "import base64\n"
                 'raw = memoryview(b"cHVibGlj")\n'
@@ -10624,14 +10814,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
     ) -> None:
         expected = risky_github_classic_token()
         encoded = expected.encode("ascii").hex()
-        expression = (
-            f'int("{encoded}", 16).to_bytes({len(expected)}, "big")'
-        )
+        expression = f'int("{encoded}", 16).to_bytes({len(expected)}, "big")'
         for source in (
             f'value = {expression}.decode("ascii")\n',
             f'payload = {expression}\nvalue = payload.decode("ascii")\n',
             f'raw = {expression}\npayload = raw\nvalue = payload.decode("ascii")\n',
-            f'raw = {expression}\nfirst = raw\nsecond = first\n'
+            f"raw = {expression}\nfirst = raw\nsecond = first\n"
             'value = second.decode("ascii")\n',
         ):
             with self.subTest(source=source.splitlines()[-1][:48]):
@@ -10647,15 +10835,14 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             [],
         )
         self.assert_python_privacy_layers_reject(
-            f'payload = {expression}\n'
+            f"payload = {expression}\n"
             "payload = get_payload()\n"
             'value = payload.decode("ascii")\n',
             "unresolved bound string method",
         )
         self.assertEqual(
             MODULE.bootstrap_v2_python_privacy_risk_values(
-                "first = second\nsecond = first\n"
-                'value = first.decode("ascii")\n'
+                'first = second\nsecond = first\nvalue = first.decode("ascii")\n'
             ),
             [],
         )
@@ -10706,24 +10893,28 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         relative = Path("tests/test_retrospective_history_v2.py")
         expected = risky_github_classic_token()
         left, right = expected[:2], expected[2:]
-        rejected = tuple(
-            "import operator\n"
-            f"value = operator.{name}({left!r}, {right!r})\n"
-            for name in ("add", "concat", "iadd", "iconcat")
-        ) + tuple(
-            "import operator\n"
-            f"value = operator.add('ghp_', operator.{name}('a', 36))\n"
-            for name in ("imul", "irepeat", "mul", "repeat")
-        ) + tuple(
-            "import operator\n"
-            f"value = operator.{name}({'g%s_' + ('a' * 36)!r}, 'hp')\n"
-            for name in ("imod", "mod")
-        ) + (
-            "from operator import concat as reveal\n"
-            f"value = reveal({left!r}, {right!r})\n",
-            "import operator\n"
-            "reveal = operator.add\n"
-            f"value = reveal({left!r}, {right!r})\n",
+        rejected = (
+            tuple(
+                f"import operator\nvalue = operator.{name}({left!r}, {right!r})\n"
+                for name in ("add", "concat", "iadd", "iconcat")
+            )
+            + tuple(
+                "import operator\n"
+                f"value = operator.add('ghp_', operator.{name}('a', 36))\n"
+                for name in ("imul", "irepeat", "mul", "repeat")
+            )
+            + tuple(
+                "import operator\n"
+                f"value = operator.{name}({'g%s_' + ('a' * 36)!r}, 'hp')\n"
+                for name in ("imod", "mod")
+            )
+            + (
+                "from operator import concat as reveal\n"
+                f"value = reveal({left!r}, {right!r})\n",
+                "import operator\n"
+                "reveal = operator.add\n"
+                f"value = reveal({left!r}, {right!r})\n",
+            )
         )
         for source in rejected:
             with self.subTest(source=source.splitlines()[-1][:56]):
@@ -10771,13 +10962,14 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         chr_source = "value = " + " + ".join(
             f"chr({value - 1} + 1)" for value in expected
         )
-        bytes_source = "value = bytes((" + ", ".join(
-            f"{value - 1} + 1" for value in expected
-        ) + ")).decode('ascii')"
+        bytes_source = (
+            "value = bytes(("
+            + ", ".join(f"{value - 1} + 1" for value in expected)
+            + ")).decode('ascii')"
+        )
         lowered_values = ", ".join(str(value - 1) for value in expected)
         generator_source = (
-            "value = bytes(value + 1 for value in ("
-            f"{lowered_values})).decode('ascii')"
+            f"value = bytes(value + 1 for value in ({lowered_values})).decode('ascii')"
         )
         map_source = (
             "value = bytes(map(lambda value: value + 1, ("

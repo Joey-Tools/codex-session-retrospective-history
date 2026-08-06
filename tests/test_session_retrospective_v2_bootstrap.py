@@ -20,9 +20,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/session-retrospective-v2-bootstrap.yml"
-PERMANENT_CI = (
-    ROOT / ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
-)
+PERMANENT_CI = ROOT / ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
 VALIDATOR = ROOT / "scripts/validate_retained_history.py"
 CI_HELPER = ROOT / "scripts/trusted_history_ci.py"
 EXPECTED_WORKFLOW_POLICY_SHA256 = (
@@ -40,9 +38,7 @@ CLOSED_GIT_WORKFLOW_ENV = {
     "GIT_TERMINAL_PROMPT": "0",
 }
 FIXTURE_TIMESTAMP = 1_784_073_600
-FIXTURE_SIGNER_FINGERPRINT = (
-    "0123456789ABCDEF0123456789ABCDEF01234567"
-)
+FIXTURE_SIGNER_FINGERPRINT = "0123456789ABCDEF0123456789ABCDEF01234567"
 ACTUAL_BASE_SHA = "97f236c56cbbf24776899178175e2603ecf30fb0"
 LEGACY_CI = (
     "name: CI\n"
@@ -59,7 +55,7 @@ LEGACY_CI = (
     "      - uses: actions/checkout@v4\n"
     "      - uses: actions/setup-python@v5\n"
     "        with:\n"
-    "          python-version: \"3.12\"\n"
+    '          python-version: "3.12"\n'
     "      - name: Validate JSON syntax\n"
     "        run: |\n"
     "          python -m json.tool schemas/session-retrospective-v1.schema.json >/dev/null\n"
@@ -165,12 +161,7 @@ def fixture_signature_armor(
     signer_fingerprint: str = FIXTURE_SIGNER_FINGERPRINT,
 ) -> bytes:
     fingerprint = bytes.fromhex(signer_fingerprint)
-    hashed = (
-        b"\x05\x02"
-        + timestamp.to_bytes(4, "big")
-        + b"\x16\x21\x04"
-        + fingerprint
-    )
+    hashed = b"\x05\x02" + timestamp.to_bytes(4, "big") + b"\x16\x21\x04" + fingerprint
     unhashed = b"\x09\x10" + fingerprint[-8:]
     mpi = bytes((0, 1, 1))
     body = (
@@ -223,6 +214,8 @@ def fixture_raw_commit(
     extra_headers: tuple[bytes, ...] = (),
     signature_armor: bytes | None = None,
     include_signature: bool = True,
+    message_trailing_newline: bool = True,
+    signature_trailing_blank_continuation: bool = False,
 ) -> str:
     armor = signature_armor or fixture_signature_armor(
         timestamp=committer_timestamp
@@ -236,16 +229,22 @@ def fixture_raw_commit(
         f"tree {tree_oid}".encode("ascii"),
         *(f"parent {parent}".encode("ascii") for parent in parents),
         f"author {author} {author_timestamp} {author_timezone}".encode("utf-8"),
-        (
-            f"committer {committer} {committer_timestamp} "
-            f"{committer_timezone}"
-        ).encode("utf-8"),
+        (f"committer {committer} {committer_timestamp} {committer_timezone}").encode(
+            "utf-8"
+        ),
         *extra_headers,
-        *(signature_headers if include_signature else ()),
+        *(
+            (
+                *signature_headers,
+                *((b" ",) if signature_trailing_blank_continuation else ()),
+            )
+            if include_signature
+            else ()
+        ),
     )
-    raw_commit = (
-        b"\n".join(headers) + b"\n\n" + message.encode("utf-8") + b"\n"
-    )
+    raw_commit = b"\n".join(headers) + b"\n\n" + message.encode("utf-8")
+    if message_trailing_newline:
+        raw_commit += b"\n"
     result = subprocess.run(
         ["git", "-C", str(root), "hash-object", "-t", "commit", "-w", "--stdin"],
         env={
@@ -272,23 +271,27 @@ def fixture_commit_bytes(root: Path, commit_oid: str) -> bytes:
 
 
 def fixture_store_commit(root: Path, raw_commit: bytes) -> str:
-    return subprocess.run(
-        [
-            "git",
-            "-C",
-            str(root),
-            "hash-object",
-            "--literally",
-            "-t",
-            "commit",
-            "-w",
-            "--stdin",
-        ],
-        input=raw_commit,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=True,
-    ).stdout.decode("ascii").strip()
+    return (
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "hash-object",
+                "--literally",
+                "-t",
+                "commit",
+                "-w",
+                "--stdin",
+            ],
+            input=raw_commit,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        .stdout.decode("ascii")
+        .strip()
+    )
 
 
 def commit_all(
@@ -666,10 +669,7 @@ TEST_ADMISSION_APP_ID = 424_242
 
 
 def merge_group_ref(number: int = 17) -> str:
-    return (
-        "refs/heads/gh-readonly-queue/master/"
-        f"pr-{number}-synthetic"
-    )
+    return f"refs/heads/gh-readonly-queue/master/pr-{number}-synthetic"
 
 
 def merge_group_event_payload(
@@ -738,8 +738,7 @@ def predecessor_audit_payloads(
     predecessor_number = 16
     node_id = "PR_kwDO_predecessor"
     details_url = (
-        f"https://github.com/{TEST_REPOSITORY}/actions/runs/"
-        f"{run_id}/job/{job_id}"
+        f"https://github.com/{TEST_REPOSITORY}/actions/runs/{run_id}/job/{job_id}"
     )
     return {
         "associated": {
@@ -1120,9 +1119,161 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             audit["if"],
             "${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}",
         )
+        audit_steps = steps_by_name(audit)
+        verification = audit_steps["Verify exact GitHub squash commit"]
+        self.assertEqual(verification["env"], {"GH_TOKEN": "${{ github.token }}"})
+        self.assertIn("verify-default-github-commit", verification["run"])
+        self.assertIn('--repository "$GITHUB_REPOSITORY"', verification["run"])
+        self.assertIn('--base-sha "$EVENT_BEFORE_SHA"', verification["run"])
+        self.assertIn('--head-sha "$GITHUB_SHA"', verification["run"])
+        self.assertIn("timeout --signal=TERM --kill-after=5s", verification["run"])
+        detector_gate = audit_steps["Detect invalid S tree or transaction"]["run"]
+        self.assertIn('--repository "$GITHUB_REPOSITORY"', detector_gate)
+        self.assertIn(
+            '--github-commit-receipt "$GITHUB_COMMIT_RECEIPT"',
+            detector_gate,
+        )
+        self.assertNotIn("GH_TOKEN", detector_gate)
         detector = steps_by_name(audit)["Document detector scope"]["run"]
         self.assertIn("does not prevent that write", detector)
         self.assertIn("never authorizes mutation", detector)
+
+    def test_default_github_commit_receipt_binds_exact_provider_payload(self) -> None:
+        repository = "Joey-Tools/codex-session-retrospective-history"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "repo"
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+            configure_git(root)
+            (root / "payload.txt").write_text("base\n", encoding="utf-8")
+            base = commit_all(root, "provider receipt base")
+            tree_oid = git(root, "rev-parse", f"{base}^{{tree}}")
+            head = fixture_raw_commit(
+                root,
+                tree_oid=tree_oid,
+                parents=(base,),
+                message="Publish retained history",
+                author="Synthetic Maintainer <maintainer@example.net>",
+                committer="GitHub <noreply@github.com>",
+                author_timezone="+0100",
+                committer_timezone="+0100",
+                message_trailing_newline=False,
+                signature_trailing_blank_continuation=True,
+            )
+            parsed = VALIDATOR_MODULE.parse_history_v2_github_squash_commit(
+                fixture_commit_bytes(root, head),
+                expected_oid=head,
+            )
+            commit_date = CI_MODULE.dt.datetime.fromtimestamp(
+                FIXTURE_TIMESTAMP,
+                tz=CI_MODULE.dt.timezone.utc,
+            )
+            date_text = commit_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            verified_at = (commit_date + CI_MODULE.dt.timedelta(seconds=1)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            api_payload = {
+                "sha": head,
+                "parents": [{"sha": base}],
+                "author": {"login": "SyntheticMaintainer"},
+                "committer": {"login": "web-flow"},
+                "commit": {
+                    "tree": {"sha": tree_oid},
+                    "author": {"date": date_text},
+                    "committer": {"date": date_text},
+                    "verification": {
+                        "verified": True,
+                        "reason": "valid",
+                        "signature": parsed.signature_armor.decode("ascii"),
+                        "payload": parsed.signed_payload.decode("utf-8"),
+                        "verified_at": verified_at,
+                    },
+                },
+            }
+            with mock.patch.object(
+                CI_MODULE,
+                "github_json",
+                return_value=api_payload,
+            ) as github_api:
+                receipt = CI_MODULE.verify_default_github_commit(
+                    repository=repository,
+                    git_dir=root / ".git",
+                    base_sha=base,
+                    head_sha=head,
+                    token="synthetic-read-token",
+                )
+            self.assertEqual(receipt["base_sha"], base)
+            self.assertEqual(receipt["head_sha"], head)
+            self.assertEqual(receipt["tree_sha"], tree_oid)
+            self.assertEqual(receipt["github_committer_login"], "web-flow")
+            self.assertEqual(receipt["verification_reason"], "valid")
+            self.assertNotIn("maintainer@example.net", json.dumps(receipt))
+            github_api.assert_called_once_with(
+                "GET",
+                repository,
+                f"/commits/{head}",
+                token="synthetic-read-token",
+                max_bytes=CI_MODULE.MAX_HTTP_RESPONSE_BYTES,
+            )
+
+            mutations = (
+                (
+                    "payload",
+                    lambda value: value["commit"]["verification"].__setitem__(
+                        "payload", "mismatch"
+                    ),
+                ),
+                (
+                    "signature",
+                    lambda value: value["commit"]["verification"].__setitem__(
+                        "signature", "mismatch"
+                    ),
+                ),
+                (
+                    "verification",
+                    lambda value: value["commit"]["verification"].__setitem__(
+                        "verified", False
+                    ),
+                ),
+                (
+                    "reason",
+                    lambda value: value["commit"]["verification"].__setitem__(
+                        "reason", "unknown_key"
+                    ),
+                ),
+                (
+                    "parent",
+                    lambda value: value["parents"][0].__setitem__("sha", "a" * 40),
+                ),
+                (
+                    "tree",
+                    lambda value: value["commit"]["tree"].__setitem__("sha", "b" * 40),
+                ),
+                (
+                    "provider",
+                    lambda value: value["committer"].__setitem__(
+                        "login", "not-web-flow"
+                    ),
+                ),
+            )
+            for label, mutate in mutations:
+                with self.subTest(mutation=label):
+                    changed = copy.deepcopy(api_payload)
+                    mutate(changed)
+                    with (
+                        mock.patch.object(
+                            CI_MODULE,
+                            "github_json",
+                            return_value=changed,
+                        ),
+                        self.assertRaises(CI_MODULE.GateError),
+                    ):
+                        CI_MODULE.verify_default_github_commit(
+                            repository=repository,
+                            git_dir=root / ".git",
+                            base_sha=base,
+                            head_sha=head,
+                            token="synthetic-read-token",
+                        )
 
     def test_only_trusted_base_is_checked_out_and_actions_are_pinned(self) -> None:
         action_steps = [step for step in workflow_job()["steps"] if "uses" in step]
@@ -1137,7 +1288,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         for step in action_steps:
             self.assertRegex(step["uses"], r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$")
 
-    def test_candidate_is_preflighted_before_blob_fetch_and_materialization(self) -> None:
+    def test_candidate_is_preflighted_before_blob_fetch_and_materialization(
+        self,
+    ) -> None:
         names = [step["name"] for step in workflow_job()["steps"]]
         ordered = (
             "Fetch bounded bootstrap graph without checkout",
@@ -1177,13 +1330,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             for job in workflow["jobs"].values():
                 for step in job["steps"]:
                     script = step.get("run")
-                    if (
-                        isinstance(script, str)
-                        and "clear_partial_clone() {" in script
-                    ):
-                        cleanup_scripts.append(
-                            (workflow_path, step["name"], script)
-                        )
+                    if isinstance(script, str) and "clear_partial_clone() {" in script:
+                        cleanup_scripts.append((workflow_path, step["name"], script))
         self.assertEqual(len(cleanup_scripts), 2)
 
         for workflow_path, step_name, script in cleanup_scripts:
@@ -1322,7 +1470,10 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             ("node", lambda value: value.__setitem__("node_id", "PR_other")),
             ("state", lambda value: value.__setitem__("state", "closed")),
             ("merged", lambda value: value.__setitem__("merged", True)),
-            ("merged_at", lambda value: value.__setitem__("merged_at", "2026-07-23T00:00:00Z")),
+            (
+                "merged_at",
+                lambda value: value.__setitem__("merged_at", "2026-07-23T00:00:00Z"),
+            ),
             ("draft", lambda value: value.__setitem__("draft", True)),
             ("base", lambda value: value["base"].__setitem__("sha", "c" * 40)),
             ("head", lambda value: value["head"].__setitem__("sha", "d" * 40)),
@@ -1334,7 +1485,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 with self.assertRaisesRegex(CI_MODULE.GateError, "identity, lifecycle, base, or head"):
                     validate_pull(payload)
 
-    def test_validation_jobs_publish_no_commit_status_and_have_no_write_token(self) -> None:
+    def test_validation_jobs_publish_no_commit_status_and_have_no_write_token(
+        self,
+    ) -> None:
         for workflow_path in (WORKFLOW, PERMANENT_CI):
             workflow = load_workflow(workflow_path)
             for name, job in workflow["jobs"].items():
@@ -1645,23 +1798,59 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         cases = []
         repository = repository_configuration_payload()
         repository["allow_merge_commit"] = True
-        cases.append(("non-squash merge", repository, active_branch_rules_payload(), branch_protection_payload(), [], []))
+        cases.append(
+            (
+                "non-squash merge",
+                repository,
+                active_branch_rules_payload(),
+                branch_protection_payload(),
+                [],
+                [],
+            )
+        )
 
         rules = active_branch_rules_payload()
-        next(
-            rule for rule in rules if rule["type"] == "merge_queue"
-        )["parameters"]["max_entries_to_merge"] = 2
-        cases.append(("multi-PR queue", repository_configuration_payload(), rules, branch_protection_payload(), [], []))
+        next(rule for rule in rules if rule["type"] == "merge_queue")["parameters"][
+            "max_entries_to_merge"
+        ] = 2
+        cases.append(
+            (
+                "multi-PR queue",
+                repository_configuration_payload(),
+                rules,
+                branch_protection_payload(),
+                [],
+                [],
+            )
+        )
 
         rules = active_branch_rules_payload()
-        next(
-            rule for rule in rules if rule["type"] == "required_status_checks"
-        )["parameters"]["required_status_checks"][0]["context"] = "stale check"
-        cases.append(("stale check", repository_configuration_payload(), rules, branch_protection_payload(), [], []))
+        next(rule for rule in rules if rule["type"] == "required_status_checks")[
+            "parameters"
+        ]["required_status_checks"][0]["context"] = "stale check"
+        cases.append(
+            (
+                "stale check",
+                repository_configuration_payload(),
+                rules,
+                branch_protection_payload(),
+                [],
+                [],
+            )
+        )
 
         protection = branch_protection_payload()
         protection["allow_force_pushes"]["enabled"] = True
-        cases.append(("force push", repository_configuration_payload(), active_branch_rules_payload(), protection, [], []))
+        cases.append(
+            (
+                "force push",
+                repository_configuration_payload(),
+                active_branch_rules_payload(),
+                protection,
+                [],
+                [],
+            )
+        )
 
         cases.append(
             (
@@ -1754,9 +1943,12 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         for label, mutate in mutations:
             changed = copy.deepcopy(payload)
             mutate(changed)
-            with self.subTest(label=label), self.assertRaisesRegex(
-                CI_MODULE.GateError,
-                "exact B1/Q pair",
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "exact B1/Q pair",
+                ),
             ):
                 CI_MODULE.validate_merge_group_event(
                     changed,
@@ -1840,9 +2032,12 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         for label, expected, mutate in mutations:
             changed = copy.deepcopy(valid)
             mutate(changed)
-            with self.subTest(label=label), self.assertRaisesRegex(
-                CI_MODULE.GateError,
-                expected,
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    expected,
+                ),
             ):
                 CI_MODULE.validate_merge_group_pull_request(
                     changed,
@@ -1972,6 +2167,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         cases.append(("lookalike", "lookalike", [lookalike], [payloads["job"]]))
 
         for label, expected, checks, jobs in cases:
+
             def changed_inventory(
                 *,
                 item_key: str,
@@ -2030,8 +2226,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 "started_at": "2026-07-15T00:06:00Z",
                 "completed_at": "2026-07-15T00:08:00Z",
                 "details_url": (
-                    f"https://github.com/{TEST_REPOSITORY}/actions/"
-                    "runs/701/job/802"
+                    f"https://github.com/{TEST_REPOSITORY}/actions/runs/701/job/802"
                 ),
             }
         )
@@ -2044,8 +2239,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 "completed_at": "2026-07-15T00:07:30Z",
                 "html_url": second_check["details_url"],
                 "check_run_url": (
-                    f"https://api.github.com/repos/{TEST_REPOSITORY}/"
-                    "check-runs/502"
+                    f"https://api.github.com/repos/{TEST_REPOSITORY}/check-runs/502"
                 ),
             }
         )
@@ -2141,9 +2335,12 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             ),
         )
         for label, checks, jobs, expected in malformed_cases:
-            with self.subTest(label=label), self.assertRaisesRegex(
-                CI_MODULE.GateError,
-                expected,
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    expected,
+                ),
             ):
                 read_evidence(checks, jobs)
 
@@ -2369,9 +2566,12 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 ("history-v2", plan, "admin merge group requires B1 == B0"),
                 ("bootstrap-v2", None, "bootstrap merge group requires B1 == B0"),
             ):
-                with self.subTest(policy=policy), self.assertRaisesRegex(
-                    CI_MODULE.GateError,
-                    expected,
+                with (
+                    self.subTest(policy=policy),
+                    self.assertRaisesRegex(
+                        CI_MODULE.GateError,
+                        expected,
+                    ),
                 ):
                     CI_MODULE._validate_merge_group_graph(
                         graph.git_dir,
@@ -2777,8 +2977,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                             graph.git_dir,
                             preflight,
                             repository=(
-                                "Joey-Tools/"
-                                "codex-session-retrospective-history"
+                                "Joey-Tools/codex-session-retrospective-history"
                             ),
                             token="synthetic",
                         )
@@ -2970,7 +3169,11 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             )
         self.assertEqual(
             CI_MODULE.run_bounded(
-                [sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"],
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())",
+                ],
                 input_data=b"bounded input",
                 max_output_bytes=128,
                 timeout_seconds=2,
@@ -3073,9 +3276,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 f"{first}:reports/daily/2026/07/15.md",
             )
             first_path.unlink()
-            second_path = (
-                graph.root / "reports" / "daily" / "2026" / "07" / "16.md"
-            )
+            second_path = graph.root / "reports" / "daily" / "2026" / "07" / "16.md"
             second_path.write_text("second retained report\n", encoding="utf-8")
             second = commit_all(graph.root, "replace retained report")
 
@@ -3409,14 +3610,18 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                             candidate_oid,
                         )
                     )
-                    observed = CI_MODULE.git_output(
-                        bare,
-                        "hash-object",
-                        "-w",
-                        "--stdin",
-                        input_data=(graph.root / "candidate.txt").read_bytes(),
-                        max_bytes=128,
-                    ).decode("ascii").strip()
+                    observed = (
+                        CI_MODULE.git_output(
+                            bare,
+                            "hash-object",
+                            "-w",
+                            "--stdin",
+                            input_data=(graph.root / "candidate.txt").read_bytes(),
+                            max_bytes=128,
+                        )
+                        .decode("ascii")
+                        .strip()
+                    )
                     self.assertEqual(observed, candidate_oid)
                 else:
                     self.assertTrue(
@@ -3990,12 +4195,10 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 )
 
     def test_permanent_ci_uses_env_chdir_after_uid_drop(self) -> None:
-        permanent_job = load_workflow(PERMANENT_CI)["jobs"][
-            "trusted_default_audit"
+        permanent_job = load_workflow(PERMANENT_CI)["jobs"]["trusted_default_audit"]
+        script = steps_by_name(permanent_job)["Run tests after dropping UID and cwd"][
+            "run"
         ]
-        script = steps_by_name(permanent_job)[
-            "Run tests after dropping UID and cwd"
-        ]["run"]
         self.assertNotIn("sudo -u nobody --chdir", script)
         self.assertEqual(
             script.count('/usr/bin/env -i -C "$DEFAULT_EXECUTION_ROOT"'),
@@ -4017,8 +4220,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             source.parent.mkdir(parents=True)
             source.write_text("VALUE = 1\n", encoding="utf-8")
             (authority / ".gitattributes").write_text(
-                "scripts/example.py export-ignore\n"
-                "metadata.txt export-subst\n",
+                "scripts/example.py export-ignore\nmetadata.txt export-subst\n",
                 encoding="utf-8",
             )
             metadata = authority / "metadata.txt"
@@ -4377,7 +4579,12 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         self.assertEqual(syntax.returncode, 0, syntax.stderr)
                         if shutil.which("shellcheck"):
                             checked = subprocess.run(
-                                ["shellcheck", "--shell=bash", "--severity=warning", "-"],
+                                [
+                                    "shellcheck",
+                                    "--shell=bash",
+                                    "--severity=warning",
+                                    "-",
+                                ],
                                 input=step["run"],
                                 text=True,
                                 stdout=subprocess.PIPE,

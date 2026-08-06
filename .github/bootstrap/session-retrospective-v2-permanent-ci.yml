@@ -592,6 +592,34 @@ jobs:
             printf 'TRUSTED_PYTHON=%s\n' "$TRUSTED_VENV/bin/python"
           } >>"$GITHUB_ENV"
       -
+        name: Verify exact GitHub squash commit
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -f 8192
+          ulimit -n 256
+          github_commit_receipt="$RUNNER_TEMP/default-history-ci/github-commit-receipt.json"
+          if ! timeout --signal=TERM --kill-after=5s 120s \
+              /usr/bin/env -i HOME="$TRUSTED_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+                PATH="$PATH" GH_TOKEN="$GH_TOKEN" \
+                GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+                GIT_OPTIONAL_LOCKS=0 PYTHONDONTWRITEBYTECODE=1 \
+                PYTHONHASHSEED=0 \
+                "$TRUSTED_PYTHON" -I -B scripts/trusted_history_ci.py \
+                  verify-default-github-commit \
+                  --repository "$GITHUB_REPOSITORY" \
+                  --git-dir .git \
+                  --base-sha "$EVENT_BEFORE_SHA" \
+                  --head-sha "$GITHUB_SHA" \
+                  --output "$github_commit_receipt"; then
+            echo "Exact GitHub squash verification failed closed." >&2
+            exit 1
+          fi
+          printf 'GITHUB_COMMIT_RECEIPT=%s\n' "$github_commit_receipt" >>"$GITHUB_ENV"
+      -
         name: Import default public signing keys
         shell: bash
         run: |
@@ -644,6 +672,8 @@ jobs:
                   --root . \
                   --base-rev "$EVENT_BEFORE_SHA" \
                   --head-rev "$GITHUB_SHA" \
+                  --repository "$GITHUB_REPOSITORY" \
+                  --github-commit-receipt "$GITHUB_COMMIT_RECEIPT" \
                   --event-created "$EVENT_CREATED" \
                   --event-deleted "$EVENT_DELETED" \
                   --event-forced "$EVENT_FORCED" \

@@ -70,3 +70,9 @@ authority compare-and-swap. Its trusted configuration supplies that dedicated
 App ID to `merge-group-snapshot --admission-app-id`; the GitHub Actions App is
 explicitly ineligible. Until that producer is proven, cutover is blocked and
 the existing branch rules remain unchanged.
+
+The post-merge default audit also binds the exact local squash object to
+GitHub's read-only commit API. It requires a valid provider signature, exact
+payload and signature equality, the `web-flow` committer, and a temporary
+digest-only receipt before the offline retained-history transaction validator
+runs. Raw author or committer identities are not copied into that receipt.

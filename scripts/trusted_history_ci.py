@@ -32,6 +32,7 @@ GITHUB_TIMESTAMP_RE = re.compile(
 )
 MERGE_GROUP_SNAPSHOT_KIND = "retrospective-history-v2-merge-group-snapshot"
 DEFAULT_AUTHORITY_RECEIPT_KIND = "retrospective-history-v2-default-authority"
+GITHUB_SQUASH_RECEIPT_KIND = "retrospective-history-v2-github-squash-verification"
 DEFAULT_BRANCH = "master"
 DEFAULT_BRANCH_REF = f"refs/heads/{DEFAULT_BRANCH}"
 REQUIRED_CHECK_CONTEXT = "Trusted history gate"
@@ -118,7 +119,7 @@ BOOTSTRAP_CI_TEMPLATE_PATH = (
     ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
 )
 LEGACY_CI_BLOB_OID = "145e8de8a055794b85af6461a69e50715913ea6f"
-PERMANENT_CI_BLOB_OID = "e68fc53504715d1f29eb919fd4c5e13aeb69b1f0"
+PERMANENT_CI_BLOB_OID = "447169b470b9b6fb16c7fc1832253389c4c7f410"
 _TRUSTED_VALIDATOR_MODULE: Any | None = None
 _FORBIDDEN_CANDIDATE_COMPONENTS = frozenset(
     {
@@ -366,6 +367,19 @@ def canonical_repository(value: Any) -> str:
     return value
 
 
+def canonical_github_login(value: Any, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(
+            r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?",
+            value,
+        )
+        is None
+    ):
+        raise GateError(f"{label} login is invalid")
+    return value
+
+
 def canonical_positive_integer(value: Any, label: str) -> int:
     if type(value) is not int or value <= 0:
         raise GateError(f"{label} is not a positive integer")
@@ -376,8 +390,8 @@ def trusted_validator_module(*, contract: str = "bootstrap") -> Any:
     global _TRUSTED_VALIDATOR_MODULE
     module = _TRUSTED_VALIDATOR_MODULE
     if module is None:
-        validator_path = Path(__file__).resolve().with_name(
-            "validate_retained_history.py"
+        validator_path = (
+            Path(__file__).resolve().with_name("validate_retained_history.py")
         )
         try:
             if not validator_path.is_file() or validator_path.is_symlink():
@@ -414,6 +428,8 @@ def trusted_validator_module(*, contract: str = "bootstrap") -> Any:
             "validate_append_only_event_range",
             "validate_history_v2_tree",
         )
+    elif contract == "github-squash":
+        required = ("parse_history_v2_github_squash_commit",)
     else:
         raise GateError("trusted retained-history validator contract is invalid")
     if any(not callable(getattr(module, name, None)) for name in required):
@@ -488,11 +504,7 @@ def read_stable_policy_file(path: Path, label: str, *, max_bytes: int) -> bytes:
     finally:
         os.close(descriptor)
 
-    if (
-        len(first) != opened.st_size
-        or len(second) != final.st_size
-        or first != second
-    ):
+    if len(first) != opened.st_size or len(second) != final.st_size or first != second:
         raise GateError(f"{label} content changed while being read")
     if (final.st_dev, final.st_ino) != (opened.st_dev, opened.st_ino):
         raise GateError(f"{label} object identity changed while being read")
@@ -507,9 +519,9 @@ def read_stable_policy_file(path: Path, label: str, *, max_bytes: int) -> bytes:
         raise GateError(f"{label} became unreadable during identity revalidation") from exc
     except OSError as exc:
         raise GateError(f"{label} identity could not be revalidated") from exc
-    if (
-        not stat.S_ISREG(current.st_mode)
-        or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+    if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (
+        opened.st_dev,
+        opened.st_ino,
     ):
         raise GateError(f"{label} object identity changed while being read")
     if current.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
@@ -995,6 +1007,143 @@ def canonical_github_timestamp(value: Any, label: str) -> tuple[str, dt.datetime
     return value, parsed
 
 
+def verify_default_github_commit(
+    *,
+    repository: str,
+    git_dir: Path,
+    base_sha: str,
+    head_sha: str,
+    token: str,
+) -> dict[str, Any]:
+    repository = canonical_repository(repository)
+    base_sha = canonical_oid(base_sha, "default event base")
+    head_sha = canonical_oid(head_sha, "default event head")
+    if base_sha == head_sha:
+        raise GateError("default event commit range is empty")
+    validator = trusted_validator_module(contract="github-squash")
+    if (
+        getattr(validator, "HISTORY_V2_GITHUB_SQUASH_RECEIPT_KIND", None)
+        != GITHUB_SQUASH_RECEIPT_KIND
+    ):
+        raise GateError("trusted GitHub squash receipt contract is unavailable")
+    raw_commit = git_output(
+        git_dir.resolve(),
+        "cat-file",
+        "commit",
+        head_sha,
+        max_bytes=MAX_COMMIT_BYTES,
+    )
+    try:
+        parsed = validator.parse_history_v2_github_squash_commit(
+            raw_commit,
+            expected_oid=head_sha,
+        )
+    except (UnicodeError, ValueError) as exc:
+        raise GateError("default commit is not a valid GitHub squash") from exc
+    if parsed.parents != (base_sha,):
+        raise GateError("default commit parent differs from the push event")
+
+    payload = object_value(
+        github_json(
+            "GET",
+            repository,
+            f"/commits/{parse.quote(head_sha, safe='')}",
+            token=token,
+            max_bytes=MAX_HTTP_RESPONSE_BYTES,
+        ),
+        "GitHub default commit",
+    )
+    commit = object_value(payload.get("commit"), "GitHub default commit metadata")
+    tree = object_value(commit.get("tree"), "GitHub default commit tree")
+    verification = object_value(
+        commit.get("verification"),
+        "GitHub default commit verification",
+    )
+    author = object_value(payload.get("author"), "GitHub default commit author")
+    committer = object_value(
+        payload.get("committer"),
+        "GitHub default commit committer",
+    )
+    parents = payload.get("parents")
+    if not isinstance(parents, list) or len(parents) != 1:
+        raise GateError("GitHub default commit parent set is invalid")
+    parent = object_value(parents[0], "GitHub default commit parent")
+    author_metadata = object_value(
+        commit.get("author"),
+        "GitHub default commit author metadata",
+    )
+    committer_metadata = object_value(
+        commit.get("committer"),
+        "GitHub default commit committer metadata",
+    )
+    author_date_text, author_date = canonical_github_timestamp(
+        author_metadata.get("date"),
+        "GitHub default commit author",
+    )
+    committer_date_text, committer_date = canonical_github_timestamp(
+        committer_metadata.get("date"),
+        "GitHub default commit committer",
+    )
+    verified_at_text, verified_at = canonical_github_timestamp(
+        verification.get("verified_at"),
+        "GitHub default commit verification",
+    )
+    expected_author_date = dt.datetime.fromtimestamp(
+        parsed.author_timestamp,
+        tz=dt.timezone.utc,
+    )
+    expected_committer_date = dt.datetime.fromtimestamp(
+        parsed.committer_timestamp,
+        tz=dt.timezone.utc,
+    )
+    signature = verification.get("signature")
+    signed_payload = verification.get("payload")
+    if (
+        payload.get("sha") != head_sha
+        or parent.get("sha") != base_sha
+        or tree.get("sha") != parsed.tree_oid
+        or verification.get("verified") is not True
+        or verification.get("reason") != "valid"
+        or not isinstance(signature, str)
+        or not isinstance(signed_payload, str)
+        or signature.encode("utf-8") != parsed.signature_armor
+        or signed_payload.encode("utf-8") != parsed.signed_payload
+        or author_date != expected_author_date
+        or committer_date != expected_committer_date
+        or author_date_text != committer_date_text
+        or verified_at < committer_date
+    ):
+        raise GateError(
+            "GitHub verification differs from the exact local squash commit"
+        )
+    author_login = canonical_github_login(
+        author.get("login"),
+        "GitHub default commit author",
+    )
+    committer_login = canonical_github_login(
+        committer.get("login"),
+        "GitHub default commit committer",
+    )
+    if committer_login != "web-flow":
+        raise GateError("GitHub default commit provider identity is invalid")
+    return {
+        "schema_version": 1,
+        "kind": GITHUB_SQUASH_RECEIPT_KIND,
+        "repository": repository,
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "tree_sha": parsed.tree_oid,
+        "signed_payload_sha256": hashlib.sha256(parsed.signed_payload).hexdigest(),
+        "signature_sha256": hashlib.sha256(parsed.signature_armor).hexdigest(),
+        "author_identity_sha256": parsed.author_identity_sha256,
+        "committer_identity_sha256": parsed.committer_identity_sha256,
+        "github_author_login": author_login,
+        "github_committer_login": committer_login,
+        "verification_reason": "valid",
+        "verified_at": verified_at_text,
+    }
+
+
 def _paged_route(route: str, page: int) -> str:
     page = canonical_positive_integer(page, "GitHub page")
     separator = "&" if "?" in route else "?"
@@ -1062,10 +1211,7 @@ def github_paginated_object_items(
         ),
         f"{label} terminal page",
     )
-    if (
-        terminal.get("total_count") != total_count
-        or terminal.get(item_key) != []
-    ):
+    if terminal.get("total_count") != total_count or terminal.get(item_key) != []:
         raise GateError(f"{label} pagination is not terminal")
     return items
 
@@ -1094,12 +1240,15 @@ def github_paginated_list(
             break
     if terminal_page == 0:
         raise GateError(f"{label} pagination exceeds the trusted limit")
-    if github_json(
-        "GET",
-        repository,
-        _paged_route(route, terminal_page),
-        token=token,
-    ) != []:
+    if (
+        github_json(
+            "GET",
+            repository,
+            _paged_route(route, terminal_page),
+            token=token,
+        )
+        != []
+    ):
         raise GateError(f"{label} pagination is not terminal")
     return items
 
@@ -1186,29 +1335,26 @@ def read_trusted_predecessor_audit_evidence(
         or len(predecessor_node_id) > 256
     ):
         raise GateError("predecessor pull request evidence is lookalike")
-    candidate_sha, merged_at, predecessor_node_id = (
-        _validate_predecessor_pull_request(
-            github_json(
-                "GET",
-                repository,
-                f"/pulls/{predecessor_number}",
-                token=token,
-            ),
-            repository=repository,
-            base_sha=base_sha,
-            parent_sha=parent_sha,
-            number=predecessor_number,
-            node_id=predecessor_node_id,
-            current_pr_number=current_pr_number,
-        )
+    candidate_sha, merged_at, predecessor_node_id = _validate_predecessor_pull_request(
+        github_json(
+            "GET",
+            repository,
+            f"/pulls/{predecessor_number}",
+            token=token,
+        ),
+        repository=repository,
+        base_sha=base_sha,
+        parent_sha=parent_sha,
+        number=predecessor_number,
+        node_id=predecessor_node_id,
+        current_pr_number=current_pr_number,
     )
 
     encoded_name = parse.quote(POST_MERGE_AUDIT_CHECK_CONTEXT, safe="")
     check_runs = github_paginated_object_items(
         repository=repository,
         route=(
-            f"/commits/{encoded_sha}/check-runs"
-            f"?check_name={encoded_name}&filter=all"
+            f"/commits/{encoded_sha}/check-runs?check_name={encoded_name}&filter=all"
         ),
         item_key="check_runs",
         token=token,
@@ -1246,12 +1392,8 @@ def read_trusted_predecessor_audit_evidence(
             if isinstance(details_url, str)
             else None
         )
-        if (
-            check_run_id in check_evidence
-            or (
-                isinstance(check_run_node_id, str)
-                and check_run_node_id in check_node_ids
-            )
+        if check_run_id in check_evidence or (
+            isinstance(check_run_node_id, str) and check_run_node_id in check_node_ids
         ):
             raise GateError("predecessor audit evidence is ambiguous")
         if check_run.get("head_sha") != base_sha:
@@ -1339,12 +1481,9 @@ def read_trusted_predecessor_audit_evidence(
         workflow_run.get("head_repository"),
         "predecessor audit workflow head repository",
     )
-    expected_run_url = (
-        f"https://github.com/{repository}/actions/runs/{workflow_run_id}"
-    )
+    expected_run_url = f"https://github.com/{repository}/actions/runs/{workflow_run_id}"
     expected_jobs_url = (
-        f"https://api.github.com/repos/{repository}/actions/runs/"
-        f"{workflow_run_id}/jobs"
+        f"https://api.github.com/repos/{repository}/actions/runs/{workflow_run_id}/jobs"
     )
     workflow_run_attempt = canonical_positive_integer(
         workflow_run.get("run_attempt"),
@@ -2279,11 +2418,16 @@ def validate_tree_api_payload(
         object_type = entry.get("type")
         object_id = canonical_oid(entry.get("sha"), "candidate tree object")
         size = entry.get("size")
-        if path in seen or not isinstance(mode, str) or object_type not in {
-            "blob",
-            "tree",
-            "commit",
-        }:
+        if (
+            path in seen
+            or not isinstance(mode, str)
+            or object_type
+            not in {
+                "blob",
+                "tree",
+                "commit",
+            }
+        ):
             raise GateError("candidate tree API entry is invalid")
         seen.add(path)
         if object_type == "blob":
@@ -2327,10 +2471,7 @@ def validate_candidate_commit_object(
 ) -> CandidateCommit:
     head_sha = canonical_oid(head_sha, "candidate commit")
     size_text = git_text(git_dir, "cat-file", "-s", head_sha, max_bytes=128).strip()
-    if (
-        not size_text.isdecimal()
-        or not 0 < int(size_text) <= MAX_COMMIT_BYTES
-    ):
+    if not size_text.isdecimal() or not 0 < int(size_text) <= MAX_COMMIT_BYTES:
         raise GateError("candidate commit object exceeds the trusted size limit")
     raw = git_output(
         git_dir,
@@ -2438,10 +2579,7 @@ def candidate_signature_key_bytes(
         entry.object_id,
         max_bytes=max_bytes,
     )
-    if (
-        len(value) != entry.size
-        or hashlib.sha256(value).hexdigest() != expected_digest
-    ):
+    if len(value) != entry.size or hashlib.sha256(value).hexdigest() != expected_digest:
         raise GateError("candidate signing key differs from trusted policy")
     return value, relative
 
@@ -2609,7 +2747,10 @@ def candidate_commit_range(
     if policy not in {"bootstrap-v2", "history-v2"}:
         raise GateError("candidate preflight policy is invalid")
     for label, revision in (("base", base_sha), ("head", head_sha)):
-        if git_text(git_dir, "cat-file", "-t", revision, max_bytes=64).strip() != "commit":
+        if (
+            git_text(git_dir, "cat-file", "-t", revision, max_bytes=64).strip()
+            != "commit"
+        ):
             raise GateError(f"candidate {label} object is not a commit")
 
     merge_bases = tuple(
@@ -2735,11 +2876,7 @@ def _candidate_tree_payloads(
         }
     if tree_payload is None:
         raise GateError("candidate tree API inventory is unavailable")
-    if (
-        len(expected) == 1
-        and isinstance(tree_payload, dict)
-        and "tree" in tree_payload
-    ):
+    if len(expected) == 1 and isinstance(tree_payload, dict) and "tree" in tree_payload:
         return {expected[0]: tree_payload}
     if not isinstance(tree_payload, dict) or set(tree_payload) != set(expected):
         raise GateError("candidate range tree API inventory is incomplete")
@@ -2791,11 +2928,7 @@ def git_object_metadata(
             result[expected_oid] = None
             continue
         fields = line.split(" ")
-        if (
-            len(fields) != 3
-            or fields[0] != expected_oid
-            or not fields[2].isdecimal()
-        ):
+        if len(fields) != 3 or fields[0] != expected_oid or not fields[2].isdecimal():
             raise GateError("candidate object metadata changed during inspection")
         result[expected_oid] = (fields[1], int(fields[2]))
     return result
@@ -3015,12 +3148,8 @@ def load_preflight(path: Path) -> GitPreflight:
     head_sha = canonical_oid(root.get("head_sha"), "manifest head")
     head_tree_sha = canonical_oid(root.get("head_tree_sha"), "manifest tree")
     expected_oid_length = len(head_sha)
-    if (
-        base_sha == head_sha
-        or any(
-            len(object_id) != expected_oid_length
-            for object_id in (base_sha, head_tree_sha)
-        )
+    if base_sha == head_sha or any(
+        len(object_id) != expected_oid_length for object_id in (base_sha, head_tree_sha)
     ):
         raise GateError("candidate preflight manifest hash formats differ")
 
@@ -3433,15 +3562,11 @@ def _trust_generation_entries(
             raise GateError("trust-generation inventory is not ASCII") from exc
         path = _safe_git_path(raw_path)
         entries.append((path, mode, object_type, object_id))
-    if (
-        tuple(entry[0] for entry in entries)
-        != tuple(sorted(PERMANENT_TRUST_GENERATION_PATHS))
-        or any(
-            mode != "100644"
-            or object_type != "blob"
-            or len(object_id) != len(revision)
-            for _path, mode, object_type, object_id in entries
-        )
+    if tuple(entry[0] for entry in entries) != tuple(
+        sorted(PERMANENT_TRUST_GENERATION_PATHS)
+    ) or any(
+        mode != "100644" or object_type != "blob" or len(object_id) != len(revision)
+        for _path, mode, object_type, object_id in entries
     ):
         raise GateError("trust-generation inventory is incomplete")
     return tuple(entries)
@@ -3591,16 +3716,20 @@ def _write_publication_projection(
         raise GateError("publication projection commit is too large")
     validate_closed_candidate_repository(git_dir)
     try:
-        prospective_sha = git_output(
-            git_dir,
-            "hash-object",
-            "-t",
-            "commit",
-            "-w",
-            "--stdin",
-            input_data=raw,
-            max_bytes=128,
-        ).decode("ascii").strip()
+        prospective_sha = (
+            git_output(
+                git_dir,
+                "hash-object",
+                "-t",
+                "commit",
+                "-w",
+                "--stdin",
+                input_data=raw,
+                max_bytes=128,
+            )
+            .decode("ascii")
+            .strip()
+        )
     except UnicodeDecodeError as exc:
         raise GateError("publication projection object ID is invalid") from exc
     prospective_sha = canonical_oid(
@@ -3656,7 +3785,10 @@ def _validate_merge_group_graph(
         ("candidate", snapshot.candidate_sha),
         ("queue", snapshot.queue_sha),
     ):
-        if git_text(git_dir, "cat-file", "-t", revision, max_bytes=64).strip() != "commit":
+        if (
+            git_text(git_dir, "cat-file", "-t", revision, max_bytes=64).strip()
+            != "commit"
+        ):
             raise GateError(f"merge-group {label} object is not a commit")
 
     queue_commit = validate_candidate_commit_object(
@@ -3711,12 +3843,8 @@ def _validate_merge_group_graph(
             validator.history_v2_mutable_artifact(Path(path))
             for path in changed_paths
         )
-        if (
-            role == "publication"
-            and not all(publication_paths)
-        ) or (
-            role == "admin"
-            and any(publication_paths)
+        if (role == "publication" and not all(publication_paths)) or (
+            role == "admin" and any(publication_paths)
         ):
             raise GateError(
                 "B1 immutable plan role differs from the exact candidate paths"
@@ -4062,17 +4190,9 @@ def _read_authority_blob_objects(
     expected_oid_length: int,
 ) -> dict[str, bytes]:
     object_ids = tuple(
-        sorted(
-            {
-                entry.object_id
-                for entry in entries
-                if entry.object_type == "blob"
-            }
-        )
+        sorted({entry.object_id for entry in entries if entry.object_type == "blob"})
     )
-    input_data = "".join(f"{object_id}\n" for object_id in object_ids).encode(
-        "ascii"
-    )
+    input_data = "".join(f"{object_id}\n" for object_id in object_ids).encode("ascii")
     raw = _authority_git_output(
         authority_root,
         "cat-file",
@@ -4169,11 +4289,7 @@ def _read_stable_execution_blob(
         ) from exc
     finally:
         os.close(descriptor)
-    if (
-        len(first) != opened.st_size
-        or len(second) != final.st_size
-        or first != second
-    ):
+    if len(first) != opened.st_size or len(second) != final.st_size or first != second:
         raise GateError("default execution blob content changed while being read")
     if (opened.st_dev, opened.st_ino) != (final.st_dev, final.st_ino):
         raise GateError("default execution blob was replaced while being read")
@@ -4191,9 +4307,9 @@ def _read_stable_execution_blob(
         raise GateError(
             "default execution blob identity could not be revalidated"
         ) from exc
-    if (
-        not stat.S_ISREG(current.st_mode)
-        or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+    if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (
+        opened.st_dev,
+        opened.st_ino,
     ):
         raise GateError("default execution blob was replaced while being read")
     if stat.S_IMODE(current.st_mode) != expected_mode:
@@ -4210,10 +4326,7 @@ def _execution_tree_inventory(root: Path) -> dict[str, tuple[str, int]]:
         raise GateError("default execution tree is unreadable") from exc
     except OSError as exc:
         raise GateError("default execution tree could not be inspected") from exc
-    if (
-        not stat.S_ISDIR(root_metadata.st_mode)
-        or stat.S_ISLNK(root_metadata.st_mode)
-    ):
+    if not stat.S_ISDIR(root_metadata.st_mode) or stat.S_ISLNK(root_metadata.st_mode):
         raise GateError("default execution tree is not a real directory")
     if stat.S_IMODE(root_metadata.st_mode) != 0o700:
         raise GateError("default execution root access policy changed")
@@ -4393,12 +4506,8 @@ def prepare_default_execution_tree(
             value = blob_values[entry.object_id]
             total_bytes += len(value)
             if total_bytes > MAX_TREE_BYTES:
-                raise GateError(
-                    "default execution tree exceeds the trusted byte limit"
-                )
-            destination = execution_root / Path(
-                *PurePosixPath(entry.path).parts
-            )
+                raise GateError("default execution tree exceeds the trusted byte limit")
+            destination = execution_root / Path(*PurePosixPath(entry.path).parts)
             with destination.open("xb") as stream:
                 stream.write(value)
             destination.chmod(0o755 if entry.mode == "100755" else 0o644)
@@ -4575,6 +4684,13 @@ def main(argv: list[str] | None = None) -> int:
     verify_default_parser.add_argument("--expected-head", required=True)
     verify_default_parser.add_argument("--receipt", required=True, type=Path)
 
+    verify_github_commit_parser = subparsers.add_parser("verify-default-github-commit")
+    verify_github_commit_parser.add_argument("--repository", required=True)
+    verify_github_commit_parser.add_argument("--git-dir", required=True, type=Path)
+    verify_github_commit_parser.add_argument("--base-sha", required=True)
+    verify_github_commit_parser.add_argument("--head-sha", required=True)
+    verify_github_commit_parser.add_argument("--output", required=True, type=Path)
+
     resolve_base_parser = subparsers.add_parser("resolve-merge-group-base")
     resolve_base_parser.add_argument("--snapshot", required=True, type=Path)
     resolve_base_parser.add_argument("--git-dir", required=True, type=Path)
@@ -4671,6 +4787,19 @@ def main(argv: list[str] | None = None) -> int:
                 args.authority_root,
                 expected_head=args.expected_head,
                 receipt=load_authority_snapshot(args.receipt.resolve()),
+            )
+        elif args.command == "verify-default-github-commit":
+            receipt = verify_default_github_commit(
+                repository=args.repository,
+                git_dir=args.git_dir,
+                base_sha=args.base_sha,
+                head_sha=args.head_sha,
+                token=os.environ.get("GH_TOKEN", ""),
+            )
+            write_json(
+                args.output,
+                receipt,
+                max_bytes=MAX_POLICY_JSON_BYTES,
             )
         elif args.command == "resolve-merge-group-base":
             snapshot = load_merge_group_snapshot(args.snapshot.resolve())
