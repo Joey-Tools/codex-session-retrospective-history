@@ -5623,6 +5623,81 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertEqual(parsed.parents, (base,))
             self.assertTrue(parsed.signature_armor.endswith(b"\n"))
             self.assertFalse(parsed.signed_payload.endswith(b"\n"))
+            self.assertIsNone(parsed.pull_request_number)
+            numbered = fixture_raw_commit(
+                root,
+                tree_oid=tree_oid,
+                parents=(base,),
+                message="Publish retained history (#4)",
+                author=MODULE.HISTORY_V2_CANONICAL_IDENTITY,
+                committer="GitHub <noreply@github.com>",
+                author_timezone="+0100",
+                committer_timezone="+0100",
+                message_trailing_newline=False,
+            )
+            parsed_numbered = MODULE.parse_history_v2_github_squash_commit(
+                fixture_commit_bytes(root, numbered),
+                expected_oid=numbered,
+            )
+            self.assertEqual(parsed_numbered.pull_request_number, 4)
+            noncanonical_numbered = fixture_raw_commit(
+                root,
+                tree_oid=tree_oid,
+                parents=(base,),
+                message="Publish retained history  (#4)",
+                author=MODULE.HISTORY_V2_CANONICAL_IDENTITY,
+                committer="GitHub <noreply@github.com>",
+                author_timezone="+0100",
+                committer_timezone="+0100",
+                message_trailing_newline=False,
+            )
+            with self.assertRaisesRegex(ValueError, "subject is not canonical"):
+                MODULE.parse_history_v2_github_squash_commit(
+                    fixture_commit_bytes(root, noncanonical_numbered),
+                    expected_oid=noncanonical_numbered,
+                )
+            MODULE.validate_history_v2_github_squash_receipt(
+                github_squash_receipt(
+                    parsed_numbered,
+                    base_sha=base,
+                    head_sha=numbered,
+                    repository=repository,
+                ),
+                commit=parsed_numbered,
+                repository=repository,
+                repository_id=FIXTURE_REPOSITORY_ID,
+                before_rev=base,
+                head_rev=numbered,
+            )
+            mismatched_number = fixture_raw_commit(
+                root,
+                tree_oid=tree_oid,
+                parents=(base,),
+                message="Publish retained history (#5)",
+                author=MODULE.HISTORY_V2_CANONICAL_IDENTITY,
+                committer="GitHub <noreply@github.com>",
+                author_timezone="+0100",
+                committer_timezone="+0100",
+                message_trailing_newline=False,
+            )
+            parsed_mismatched = MODULE.parse_history_v2_github_squash_commit(
+                fixture_commit_bytes(root, mismatched_number),
+                expected_oid=mismatched_number,
+            )
+            with self.assertRaisesRegex(ValueError, "differs from the exact commit"):
+                MODULE.validate_history_v2_github_squash_receipt(
+                    github_squash_receipt(
+                        parsed_mismatched,
+                        base_sha=base,
+                        head_sha=mismatched_number,
+                        repository=repository,
+                    ),
+                    commit=parsed_mismatched,
+                    repository=repository,
+                    repository_id=FIXTURE_REPOSITORY_ID,
+                    before_rev=base,
+                    head_rev=mismatched_number,
+                )
             for author in (
                 f"Retrospective History <{risky_email()}>",
                 "Synthetic Maintainer "
@@ -10992,6 +11067,24 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             f"sink.write({expression})\n",
             f"send({expression})\n",
             f"payload = int.to_bytes({encoded}, {len(expected)}, 'big')\n",
+            f"payload = getattr({encoded}, 'to_bytes')({len(expected)}, 'big')\n",
+            f"encoder = getattr({encoded}, 'to_bytes')\n"
+            f"payload = encoder({len(expected)}, 'big')\n",
+            "lookup = getattr\n"
+            f"payload = lookup({encoded}, 'to_bytes')({len(expected)}, 'big')\n",
+            "lookup = getattr\n"
+            f"encoder = lookup({encoded}, 'to_bytes')\n"
+            f"payload = encoder({len(expected)}, 'big')\n",
+            f"payload = getattr(int, 'to_bytes')({encoded}, {len(expected)}, 'big')\n",
+            f"encoders = [({encoded}).to_bytes]\n"
+            f"payload = encoders[0]({len(expected)}, 'big')\n",
+            "lookups = [getattr]\n"
+            "[lookup] = lookups\n"
+            f"payload = lookup({encoded}, 'to_bytes')({len(expected)}, 'big')\n",
+            "from builtins import getattr as lookup\n"
+            f"payload = lookup({encoded}, 'to_bytes')({len(expected)}, 'big')\n",
+            "from builtins import int as integer\n"
+            f"payload = integer.to_bytes({encoded}, {len(expected)}, 'big')\n",
         )
         for source in rejected:
             with self.subTest(source=source.splitlines()[-1][:56]):
@@ -11017,6 +11110,76 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     issues,
                 )
 
+        for source in (
+            f"payload = getattr(None, 'missing', int.to_bytes)("
+            f"{encoded}, {len(expected)}, 'big')\n",
+            f"payload = getattr(int, '__abstractmethods__', ({encoded}).to_bytes)("
+            f"{len(expected)}, 'big')\n",
+            "def reveal(lookup=getattr):\n"
+            f"    return lookup({encoded}, 'to_bytes')({len(expected)}, 'big')\n"
+            "payload = reveal()\n",
+            "def reveal(integer=int):\n"
+            f"    return integer.to_bytes({encoded}, {len(expected)}, 'big')\n"
+            "payload = reveal()\n",
+            "def reveal(encoder=int.to_bytes):\n"
+            f"    return encoder({encoded}, {len(expected)}, 'big')\n"
+            "payload = reveal()\n",
+            "def reveal(encoder=int.to_bytes):\n"
+            "    for encoder in []:\n"
+            "        pass\n"
+            f"    return encoder({encoded}, {len(expected)}, 'big')\n"
+            "payload = reveal()\n",
+            "if enabled:\n"
+            f"    _, *items = [9, 0, 65]\n"
+            "else:\n"
+            f"    items = [0, {encoded}]\n"
+            "(head, *numbers), = [items]\n"
+            f"payload = numbers[0].to_bytes({len(expected)}, 'big')\n",
+            "if enabled:\n"
+            "    _, *items = [9, [0, 65]]\n"
+            "else:\n"
+            f"    items = [[0, {encoded}]]\n"
+            "[[[head, *numbers]]] = [items]\n"
+            f"payload = numbers[0].to_bytes({len(expected)}, 'big')\n",
+            "items = [65]\n"
+            "for _ in range(2):\n"
+            f"    payload = items[0].to_bytes({len(expected)}, 'big')\n"
+            f"    _, *items = [0, {encoded}]\n",
+            "items = [65]\n"
+            "count = 0\n"
+            f"while count < 2 and items[0].to_bytes({len(expected)}, 'big'):\n"
+            "    count += 1\n"
+            f"    _, *items = [0, {encoded}]\n",
+            "items = [65]\n"
+            "while enabled:\n"
+            f"    payload = items[0].to_bytes({len(expected)}, 'big')\n"
+            f"    _, *items = [0, {encoded}]\n"
+            "    if repeat:\n"
+            "        continue\n"
+            "    break\n",
+            "items = [65]\n"
+            "while enabled:\n"
+            f"    payload = items[0].to_bytes({len(expected)}, 'big')\n"
+            f"    if (items := [{encoded}]):\n"
+            "        continue\n"
+            "    break\n",
+            "enabled = True\n"
+            "def twice(_):\n"
+            "    return (0, 1)\n"
+            "class C:\n"
+            "    if enabled:\n"
+            "        range = twice\n"
+            "    items = [65]\n"
+            "    for _ in range(1):\n"
+            f"        payload = items[0].to_bytes({len(expected)}, 'big')\n"
+            f"        _, *items = [0, {encoded}]\n",
+        ):
+            with self.subTest(fail_closed_source=source.splitlines()[-1][:56]):
+                self.assert_python_privacy_layers_reject(
+                    source,
+                    "string construction depends on an ambiguous name binding",
+                )
+
         self.assertEqual(
             MODULE.bootstrap_v2_python_privacy_risk_values(
                 "payload = (65).to_bytes(1, 'big')\n"
@@ -11029,10 +11192,365 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             ),
             [],
         )
+        accepted_reflection = (
+            "getattr = custom_lookup\n"
+            f"payload = getattr({encoded}, 'to_bytes')({len(expected)}, 'big')\n",
+            "def encode(getattr):\n"
+            f"    return getattr({encoded}, 'to_bytes')({len(expected)}, 'big')\n",
+            "number = get_number()\npayload = getattr(number, 'to_bytes')(32, 'big')\n",
+            f"payload = getattr({encoded}, 'bit_length')()\n",
+            f"payload = getattr(None, 'missing', custom_encoder)("
+            f"{encoded}, {len(expected)}, 'big')\n",
+            "from builtins import int as integer\n"
+            "integer = custom_integer\n"
+            f"payload = integer.to_bytes({encoded}, {len(expected)}, 'big')\n",
+            "def reveal(encoder=int.to_bytes):\n"
+            "    encoder = custom_encoder\n"
+            f"    return encoder({encoded}, {len(expected)}, 'big')\n"
+            "payload = reveal()\n",
+            f"encoder = getattr('public {{}}', 'format', ({encoded}).to_bytes)\n"
+            "payload = encoder('safe')\n",
+            f"encoder = getattr(int, '__call__', ({encoded}).to_bytes)\n"
+            "payload = encoder(8)\n",
+            f"items = [{encoded}, 65]\n"
+            "head, *numbers = items\n"
+            "payload = numbers[0].to_bytes(1, 'big')\n",
+            "def reveal(encoder=custom_encoder):\n"
+            f"    payload = encoder({encoded}, {len(expected)}, 'big')\n"
+            "    for encoder in [int.to_bytes]:\n"
+            "        pass\n"
+            "    return payload\n"
+            "payload = reveal()\n",
+            "def custom_encoder(*args):\n"
+            "    return b'safe'\n"
+            "def reveal(encoder=int.to_bytes):\n"
+            "    for encoder in [custom_encoder]:\n"
+            f"        return encoder({encoded}, {len(expected)}, 'big')\n"
+            "payload = reveal()\n",
+            f"containers = [[{encoded}]] + [[65]]\n"
+            "numbers = containers[1]\n"
+            "[number] = numbers\n"
+            "payload = number.to_bytes(1, 'big')\n",
+            f"_, *items = [0, {encoded}, 65]\n"
+            "head, *numbers = items\n"
+            "payload = numbers[0].to_bytes(1, 'big')\n",
+            f"_, *numbers = [0, {encoded}, 65]\n"
+            f"payload = numbers[1].to_bytes({len(expected)}, 'big')\n",
+            f"head, *numbers = [{encoded}, *[65]]\n"
+            f"payload = numbers[0].to_bytes({len(expected)}, 'big')\n",
+            f"left = [[{encoded}]]\n"
+            "right = [[65]]\n"
+            f"payload = (left + right)[1][0].to_bytes({len(expected)}, 'big')\n",
+            f"items = [[{encoded}], [65]]\n"
+            f"payload = (items * 2)[1][0].to_bytes({len(expected)}, 'big')\n",
+            f"_, *numbers = [0, {encoded}, 65]\n"
+            "_, number = numbers\n"
+            f"payload = number.to_bytes({len(expected)}, 'big')\n",
+            f"head, *numbers = [{encoded}, *([65] + [])]\n"
+            f"payload = numbers[0].to_bytes({len(expected)}, 'big')\n",
+            f"items = [[{encoded}]]\n"
+            f"payload = (items + [[65]])[1][0].to_bytes({len(expected)}, 'big')\n"
+            "_, *items = [0, [66]]\n",
+            f"items = [[{encoded}]]\n"
+            f"payload = (items + [[65]])[1][0].to_bytes({len(expected)}, 'big')\n"
+            "if enabled:\n"
+            "    _, *items = [0, [66]]\n",
+            "items = [65]\n"
+            f"while items[0].to_bytes({len(expected)}, 'big'):\n"
+            f"    _, *items = [0, {encoded}]\n"
+            "    break\n",
+            "items = [65]\n"
+            "for _ in [0]:\n"
+            f"    payload = items[0].to_bytes({len(expected)}, 'big')\n"
+            f"    _, *items = [0, {encoded}]\n",
+            "items = [65]\n"
+            f"while items[0].to_bytes({len(expected)}, 'big'):\n"
+            "    while True:\n"
+            f"        _, *items = [0, {encoded}]\n"
+            "        break\n"
+            "    break\n",
+        )
+        for source in accepted_reflection:
+            with self.subTest(accepted_reflection=source.splitlines()[-1][:56]):
+                self.assertEqual(
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                    [],
+                )
         with self.assertRaisesRegex(ValueError, "unresolved argument"):
             MODULE.bootstrap_v2_python_privacy_risk_values(
                 "number = 65\npayload = number.to_bytes(length, 'big')\n"
             )
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS",
+                1,
+            ),
+            self.assertRaisesRegex(ValueError, "getattr origin analysis"),
+        ):
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "lookup = getattr\n"
+                "alias = lookup\n"
+                f"encoder = alias({encoded}, 'to_bytes')\n"
+                f"payload = encoder({len(expected)}, 'big')\n"
+            )
+
+    def test_bootstrap_v2_python_ambiguous_int_to_bytes_fails_closed(self) -> None:
+        expected = risky_github_classic_token()
+        encoded = int.from_bytes(expected.encode("ascii"), "big")
+        length = len(expected)
+        prefix = f"if enabled:\n    number = {encoded}\nelse:\n    number = 65\n"
+        cases = (
+            (
+                "direct",
+                prefix + f"sink.write(number.to_bytes({length}, 'big'))\n",
+            ),
+            (
+                "alias",
+                prefix
+                + "encoder = number.to_bytes\n"
+                + f"sink.write(encoder({length}, 'big'))\n",
+            ),
+            (
+                "container",
+                prefix
+                + "encoders = [number.to_bytes]\n"
+                + f"sink.write(encoders[0]({length}, 'big'))\n",
+            ),
+            (
+                "reflection",
+                prefix + f"sink.write(getattr(number, 'to_bytes')({length}, 'big'))\n",
+            ),
+            (
+                "conditional receiver",
+                f"number = {encoded} if enabled else 65\n"
+                f"sink.write(number.to_bytes({length}, 'big'))\n",
+            ),
+            (
+                "receiver container",
+                prefix
+                + "numbers = [number]\n"
+                + f"sink.write(numbers[0].to_bytes({length}, 'big'))\n",
+            ),
+            (
+                "method branch",
+                "if enabled:\n"
+                f"    encoder = ({encoded}).to_bytes\n"
+                "else:\n"
+                "    encoder = (65).to_bytes\n"
+                f"sink.write(encoder({length}, 'big'))\n",
+            ),
+            (
+                "builtin receiver branch",
+                "encoder = int.to_bytes if enabled else int.to_bytes\n"
+                f"sink.write(encoder({encoded}, {length}, 'big'))\n",
+            ),
+            (
+                "aliased reflection",
+                prefix
+                + "lookup = getattr\n"
+                + "encoder = lookup(number, 'to_bytes')\n"
+                + f"sink.write(encoder({length}, 'big'))\n",
+            ),
+            (
+                "reflection container",
+                prefix
+                + "lookups = [getattr]\n"
+                + f"sink.write(lookups[0](number, 'to_bytes')({length}, 'big'))\n",
+            ),
+            (
+                "conditional reflection",
+                f"lookup = getattr if enabled else custom_lookup\n"
+                f"sink.write(lookup({encoded}, 'to_bytes')({length}, 'big'))\n",
+            ),
+            (
+                "destructured receiver",
+                f"[number] = [{encoded} if enabled else 65]\n"
+                f"sink.write(number.to_bytes({length}, 'big'))\n",
+            ),
+            (
+                "starred tail receiver",
+                f"*ignored, number = [1, 2, {encoded} if enabled else 65]\n"
+                f"sink.write(number.to_bytes({length}, 'big'))\n",
+            ),
+            (
+                "destructured container alias",
+                f"numbers = [{encoded}] if enabled else [65]\n"
+                "[number] = numbers\n"
+                f"sink.write(number.to_bytes({length}, 'big'))\n",
+            ),
+            (
+                "starred capture receiver",
+                f"head, *numbers = [1, {encoded} if enabled else 65]\n"
+                f"sink.write(numbers[0].to_bytes({length}, 'big'))\n",
+            ),
+            (
+                "subscript container alias",
+                f"containers = [[{encoded}]] if enabled else [[65]]\n"
+                "numbers = containers[0]\n"
+                "[number] = numbers\n"
+                f"sink.write(number.to_bytes({length}, 'big'))\n",
+            ),
+            (
+                "loop starred capture receiver",
+                f"for head, *numbers in [[0, {encoded} if enabled else 65]]:\n"
+                f"    sink.write(numbers[0].to_bytes({length}, 'big'))\n",
+            ),
+            (
+                "binary sequence container alias",
+                f"containers = [[{encoded} if enabled else 65]] + []\n"
+                "numbers = containers[0]\n"
+                "[number] = numbers\n"
+                f"sink.write(number.to_bytes({length}, 'big'))\n",
+            ),
+        )
+        for label, source in cases:
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "string construction depends on an ambiguous name binding",
+                ),
+            ):
+                MODULE.bootstrap_v2_python_privacy_risk_values(source)
+
+        with self.assertRaisesRegex(ValueError, "unresolved int method"):
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "method_name = get_method_name()\n"
+                f"sink.write(getattr({encoded}, method_name)({length}, 'big'))\n"
+            )
+        with self.assertRaisesRegex(ValueError, "unresolved int method"):
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "lookup = getattr if enabled else getattr\n"
+                "method_name = get_method_name()\n"
+                f"encoder = lookup({encoded}, method_name)\n"
+                f"sink.write(encoder({length}, 'big'))\n"
+            )
+
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "if enabled:\n"
+                "    number = 65\n"
+                "else:\n"
+                "    number = 66\n"
+                "sink.write(number.to_bytes(1, 'big'))\n"
+            ),
+            [],
+        )
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "method_name = get_method_name()\n"
+                "encoder = getattr(65, method_name, None)\n"
+                "copy = encoder\n"
+            ),
+            [],
+        )
+        for source in (
+            f"number = 65\nsink.write(number.to_bytes(1, 'big'))\nnumber = {encoded}\n",
+            f"number = {encoded}\nnumber = 65\nsink.write(number.to_bytes(1, 'big'))\n",
+            "*ignored, number = [1, 2, 65]\nsink.write(number.to_bytes(1, 'big'))\n",
+            "head, *numbers = [1, 65]\nsink.write(numbers[0].to_bytes(1, 'big'))\n",
+        ):
+            with self.subTest(reachable_source=source.splitlines()[-1][:56]):
+                self.assertEqual(
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                    [],
+                )
+
+    def test_bootstrap_v2_python_int_to_bytes_origin_graph_is_bounded(
+        self,
+    ) -> None:
+        expected = risky_github_classic_token()
+        encoded = int.from_bytes(expected.encode("ascii"), "big")
+        lines = ["alias_0 = getattr"]
+        lines.extend(f"alias_{index} = alias_{index - 1}" for index in range(1, 1_100))
+        lines.extend(
+            (
+                f"encoder = alias_1099({encoded}, 'to_bytes')",
+                f"payload = encoder({len(expected)}, 'big')",
+            )
+        )
+        self.assertIn(
+            expected,
+            MODULE.bootstrap_v2_python_privacy_risk_values("\n".join(lines) + "\n"),
+        )
+
+        calls = "\n".join(
+            f"payload_{index} = (65).to_bytes(1, 'big')" for index in range(20)
+        )
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS",
+                10,
+            ),
+            self.assertRaisesRegex(ValueError, "int.to_bytes origin analysis"),
+        ):
+            MODULE.bootstrap_v2_python_privacy_risk_values(calls + "\n")
+
+    def test_bootstrap_v2_python_ambiguous_receiver_state_is_bounded(self) -> None:
+        aliases = "".join(
+            f"alias_{index} = {('number' if index == 0 else f'alias_{index - 1}')}\n"
+            for index in range(8)
+        )
+        source = (
+            "if enabled:\n"
+            "    number = 65\n"
+            "else:\n"
+            "    number = 66\n"
+            f"{aliases}"
+            "sink.write(alias_7.to_bytes(1, 'big'))\n"
+        )
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUES",
+                8,
+            ),
+            self.assertRaisesRegex(ValueError, "ambiguous receiver analysis"),
+        ):
+            MODULE.bootstrap_v2_python_privacy_risk_values(source)
+
+    def test_bootstrap_v2_python_ambiguous_receiver_bytes_are_bounded(self) -> None:
+        source = (
+            "if enabled:\n"
+            '    value = "aa"\n'
+            "else:\n"
+            '    value = "bb"\n'
+            'step = value.ljust(8, "x")\n'
+            'sink.write(step.ljust(16, "y"))\n'
+        )
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_BYTES",
+                18,
+            ),
+            self.assertRaisesRegex(ValueError, "ambiguous receiver analysis"),
+        ):
+            MODULE.bootstrap_v2_python_privacy_risk_values(source)
+
+    def test_bootstrap_v2_python_ambiguous_result_byte_budget_is_shared(
+        self,
+    ) -> None:
+        source = (
+            "if choice == 0:\n"
+            "    number = 65\n"
+            "elif choice == 1:\n"
+            "    number = 66\n"
+            "else:\n"
+            "    number = 67\n"
+            "sink.write(number.to_bytes(1, 'big'))\n"
+        )
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_BYTES",
+                2,
+            ),
+            self.assertRaisesRegex(ValueError, "ambiguous text method results"),
+        ):
+            MODULE.bootstrap_v2_python_privacy_risk_values(source)
 
     def test_bootstrap_v2_python_static_byte_constructors_fail_closed(self) -> None:
         expected = risky_github_classic_token()
@@ -12046,6 +12564,125 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     'methods = [None, "".join]\n'
                     f"value = methods[selector]({tiny_fragments})\n"
                 )
+
+    def test_bootstrap_v2_python_assignment_selection_paths_are_bounded(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "trusted path depth"):
+            MODULE.bootstrap_v2_python_privacy_risk_values(
+                "left = [65]\n"
+                "right = [65]\n"
+                "for _ in range(2):\n"
+                "    [left] = right\n"
+                "    [right] = left\n"
+                "sink.write(left.to_bytes(1, 'big'))\n"
+            )
+
+    def test_bootstrap_v2_python_binding_reachability_is_bounded(self) -> None:
+        repetitions = 32
+        source = "".join(
+            f"value_{index} = parts[0].to_bytes(1, 'big')\n"
+            for index in range(repetitions)
+        )
+        source += "".join(
+            f"head_{index}, *parts = [0, 65]\n" for index in range(repetitions)
+        )
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_PYTHON_BINDING_REACHABILITY_STEPS",
+                64,
+            ),
+            self.assertRaisesRegex(ValueError, "binding reachability"),
+        ):
+            MODULE.bootstrap_v2_python_privacy_risk_values(source)
+
+        default_source = "def reveal(value=65):\n"
+        default_source += "".join(
+            f"    item_{index} = value.to_bytes(1, 'big')\n"
+            for index in range(repetitions)
+        )
+        default_source += "".join(
+            "    for value in []:\n        pass\n" for _ in range(repetitions)
+        )
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_PYTHON_BINDING_REACHABILITY_STEPS",
+                64,
+            ),
+            self.assertRaisesRegex(ValueError, "binding reachability"),
+        ):
+            MODULE.bootstrap_v2_python_privacy_risk_values(default_source)
+
+    def test_bootstrap_v2_python_starred_capture_cache_is_shared(self) -> None:
+        source = (
+            "head, *left = head, *right = [0, 1, 2, 3, 4, 5]\n"
+            "first = left[0].to_bytes(1, 'big')\n"
+            "second = right[0].to_bytes(1, 'big')\n"
+        )
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_STATES",
+                8,
+            ),
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS",
+                200,
+            ),
+        ):
+            self.assertEqual(
+                MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                [],
+            )
+
+    def test_bootstrap_v2_python_starred_capture_combinations_are_bounded(
+        self,
+    ) -> None:
+        alternatives = 12
+        targets = 12
+        source = "".join(
+            f"if condition_{index}:\n    values = [0, 65, 66]\n"
+            for index in range(alternatives)
+        )
+        source += " = ".join(["head, *parts"] * targets + ["values"]) + "\n"
+        source += "outer_head, *out = parts\n"
+        source += "sink.write(out[0].to_bytes(1, 'big'))\n"
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS",
+                256,
+            ),
+            self.assertRaisesRegex(ValueError, "trusted operation limit"),
+        ):
+            MODULE.bootstrap_v2_python_privacy_risk_values(source)
+
+    def test_bootstrap_v2_python_static_sequence_multiplier_is_saturated(
+        self,
+    ) -> None:
+        multiplier = "0x" + ("f" * 32_000)
+        source = (
+            f"items = [65, 66] * {multiplier}\nvalue = items[-1].to_bytes(1, 'big')\n"
+        )
+        self.assertEqual(
+            MODULE.bootstrap_v2_python_privacy_risk_values(source),
+            [],
+        )
+
+    def test_bootstrap_v2_python_decoder_event_checks_are_bounded(self) -> None:
+        source = (
+            "import base64\n"
+            + "".join(f"payload = b'public-{index}'\n" for index in range(16))
+            + "value = base64.b64decode(payload)\n"
+        )
+        with (
+            mock.patch.object(MODULE, "BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS", 8),
+            self.assertRaisesRegex(ValueError, "decoder input exceeds"),
+        ):
+            MODULE.bootstrap_v2_python_privacy_risk_values(source)
 
     def test_bootstrap_v2_python_method_candidate_edges_are_deduplicated(
         self,

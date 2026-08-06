@@ -113,9 +113,7 @@ CI_MODULE = load_module("trusted_history_ci", CI_HELPER)
 
 
 def load_workflow(path: Path = WORKFLOW) -> dict:
-    return VALIDATOR_MODULE.parse_strict_workflow_yaml(
-        path.read_text(encoding="utf-8")
-    )
+    return VALIDATOR_MODULE.parse_strict_workflow_yaml(path.read_text(encoding="utf-8"))
 
 
 def workflow_job() -> dict:
@@ -183,16 +181,13 @@ def fixture_signature_armor(
     )
     packet = VALIDATOR_MODULE.encode_history_v2_signature_packet(body)
     encoded = base64.b64encode(packet).decode("ascii")
-    checksum = base64.b64encode(
-        VALIDATOR_MODULE.bootstrap_v2_crc24(packet)
-    ).decode("ascii")
+    checksum = base64.b64encode(VALIDATOR_MODULE.bootstrap_v2_crc24(packet)).decode(
+        "ascii"
+    )
     return (
         "-----BEGIN PGP SIGNATURE-----\n"
         "\n"
-        + "\n".join(
-            encoded[index : index + 64]
-            for index in range(0, len(encoded), 64)
-        )
+        + "\n".join(encoded[index : index + 64] for index in range(0, len(encoded), 64))
         + "\n="
         + checksum
         + "\n-----END PGP SIGNATURE-----\n"
@@ -217,9 +212,7 @@ def fixture_raw_commit(
     message_trailing_newline: bool = True,
     signature_trailing_blank_continuation: bool = False,
 ) -> str:
-    armor = signature_armor or fixture_signature_armor(
-        timestamp=committer_timestamp
-    )
+    armor = signature_armor or fixture_signature_armor(timestamp=committer_timestamp)
     armor_lines = armor.removesuffix(b"\n").split(b"\n")
     signature_headers = (
         b"gpgsig " + armor_lines[0],
@@ -385,8 +378,7 @@ def blob_api_payload(root: Path, object_id: str) -> dict[str, object]:
         "size": len(value),
         "encoding": "base64",
         "content": "\n".join(
-            encoded[index : index + 76]
-            for index in range(0, len(encoded), 76)
+            encoded[index : index + 76] for index in range(0, len(encoded), 76)
         ),
     }
 
@@ -434,9 +426,7 @@ def seal_partial_bare_store(git_dir: Path, *, expected_url: str) -> None:
             check=True,
         ).stdout.strip()
         if observed_url != expected_url:
-            raise AssertionError(
-                f"unexpected synthetic promisor URL: {observed_url!r}"
-            )
+            raise AssertionError(f"unexpected synthetic promisor URL: {observed_url!r}")
         subprocess.run(
             CI_MODULE.closed_git_command(
                 f"--git-dir={git_dir}",
@@ -796,9 +786,7 @@ def predecessor_audit_payloads(
             "created_at": "2026-07-15T00:01:00Z",
             "run_started_at": "2026-07-15T00:02:00Z",
             "updated_at": "2026-07-15T00:05:00Z",
-            "html_url": (
-                f"https://github.com/{TEST_REPOSITORY}/actions/runs/{run_id}"
-            ),
+            "html_url": (f"https://github.com/{TEST_REPOSITORY}/actions/runs/{run_id}"),
             "jobs_url": (
                 f"https://api.github.com/repos/{TEST_REPOSITORY}/actions/"
                 f"runs/{run_id}/jobs"
@@ -954,9 +942,7 @@ class MergeGroupGraph:
         else:
             queue_base = self.base
         candidate_path = (
-            "retained/daily/episodes.jsonl"
-            if role == "publication"
-            else "README.md"
+            "retained/daily/episodes.jsonl" if role == "publication" else "README.md"
         )
         git(self.root, "checkout", candidate, "--", candidate_path)
         git(self.root, "add", "--all")
@@ -1170,7 +1156,10 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             {"python-version": "3.13.12", "cache": False},
         )
         control_binding = audit_steps["Bind trusted control Python"]["run"]
-        self.assertIn('control_version="$("$control_python" -I -B --version 2>&1)"', control_binding)
+        self.assertIn(
+            'control_version="$("$control_python" -I -B --version 2>&1)"',
+            control_binding,
+        )
         self.assertIn('[ "$control_version" != "Python 3.13.12" ]', control_binding)
         verification = audit_steps["Verify exact GitHub squash commit"]
         self.assertEqual(verification["env"], {"GH_TOKEN": "${{ github.token }}"})
@@ -1225,7 +1214,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         )
         self.assertNotIn("GH_TOKEN=", dependency_step)
         self.assertIn("-u GH_TOKEN -u GITHUB_TOKEN", dependency_step)
-        for step in audit["steps"][: step_names.index("Detect invalid S tree or transaction")]:
+        for step in audit["steps"][
+            : step_names.index("Detect invalid S tree or transaction")
+        ]:
             script = step.get("run", "")
             self.assertNotIn("pip install", script)
             self.assertNotIn("TEST_PYTHON", script)
@@ -1262,6 +1253,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
     def test_default_github_commit_receipt_binds_exact_provider_payload(self) -> None:
         repository = "Joey-Tools/codex-session-retrospective-history"
         repository_id = 1_246_526_548
+        pull_number = 4
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "repo"
             subprocess.run(["git", "init", "--quiet", str(root)], check=True)
@@ -1273,7 +1265,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 root,
                 tree_oid=tree_oid,
                 parents=(base,),
-                message="Publish retained history",
+                message=f"Publish retained history (#{pull_number})",
                 author=VALIDATOR_MODULE.HISTORY_V2_CANONICAL_IDENTITY,
                 committer="GitHub <noreply@github.com>",
                 author_timezone="+0100",
@@ -1285,6 +1277,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 fixture_commit_bytes(root, head),
                 expected_oid=head,
             )
+            self.assertEqual(parsed.pull_request_number, pull_number)
             commit_date = CI_MODULE.dt.datetime.fromtimestamp(
                 FIXTURE_TIMESTAMP,
                 tz=CI_MODULE.dt.timezone.utc,
@@ -1311,7 +1304,6 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     },
                 },
             }
-            pull_number = 4
             pull_node_id = "PR_kwDOSyntheticReceipt"
             candidate_head = "d" * len(head)
             merged_at = verified_at
@@ -1357,6 +1349,89 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     head_sha=head,
                     token="synthetic-read-token",
                 )
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    return_value=api_payload,
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "verify_default_merged_pull_request",
+                    return_value={"pull_request_number": pull_number + 1},
+                ),
+                self.assertRaisesRegex(
+                    CI_MODULE.GateError,
+                    "subject pull request differs from the associated pull request",
+                ),
+            ):
+                CI_MODULE.verify_default_github_commit(
+                    repository=repository,
+                    repository_id=repository_id,
+                    git_dir=root / ".git",
+                    base_sha=base,
+                    head_sha=head,
+                    token="synthetic-read-token",
+                )
+            unnumbered = fixture_raw_commit(
+                root,
+                tree_oid=tree_oid,
+                parents=(base,),
+                message="Publish retained history",
+                author=VALIDATOR_MODULE.HISTORY_V2_CANONICAL_IDENTITY,
+                committer="GitHub <noreply@github.com>",
+                author_timezone="+0100",
+                committer_timezone="+0100",
+                message_trailing_newline=False,
+                signature_trailing_blank_continuation=True,
+            )
+            parsed_unnumbered = VALIDATOR_MODULE.parse_history_v2_github_squash_commit(
+                fixture_commit_bytes(root, unnumbered),
+                expected_oid=unnumbered,
+            )
+            self.assertIsNone(parsed_unnumbered.pull_request_number)
+            unnumbered_payload = copy.deepcopy(api_payload)
+            unnumbered_payload["sha"] = unnumbered
+            unnumbered_payload["commit"]["verification"].update(
+                {
+                    "signature": parsed_unnumbered.signature_armor.decode("ascii"),
+                    "payload": parsed_unnumbered.signed_payload.decode("utf-8"),
+                }
+            )
+            pull_evidence = {
+                key: receipt[key]
+                for key in (
+                    "pull_request_number",
+                    "pull_request_node_identity_sha256",
+                    "repository_identity_sha256",
+                    "pull_request_provenance_sha256",
+                    "pull_request_merged_at",
+                )
+            }
+            with (
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    return_value=unnumbered_payload,
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "verify_default_merged_pull_request",
+                    return_value=pull_evidence,
+                ),
+            ):
+                unnumbered_receipt = CI_MODULE.verify_default_github_commit(
+                    repository=repository,
+                    repository_id=repository_id,
+                    git_dir=root / ".git",
+                    base_sha=base,
+                    head_sha=unnumbered,
+                    token="synthetic-read-token",
+                )
+            self.assertEqual(
+                unnumbered_receipt["pull_request_number"],
+                pull_number,
+            )
             self.assertEqual(receipt["base_sha"], base)
             self.assertEqual(receipt["head_sha"], head)
             self.assertEqual(receipt["tree_sha"], tree_oid)
@@ -1543,7 +1618,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 ("draft", lambda value: value.__setitem__("draft", True)),
                 (
                     "merge commit",
-                    lambda value: value.__setitem__("merge_commit_sha", "a" * len(head)),
+                    lambda value: value.__setitem__(
+                        "merge_commit_sha", "a" * len(head)
+                    ),
                 ),
                 (
                     "base ref",
@@ -1691,7 +1768,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertNotIn("candidate", checkout["with"]["path"])
         self.assertEqual(setup["with"], {"python-version": "3.13", "cache": False})
         for step in action_steps:
-            self.assertRegex(step["uses"], r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$")
+            self.assertRegex(
+                step["uses"], r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$"
+            )
 
     def test_candidate_is_preflighted_before_blob_fetch_and_materialization(
         self,
@@ -1726,7 +1805,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertNotIn("--filter=blob:limit", blob_fetch)
         self.assertNotIn("--refetch", blob_fetch)
         self.assertIn("verify-objects", materialize)
-        self.assertLess(materialize.index("verify-objects"), materialize.index("worktree add"))
+        self.assertLess(
+            materialize.index("verify-objects"), materialize.index("worktree add")
+        )
 
     def test_partial_clone_cleanup_distinguishes_absent_from_failure(self) -> None:
         cleanup_scripts: list[tuple[Path, str, str]] = []
@@ -1761,9 +1842,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             "actions/cache",
         ):
             self.assertNotIn(forbidden, run_scripts)
-        validation = steps_by_name()[
-            "Validate B0/H candidate feedback"
-        ]["run"]
+        validation = steps_by_name()["Validate B0/H candidate feedback"]["run"]
         self.assertIn(
             'python -I "$TRUSTED_ROOT/scripts/validate_retained_history.py"',
             validation,
@@ -1814,9 +1893,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         )
         for workflow_path, step_name, has_role in cases:
             workflow = load_workflow(workflow_path)
-            script = steps_by_name(
-                workflow["jobs"]["trusted_history_gate"]
-            )[step_name]["run"]
+            script = steps_by_name(workflow["jobs"]["trusted_history_gate"])[step_name][
+                "run"
+            ]
             with self.subTest(workflow=workflow_path.name):
                 with tempfile.TemporaryDirectory() as raw:
                     temporary = Path(raw)
@@ -1887,7 +1966,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             with self.subTest(label=label):
                 payload = copy.deepcopy(pull_payload())
                 mutate(payload)
-                with self.assertRaisesRegex(CI_MODULE.GateError, "identity, lifecycle, base, or head"):
+                with self.assertRaisesRegex(
+                    CI_MODULE.GateError, "identity, lifecycle, base, or head"
+                ):
                     validate_pull(payload)
 
     def test_validation_jobs_publish_no_commit_status_and_have_no_write_token(
@@ -2776,16 +2857,12 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         pagination_cases = (
             (
                 "duplicate",
-                (
-                    {"total_count": 2, "check_runs": [item, item]},
-                ),
+                ({"total_count": 2, "check_runs": [item, item]},),
                 "duplicate",
             ),
             (
                 "incomplete",
-                (
-                    {"total_count": 2, "check_runs": [item]},
-                ),
+                ({"total_count": 2, "check_runs": [item]},),
                 "incomplete",
             ),
             (
@@ -2934,9 +3011,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     *,
                     forced: bool,
                 ) -> list[str]:
-                    calls.append(
-                        ("prospective", root, base_sha, head_sha, forced)
-                    )
+                    calls.append(("prospective", root, base_sha, head_sha, forced))
                     return []
 
             with mock.patch.object(
@@ -3069,14 +3144,18 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertEqual(actual_base.stdout, LEGACY_CI.encode("utf-8"))
         with tempfile.TemporaryDirectory() as raw:
             graph = BootstrapGraph(Path(raw) / "repo")
-            legacy_blob = git(graph.root, "rev-parse", f"{graph.actual_base}:.github/workflows/ci.yml")
+            legacy_blob = git(
+                graph.root, "rev-parse", f"{graph.actual_base}:.github/workflows/ci.yml"
+            )
             template_blob = git(
                 graph.root,
                 "rev-parse",
                 f"{graph.base}:.github/bootstrap/session-retrospective-v2-permanent-ci.yml",
             )
         self.assertEqual(legacy_blob, VALIDATOR_MODULE.BOOTSTRAP_V2_LEGACY_CI_BLOB_OID)
-        self.assertEqual(template_blob, VALIDATOR_MODULE.BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID)
+        self.assertEqual(
+            template_blob, VALIDATOR_MODULE.BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID
+        )
 
     def test_bootstrap_preflight_rejects_raw_commit_metadata_attacks(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -3121,9 +3200,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 (
                     "noncanonical identity",
                     canonical.replace(
-                        VALIDATOR_MODULE.HISTORY_V2_CANONICAL_IDENTITY.encode(
-                            "ascii"
-                        ),
+                        VALIDATOR_MODULE.HISTORY_V2_CANONICAL_IDENTITY.encode("ascii"),
                         b"Synthetic Test <synthetic@example.invalid>",
                         1,
                     ),
@@ -3138,8 +3215,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 ),
                 (
                     "sensitive message",
-                    header
-                    + b"\n\nLeaked token ghp_ABCDEFGHIJKLMNOPQRST\n",
+                    header + b"\n\nLeaked token ghp_ABCDEFGHIJKLMNOPQRST\n",
                 ),
             )
             for label, raw_commit in cases:
@@ -3165,9 +3241,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             )
 
             entries = preflight.entries
-            first_tree = next(
-                entry for entry in entries if entry.object_type == "tree"
-            )
+            first_tree = next(entry for entry in entries if entry.object_type == "tree")
             nested_empty = (
                 *entries,
                 CI_MODULE.TreeEntry(
@@ -3255,9 +3329,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
 
             payload = tree_api_payload(graph.root, head)
             payload["tree"] = [
-                entry
-                for entry in payload["tree"]
-                if entry["path"] != first_tree.path
+                entry for entry in payload["tree"] if entry["path"] != first_tree.path
             ]
             with self.assertRaisesRegex(
                 CI_MODULE.GateError,
@@ -3338,8 +3410,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             for path in variants:
                 with self.subTest(path=path):
                     record = (
-                        f"100644 blob {existing_blob}\t{path}".encode("utf-8")
-                        + b"\x00"
+                        f"100644 blob {existing_blob}\t{path}".encode("utf-8") + b"\x00"
                     )
 
                     def injected_git_output(
@@ -3414,12 +3485,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self,
     ) -> None:
         expected_roles = {
-            "bootstrap-v2": Path(
-                "retrospective-history-v2-admin-public.asc"
-            ),
-            "history-v2": Path(
-                "retrospective-history-v2-publisher.asc"
-            ),
+            "bootstrap-v2": Path("retrospective-history-v2-admin-public.asc"),
+            "history-v2": Path("retrospective-history-v2-publisher.asc"),
         }
         for policy, expected_relative in expected_roles.items():
             with self.subTest(policy=policy), tempfile.TemporaryDirectory() as raw:
@@ -3433,9 +3500,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     policy=policy,
                 )
                 trusted_validator = CI_MODULE.trusted_validator_module()
-                key_digests = dict(
-                    trusted_validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256
-                )
+                key_digests = dict(trusted_validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256)
                 for relative in expected_roles.values():
                     key_digests[relative] = hashlib.sha256(
                         (graph.root / relative).read_bytes()
@@ -3532,7 +3597,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as raw:
                     graph = BootstrapGraph(Path(raw) / "repo")
                     head = graph.create_candidate(retain={retained})
-                    with self.assertRaisesRegex(CI_MODULE.GateError, "explicitly delete"):
+                    with self.assertRaisesRegex(
+                        CI_MODULE.GateError, "explicitly delete"
+                    ):
                         graph.preflight(head)
 
     def test_shared_git_graph_rejects_size_count_and_api_identity_attacks(self) -> None:
@@ -3541,7 +3608,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             graph.remove_bootstrap()
             graph.write(".github/workflows/ci.yml", LEGACY_CI)
             head = commit_all(graph.root, "wrong CI")
-            with self.assertRaisesRegex(CI_MODULE.GateError, "authorized permanent blob"):
+            with self.assertRaisesRegex(
+                CI_MODULE.GateError, "authorized permanent blob"
+            ):
                 graph.preflight(head)
 
         with tempfile.TemporaryDirectory() as raw:
@@ -3823,9 +3892,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 bare,
                 expected_url=graph.root.as_uri(),
             )
-            self.assertFalse(
-                bare_object_exists_without_lazy_fetch(bare, sensitive_oid)
-            )
+            self.assertFalse(bare_object_exists_without_lazy_fetch(bare, sensitive_oid))
 
             payloads = tree_api_payloads(graph.root, (first, second))
             tree_requests: list[str] = []
@@ -3856,9 +3923,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 CI_MODULE.materialize_preflight_blobs(
                     bare,
                     preflight,
-                    repository=(
-                        "Joey-Tools/codex-session-retrospective-history"
-                    ),
+                    repository=("Joey-Tools/codex-session-retrospective-history"),
                     token="synthetic",
                 )
                 materialize_worktree()
@@ -3866,9 +3931,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             self.assertEqual(tree_requests, [])
             blob_acquisition.assert_not_called()
             materialize_worktree.assert_not_called()
-            self.assertFalse(
-                bare_object_exists_without_lazy_fetch(bare, sensitive_oid)
-            )
+            self.assertFalse(bare_object_exists_without_lazy_fetch(bare, sensitive_oid))
 
     def test_partial_bare_preflight_precedes_blob_refetch_and_materialization(
         self,
@@ -3879,9 +3942,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             head = graph.create_candidate()
             git(graph.root, "config", "uploadpack.allowFilter", "true")
             bare = temporary / "candidate.git"
-            subprocess.run(
-                ["git", "init", "--bare", "--quiet", str(bare)], check=True
-            )
+            subprocess.run(["git", "init", "--bare", "--quiet", str(bare)], check=True)
             subprocess.run(
                 [
                     "git",
@@ -3961,9 +4022,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 )
             )
             trusted_validator = CI_MODULE.trusted_validator_module()
-            key_digests = dict(
-                trusted_validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256
-            )
+            key_digests = dict(trusted_validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256)
             for relative in trusted_validator.HISTORY_V2_SIGNATURE_KEY_PATHS.values():
                 key_digests[relative] = hashlib.sha256(
                     (graph.root / relative).read_bytes()
@@ -4090,9 +4149,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 sealed=False,
             )
             tree_loader = mock.Mock(
-                side_effect=AssertionError(
-                    "promisor fallback reached the tree API"
-                )
+                side_effect=AssertionError("promisor fallback reached the tree API")
             )
             with self.assertRaisesRegex(
                 CI_MODULE.GateError,
@@ -4136,9 +4193,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 check=True,
             )
             tree_loader = mock.Mock(
-                side_effect=AssertionError(
-                    "replace ref reached the tree API"
-                )
+                side_effect=AssertionError("replace ref reached the tree API")
             )
             with (
                 mock.patch.object(
@@ -4438,9 +4493,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     CI_MODULE.materialize_preflight_blobs(
                         bare,
                         preflight,
-                        repository=(
-                            "Joey-Tools/codex-session-retrospective-history"
-                        ),
+                        repository=("Joey-Tools/codex-session-retrospective-history"),
                         token="synthetic",
                         blob_loader=blob_loader,
                     )

@@ -194,146 +194,146 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("scripts/trusted_history_ci.py"): bytes(
         (
-            0xA8,
-            0x50,
-            0xD3,
-            0x3E,
-            0x14,
-            0xD1,
-            0xF6,
-            0xE2,
-            0x3F,
-            0x3D,
-            0xBD,
-            0x58,
-            0x25,
-            0x9F,
-            0x0F,
-            0x0B,
+            0xBB,
             0x76,
-            0x0A,
-            0x24,
-            0x5E,
-            0x19,
-            0x1A,
-            0xAA,
+            0x2C,
+            0x46,
+            0x59,
+            0x90,
+            0xE5,
             0xB4,
-            0x62,
-            0x13,
-            0xD5,
-            0xFB,
-            0xCA,
-            0x7B,
-            0xD0,
-            0xDF,
+            0xD6,
+            0xB9,
+            0x29,
+            0xF5,
+            0x55,
+            0x4D,
+            0xF5,
+            0xDC,
+            0x5E,
+            0x0A,
+            0x57,
+            0xC2,
+            0xEA,
+            0xD4,
+            0xB0,
+            0x75,
+            0x99,
+            0xBD,
+            0x0F,
+            0xA0,
+            0x58,
+            0x4C,
+            0x5C,
+            0xF4,
         )
     ).hex(),
     Path("scripts/validate_retained_history.py"): bytes(
         (
-            0x14,
-            0x7F,
-            0x7F,
-            0xCE,
-            0x4A,
-            0x66,
+            0xE5,
+            0xC4,
+            0x46,
+            0x22,
+            0xE3,
+            0x93,
+            0x01,
+            0x15,
+            0x79,
+            0xE4,
+            0x97,
+            0x5F,
+            0x34,
+            0x5E,
+            0xDB,
+            0x51,
+            0x6E,
+            0xB7,
             0xB0,
-            0xE6,
-            0x81,
-            0x0C,
-            0x53,
-            0x71,
-            0xBE,
-            0xC5,
-            0xD5,
-            0x3F,
-            0x07,
-            0x5A,
-            0xA1,
-            0xED,
-            0xE6,
-            0xFC,
-            0x91,
-            0xB0,
-            0xC8,
-            0x80,
-            0x3F,
-            0xF0,
-            0xC6,
-            0x3C,
-            0x86,
-            0x3B,
+            0x15,
+            0xBF,
+            0x2F,
+            0x26,
+            0x7E,
+            0x9C,
+            0x13,
+            0x2E,
+            0x7B,
+            0xAC,
+            0x55,
+            0x4F,
+            0xD8,
         )
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
         (
-            0xA7,
-            0x27,
-            0xA1,
-            0x36,
-            0x10,
-            0x78,
+            0xFE,
+            0x48,
+            0x6E,
+            0xE9,
+            0xB8,
+            0xFE,
+            0x0A,
+            0x96,
+            0xC2,
+            0x23,
+            0x38,
             0xED,
-            0x30,
-            0xF3,
-            0x9A,
-            0xA1,
-            0xA1,
-            0x46,
-            0x77,
-            0xC2,
-            0x29,
-            0x2E,
-            0x13,
-            0xBC,
-            0x21,
-            0xF3,
-            0xC6,
-            0x44,
-            0xAC,
-            0x64,
-            0xC2,
-            0x4D,
-            0x3F,
-            0x8F,
-            0x2D,
-            0x66,
-            0x89,
+            0x19,
+            0xB1,
+            0xEA,
+            0x17,
+            0x72,
+            0x1C,
+            0x7C,
+            0x0E,
+            0xBD,
+            0x50,
+            0x99,
+            0x3D,
+            0xF0,
+            0xC5,
+            0x98,
+            0x59,
+            0xFD,
+            0xE0,
+            0x99,
+            0xD5,
         )
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
         (
-            0xAE,
-            0x29,
-            0x2E,
-            0x04,
-            0xDE,
-            0x11,
-            0xA7,
-            0xEC,
-            0x0D,
+            0x8D,
             0x6B,
-            0xC9,
-            0xA0,
-            0x6F,
-            0x6A,
-            0x98,
-            0x33,
+            0xEC,
+            0xEF,
+            0x21,
+            0x86,
+            0x0C,
+            0xD4,
+            0xB0,
+            0xFC,
+            0x06,
+            0xA7,
+            0x1D,
+            0x02,
+            0x3B,
+            0x94,
+            0x95,
+            0x1E,
+            0xD0,
+            0x53,
+            0xE1,
+            0x3F,
+            0x14,
             0xC4,
-            0x29,
-            0x69,
-            0xBC,
-            0xB5,
-            0xEB,
-            0x8F,
-            0x26,
-            0x9F,
-            0xC3,
-            0x7F,
+            0xFE,
+            0x05,
+            0xDA,
+            0x19,
             0x15,
-            0x3D,
-            0x17,
-            0x90,
-            0xA1,
+            0x2C,
+            0x0D,
+            0x9E,
         )
     ).hex(),
 }
@@ -495,74 +495,74 @@ BOOTSTRAP_V2_TRUSTED_DECODED_RISK_VALUES_SHA256 = {
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0xA4,
-            0x48,
-            0x0E,
-            0x6B,
-            0x0F,
-            0x84,
-            0x31,
-            0x0F,
+            0x09,
+            0x26,
+            0x67,
+            0x00,
+            0xBF,
+            0xE5,
+            0xDB,
+            0x27,
+            0x7D,
+            0x32,
+            0x63,
+            0xF2,
             0xCA,
-            0x83,
+            0xDF,
             0x5B,
-            0x90,
-            0x39,
-            0x48,
-            0xEB,
-            0x13,
-            0x3F,
-            0xF1,
-            0x96,
-            0x41,
-            0xD8,
-            0x6D,
-            0x7E,
-            0x48,
-            0x29,
-            0x56,
-            0x21,
-            0x21,
-            0x18,
-            0xBC,
-            0x7E,
-            0xD0,
+            0x4A,
+            0x94,
+            0x80,
+            0x1E,
+            0xE7,
+            0x02,
+            0x52,
+            0x22,
+            0x4F,
+            0xD5,
+            0x68,
+            0xD6,
+            0x54,
+            0xD5,
+            0x5F,
+            0x54,
+            0x2C,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0xDC,
-            0x06,
-            0x5F,
-            0x91,
-            0xB7,
-            0xFC,
-            0x96,
-            0x10,
-            0x2C,
-            0x95,
-            0xED,
-            0x45,
-            0xC4,
-            0xFC,
             0x9E,
-            0x3C,
-            0xF7,
-            0x14,
-            0x10,
-            0x47,
-            0x91,
-            0x68,
-            0x7A,
-            0x1F,
-            0x63,
-            0xFA,
+            0xFB,
             0xD2,
-            0xEA,
-            0xB2,
-            0x35,
-            0x1B,
-            0xF9,
+            0x04,
+            0x07,
+            0x6E,
+            0x4E,
+            0x30,
+            0x27,
+            0x2A,
+            0xED,
+            0x1A,
+            0x50,
+            0xAA,
+            0x3E,
+            0xD7,
+            0xC7,
+            0xEE,
+            0x22,
+            0x6A,
+            0x8C,
+            0xEB,
+            0x9F,
+            0x5E,
+            0x86,
+            0x80,
+            0x29,
+            0xD9,
+            0x07,
+            0xE1,
+            0xED,
+            0xBA,
         )
     ),
 }
@@ -576,8 +576,8 @@ BOOTSTRAP_V2_TRUSTED_OPENPGP_RISK_VALUES_SHA256 = {
 }
 BOOTSTRAP_V2_JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 BOOTSTRAP_V2_MAX_FILE_BYTES = 2 * 1024 * 1024
-BOOTSTRAP_V2_MAX_PYTHON_SOURCE_BYTES = 608 * 1024
-BOOTSTRAP_V2_MAX_PYTHON_AST_NODES = 100_000
+BOOTSTRAP_V2_MAX_PYTHON_SOURCE_BYTES = 704 * 1024
+BOOTSTRAP_V2_MAX_PYTHON_AST_NODES = 112_000
 BOOTSTRAP_V2_MAX_PYTHON_AST_DEPTH = 100
 BOOTSTRAP_V2_MAX_PYTHON_LITERAL_CONSTANTS = 20_000
 BOOTSTRAP_V2_MAX_PYTHON_LITERAL_BYTES = 512 * 1024
@@ -588,6 +588,7 @@ BOOTSTRAP_V2_MAX_PYTHON_FORMAT_ANALYSIS_OPERATIONS = 1_000_000
 BOOTSTRAP_V2_MAX_PYTHON_TEXT_OUTPUT_OPERATIONS = 2_000_000
 BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_STATES = 200_000
 BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS = 1_000_000
+BOOTSTRAP_V2_MAX_PYTHON_BINDING_REACHABILITY_STEPS = 2_000_000
 BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS = 1_000_000
 BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES = 256 * 1024
 BOOTSTRAP_V2_MAX_TREE_BYTES = 16 * 1024 * 1024
@@ -669,7 +670,9 @@ HISTORY_V2_CODEX_TRAILERS = frozenset(
     }
 )
 HISTORY_V2_COMMIT_SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,:_+()'/-]{0,255}$")
-HISTORY_V2_GITHUB_SQUASH_SUFFIX_RE = re.compile(r"^(?P<title>.+) \(#[1-9][0-9]*\)$")
+HISTORY_V2_GITHUB_SQUASH_SUFFIX_RE = re.compile(
+    r"^(?P<title>.+) \(#(?P<pull_request_number>[1-9][0-9]*)\)$"
+)
 HISTORY_V2_RAW_CONVERSATION_EVIDENCE_RE = re.compile(
     r"(?:^|[^a-z0-9])(?:"
     r"raw[ _-]+(?:user[ _-]+)?prompt|"
@@ -4406,12 +4409,25 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 if isinstance(child, ast.stmt):
                     statement_membership[id(child)] = (block, index)
 
+    binding_reachability_steps = 0
+    binding_reachability_step_limit = min(
+        max(node_count * 32, 1),
+        BOOTSTRAP_V2_MAX_PYTHON_BINDING_REACHABILITY_STEPS,
+    )
+
+    def consume_binding_reachability_step() -> None:
+        nonlocal binding_reachability_steps
+        binding_reachability_steps += 1
+        if binding_reachability_steps > binding_reachability_step_limit:
+            raise ValueError("Python binding reachability exceeds the trusted limit")
+
     def statement_dominates_load(statement: ast.stmt, load: ast.Name) -> bool:
         statement_location = statement_membership.get(id(statement))
         if statement_location is None:
             return False
         current: ast.AST | None = load
         while current is not None:
+            consume_binding_reachability_step()
             if isinstance(current, ast.stmt):
                 load_location = statement_membership.get(id(current))
                 if (
@@ -5124,7 +5140,8 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and (
                 node.func.id in deterministic_text_builtin_names
-                or node.func.id == "range"
+                or node.func.id in {"getattr", "range"}
+                or name_has_prior_getattr_origin(node.func)
             ):
                 return (
                     not any(isinstance(argument, ast.Starred) for argument in node.args)
@@ -5139,6 +5156,22 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     )
                 )
             if isinstance(node.func, ast.Attribute):
+                if node.func.attr == "to_bytes":
+                    return (
+                        is_supported_binding_expression(node.func.value)
+                        and not any(
+                            isinstance(argument, ast.Starred) for argument in node.args
+                        )
+                        and all(
+                            is_supported_binding_expression(argument)
+                            for argument in node.args
+                        )
+                        and all(
+                            keyword.arg is not None
+                            and is_supported_binding_expression(keyword.value)
+                            for keyword in node.keywords
+                        )
+                    )
                 return (
                     node.func.attr in bound_string_method_names
                     and (
@@ -5171,10 +5204,23 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             return [(target, path)]
         if isinstance(target, (ast.Tuple, ast.List)):
             targets: list[tuple[ast.Name, tuple[int, ...]]] = []
+            starred_index = next(
+                (
+                    index
+                    for index, child in enumerate(target.elts)
+                    if isinstance(child, ast.Starred)
+                ),
+                None,
+            )
             for index, child in enumerate(target.elts):
                 if isinstance(child, ast.Starred):
                     continue
-                targets.extend(assignment_targets(child, (*path, index)))
+                selector = (
+                    index - len(target.elts)
+                    if starred_index is not None and index > starred_index
+                    else index
+                )
+                targets.extend(assignment_targets(child, (*path, selector)))
             return targets
         return []
 
@@ -5191,12 +5237,88 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     ] = {}
     explicitly_ambiguous_binding_keys: set[tuple[int, str]] = set()
     ordinary_ambiguous_binding_values: dict[tuple[int, str], list[ast.AST]] = {}
+    ordinary_ambiguous_binding_events: dict[
+        tuple[int, str], list[tuple[int, ast.AST]]
+    ] = {}
+    StarredBindingCandidate = tuple[
+        ast.Assign | ast.For | ast.AsyncFor,
+        ast.AST,
+        tuple[int, ...],
+        int,
+        int,
+        ast.Name,
+        bool,
+    ]
+    StarredCaptureAlternative = tuple[bool, tuple[ast.AST, ...]]
+    starred_binding_candidates: dict[
+        tuple[int, str], list[StarredBindingCandidate]
+    ] = {}
+    starred_target_ids: set[int] = set()
+    non_guaranteed_binding_event_ids: set[int] = set()
+    non_guaranteed_binding_body_ids: dict[int, frozenset[int]] = {}
+    non_guaranteed_binding_orelse_ids: dict[int, frozenset[int]] = {}
     augassign_binding_keys_by_id: dict[int, set[tuple[int, str]]] = {}
     unresolved_augassign_receiver_ids: set[int] = set()
     bytearray_mutation_receivers: list[ast.Name] = []
     bytearray_mutation_origin_ids: frozenset[int] | None = None
     static_callable_import_bindings: dict[tuple[int, str], list[tuple[int, str]]] = {}
     static_module_import_bindings: dict[tuple[int, str], list[tuple[int, str]]] = {}
+    static_builtin_import_bindings: dict[tuple[int, str], list[tuple[int, str]]] = {}
+    parameter_default_sources: dict[tuple[int, str], list[tuple[int, ast.AST]]] = {}
+
+    def record_starred_assignment_targets(
+        statement: ast.Assign | ast.For | ast.AsyncFor,
+        assigned_value: ast.AST,
+        target: ast.AST,
+        path: tuple[int, ...] = (),
+        *,
+        iterates_assigned_value: bool = False,
+    ) -> None:
+        if not isinstance(target, (ast.Tuple, ast.List)):
+            return
+        starred_index = next(
+            (
+                index
+                for index, child in enumerate(target.elts)
+                if isinstance(child, ast.Starred)
+            ),
+            None,
+        )
+        for index, child in enumerate(target.elts):
+            if isinstance(child, ast.Starred):
+                if not isinstance(child.value, ast.Name) or not isinstance(
+                    child.value.ctx, ast.Store
+                ):
+                    continue
+                target_scope = binding_scope_for_name(
+                    scope_by_node_id[id(child.value)], child.value.id
+                )
+                key = (target_scope, child.value.id)
+                starred_binding_candidates.setdefault(key, []).append(
+                    (
+                        statement,
+                        assigned_value,
+                        path,
+                        index,
+                        len(target.elts) - index - 1,
+                        child.value,
+                        iterates_assigned_value,
+                    )
+                )
+                starred_target_ids.add(id(child.value))
+                continue
+            selector = (
+                index - len(target.elts)
+                if starred_index is not None and index > starred_index
+                else index
+            )
+            record_starred_assignment_targets(
+                statement,
+                assigned_value,
+                child,
+                (*path, selector),
+                iterates_assigned_value=iterates_assigned_value,
+            )
 
     def name_has_prior_static_text_origin(
         node: ast.Name,
@@ -5333,19 +5455,60 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         target: ast.AST,
         *,
         assigned_value: ast.AST | None = None,
+        path: tuple[int, ...] = (),
     ) -> None:
+        if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store):
+            target_scope = binding_scope_for_name(
+                scope_by_node_id[id(target)], target.id
+            )
+            key = (target_scope, target.id)
+            if assigned_value is None:
+                explicitly_ambiguous_binding_keys.add(key)
+                return
+            selected_value = assigned_value
+            for index in path:
+                if not isinstance(
+                    selected_value, (ast.Tuple, ast.List)
+                ) or index >= len(selected_value.elts):
+                    selected_value = assigned_value
+                    break
+                selected_value = selected_value.elts[index]
+            ordinary_ambiguous_binding_values.setdefault(key, []).append(selected_value)
+            ordinary_ambiguous_binding_events.setdefault(key, []).append(
+                (id(target), selected_value)
+            )
+            return
+        if isinstance(target, (ast.Tuple, ast.List)):
+            starred_index = next(
+                (
+                    index
+                    for index, child in enumerate(target.elts)
+                    if isinstance(child, ast.Starred)
+                ),
+                None,
+            )
+            for index, child in enumerate(target.elts):
+                if isinstance(child, ast.Starred):
+                    if id(child.value) not in starred_target_ids:
+                        mark_assignment_target_ambiguous(
+                            child.value,
+                            assigned_value=assigned_value,
+                        )
+                else:
+                    selector = (
+                        index - len(target.elts)
+                        if starred_index is not None and index > starred_index
+                        else index
+                    )
+                    mark_assignment_target_ambiguous(
+                        child,
+                        assigned_value=assigned_value,
+                        path=(*path, selector),
+                    )
+            return
         for child in ast.walk(target):
             if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
-                target_scope = binding_scope_for_name(
-                    scope_by_node_id[id(child)], child.id
-                )
-                key = (target_scope, child.id)
-                if assigned_value is None:
-                    explicitly_ambiguous_binding_keys.add(key)
-                else:
-                    ordinary_ambiguous_binding_values.setdefault(key, []).append(
-                        assigned_value
-                    )
+                mark_assignment_target_ambiguous(child)
 
     def assignment_target_binds_class_scope(target: ast.AST) -> bool:
         return any(
@@ -5358,9 +5521,107 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             for child in ast.walk(target)
         )
 
+    getattr_origin_cache: dict[int, bool] = {}
+    getattr_origin_operations = 0
+    getattr_origin_operation_limit = min(
+        max(node_count * 16, 1),
+        BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS,
+    )
+
+    def consume_getattr_origin_operation() -> None:
+        nonlocal getattr_origin_operations
+        if getattr_origin_operations >= getattr_origin_operation_limit:
+            raise ValueError(
+                "Python getattr origin analysis exceeds the trusted operation limit"
+            )
+        getattr_origin_operations += 1
+
+    def name_has_prior_getattr_origin(
+        node: ast.Name,
+    ) -> bool:
+        node_id = id(node)
+        cached = getattr_origin_cache.get(node_id)
+        if cached is not None:
+            return cached
+        expressions: dict[int, ast.Name] = {node_id: node}
+        dependencies: dict[int, set[int]] = {}
+        dependents: dict[int, set[int]] = {}
+        origin_ids: set[int] = set()
+        pending = [node]
+        while pending:
+            current = pending.pop()
+            current_id = id(current)
+            if current_id in dependencies:
+                continue
+            current_dependencies: set[int] = set()
+            key = name_load_binding_key(current)
+            for statement, source, path, _target in binding_candidates.get(key, ()):
+                consume_getattr_origin_operation()
+                if (current.lineno, current.col_offset) < (
+                    statement.end_lineno,
+                    statement.end_col_offset,
+                ):
+                    continue
+                selected: ast.AST | None = source
+                for index in path:
+                    if not isinstance(selected, (ast.Tuple, ast.List)) or index >= len(
+                        selected.elts
+                    ):
+                        selected = None
+                        break
+                    selected = selected.elts[index]
+                if not isinstance(selected, ast.Name) or not isinstance(
+                    selected.ctx,
+                    ast.Load,
+                ):
+                    continue
+                selected_key = name_load_binding_key(selected)
+                if (
+                    selected.id == "getattr"
+                    and selected_key
+                    == (
+                        module_scope,
+                        "getattr",
+                    )
+                    and not binding_candidates.get(selected_key)
+                ):
+                    origin_ids.add(current_id)
+                    continue
+                selected_cached = getattr_origin_cache.get(id(selected))
+                if selected_cached is True:
+                    origin_ids.add(current_id)
+                    continue
+                if selected_cached is False:
+                    continue
+                selected_id = id(selected)
+                expressions[selected_id] = selected
+                current_dependencies.add(selected_id)
+                dependents.setdefault(selected_id, set()).add(current_id)
+                pending.append(selected)
+            dependencies[current_id] = current_dependencies
+
+        reachable = set(origin_ids)
+        pending_ids = list(origin_ids)
+        while pending_ids:
+            current_id = pending_ids.pop()
+            for dependent_id in dependents.get(current_id, ()):
+                consume_getattr_origin_operation()
+                if dependent_id not in reachable:
+                    reachable.add(dependent_id)
+                    pending_ids.append(dependent_id)
+        for expression_id in expressions:
+            getattr_origin_cache[expression_id] = expression_id in reachable
+        return node_id in reachable
+
     for node in nodes:
         if isinstance(node, ast.Assign):
             assigned_value = node.value
+            for assignment_target in node.targets:
+                record_starred_assignment_targets(
+                    node,
+                    assigned_value,
+                    assignment_target,
+                )
             if not is_supported_binding_expression(assigned_value):
                 for assignment_target in node.targets:
                     mark_assignment_target_ambiguous(
@@ -5380,6 +5641,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                         isinstance(child, ast.Name)
                         and isinstance(child.ctx, ast.Store)
                         and id(child) not in supported_target_ids
+                        and id(child) not in starred_target_ids
                     ):
                         mark_assignment_target_ambiguous(
                             child,
@@ -5431,11 +5693,31 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 )
                 key = (receiver_scope, receiver.id)
                 ordinary_ambiguous_binding_values.setdefault(key, []).append(node.value)
+                ordinary_ambiguous_binding_events.setdefault(key, []).append(
+                    (id(node), node.value)
+                )
                 augassign_binding_keys_by_id.setdefault(id(node), set()).add(key)
             elif not isinstance(node.target, ast.Name):
                 unresolved_augassign_receiver_ids.add(id(node))
             continue
         elif isinstance(node, (ast.For, ast.AsyncFor)):
+            record_starred_assignment_targets(
+                node,
+                node.iter,
+                node.target,
+                iterates_assigned_value=True,
+            )
+            non_guaranteed_binding_event_ids.update(
+                id(target)
+                for target in ast.walk(node.target)
+                if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store)
+            )
+            non_guaranteed_binding_body_ids[id(node)] = frozenset(
+                id(statement) for statement in node.body
+            )
+            non_guaranteed_binding_orelse_ids[id(node)] = frozenset(
+                id(statement) for statement in node.orelse
+            )
             if (
                 assignment_target_binds_class_scope(node.target)
                 or isinstance(node.iter, (ast.List, ast.Tuple))
@@ -5462,6 +5744,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                         ordinary_ambiguous_binding_values.setdefault(
                             (target_scope, name), []
                         ).append(node.subject)
+                        ordinary_ambiguous_binding_events.setdefault(
+                            (target_scope, name), []
+                        ).append((id(pattern), node.subject))
             continue
         else:
             continue
@@ -5471,6 +5756,34 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             )
             binding_candidates.setdefault((target_scope, target.id), []).append(
                 (node, assigned_value, path, target)
+            )
+
+    for node in nodes:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        positional = (*node.args.posonlyargs, *node.args.args)
+        positional_with_defaults = (
+            positional[-len(node.args.defaults) :] if node.args.defaults else ()
+        )
+        for argument, default in zip(
+            positional_with_defaults,
+            node.args.defaults,
+            strict=True,
+        ):
+            key = (scope_by_node_id[id(argument)], argument.arg)
+            parameter_default_sources.setdefault(key, []).append(
+                (id(argument), default)
+            )
+        for argument, default in zip(
+            node.args.kwonlyargs,
+            node.args.kw_defaults,
+            strict=True,
+        ):
+            if default is None:
+                continue
+            key = (scope_by_node_id[id(argument)], argument.arg)
+            parameter_default_sources.setdefault(key, []).append(
+                (id(argument), default)
             )
 
     for node in nodes:
@@ -5512,6 +5825,10 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             ):
                 static_callable_import_bindings.setdefault(key, []).append(
                     (id(alias), qualified_name)
+                )
+            if node.module == "builtins" and alias.name in {"getattr", "int"}:
+                static_builtin_import_bindings.setdefault(key, []).append(
+                    (id(alias), alias.name)
                 )
 
     bytearray_mutating_method_names = frozenset(
@@ -5579,8 +5896,10 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         elif isinstance(node, ast.ExceptHandler):
             record_binding_event(scope, node.name, node)
 
-    hard_ambiguous_binding_keys = set(explicitly_ambiguous_binding_keys) | set(
-        ordinary_ambiguous_binding_values
+    hard_ambiguous_binding_keys = (
+        set(explicitly_ambiguous_binding_keys)
+        | set(ordinary_ambiguous_binding_values)
+        | set(starred_binding_candidates)
     )
     control_flow_ambiguous_binding_keys: set[tuple[int, str]] = set()
     for key, candidates in binding_candidates.items():
@@ -5668,6 +5987,14 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             )
     for key, assigned_values in ordinary_ambiguous_binding_values.items():
         for assigned_value in assigned_values:
+            add_binding_dataflow_edge(
+                ordinary_binding_roots_by_expression_id.setdefault(
+                    id(assigned_value), set()
+                ),
+                key,
+            )
+    for key, candidates in starred_binding_candidates.items():
+        for _, assigned_value, _, _, _, _, _ in candidates:
             add_binding_dataflow_edge(
                 ordinary_binding_roots_by_expression_id.setdefault(
                     id(assigned_value), set()
@@ -6010,14 +6337,57 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
 
     bound_string_method_marker = object()
     bound_int_to_bytes_method_marker = object()
+    unresolved_int_method_marker = object()
+    unresolved_int_method_kind = "<unresolved-int-method>"
+    static_int_receiver_unset = object()
+    static_getattr_type_objects = (
+        bool,
+        bytearray,
+        bytes,
+        complex,
+        dict,
+        float,
+        frozenset,
+        int,
+        list,
+        set,
+        str,
+        tuple,
+    )
+    static_getattr_receiver_types = frozenset(
+        (type(None), *static_getattr_type_objects)
+    )
     bound_string_method_kinds_by_expression_id: dict[int, frozenset[str]] = {}
     bound_string_method_dataflow_ready = False
     unknown_subscript_selector = object()
     selected_subscript_cache: dict[
         tuple[int, tuple[type[object], object]], tuple[ast.AST, ...]
     ] = {}
-    ambiguous_selection_sources_cache: dict[tuple[int, str], tuple[ast.AST, ...]] = {}
+    ambiguous_selection_sources_cache: dict[
+        tuple[tuple[int, str], int], tuple[ast.AST, ...]
+    ] = {}
+    selected_assignment_path_cache: dict[
+        tuple[int, tuple[int, ...]], tuple[ast.AST, ...]
+    ] = {}
+    starred_capture_alternatives_cache: dict[
+        tuple[int, tuple[int, ...], int, int, bool],
+        tuple[StarredCaptureAlternative, ...],
+    ] = {}
+    starred_capture_alternatives_in_progress: set[
+        tuple[int, tuple[int, ...], int, int, bool]
+    ] = set()
+    starred_capture_retained_sources = 0
+    starred_capture_retained_alternatives = 0
+    selection_binding_candidates_cache: dict[
+        tuple[int, str],
+        tuple[
+            tuple[ast.Assign | ast.AnnAssign, ast.AST, tuple[int, ...], ast.Name],
+            ...,
+        ],
+    ] = {}
     sequence_has_starred_cache: dict[int, bool] = {}
+    static_sequence_length_cache: dict[int, int | None] = {}
+    static_sequence_length_in_progress: set[int] = set()
     mapping_items_cache: dict[int, tuple[tuple[ast.AST | None, ast.AST], ...]] = {}
     selected_subscript_states = 0
     selected_subscript_state_limit = min(
@@ -6030,6 +6400,25 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS,
     )
 
+    def static_getattr_default_is_possible(
+        receiver: Any,
+        method_name: Any,
+    ) -> bool:
+        if type(method_name) is not str:
+            return True
+        if not (
+            any(receiver is candidate for candidate in static_getattr_type_objects)
+            or type(receiver) in static_getattr_receiver_types
+        ):
+            return True
+        try:
+            getattr(receiver, method_name)
+        except AttributeError:
+            return True
+        except Exception:
+            return True
+        return False
+
     def consume_selected_subscript_operation() -> None:
         nonlocal selected_subscript_operations
         if selected_subscript_operations >= selected_subscript_operation_limit:
@@ -6039,35 +6428,664 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             )
         selected_subscript_operations += 1
 
+    def selection_binding_candidates(
+        key: tuple[int, str],
+    ) -> tuple[
+        tuple[ast.Assign | ast.AnnAssign, ast.AST, tuple[int, ...], ast.Name],
+        ...,
+    ]:
+        cached = selection_binding_candidates_cache.get(key)
+        if cached is not None:
+            return cached
+        grouped: dict[
+            tuple[int, int, tuple[int, ...]],
+            tuple[ast.Assign | ast.AnnAssign, ast.AST, tuple[int, ...], ast.Name],
+        ] = {}
+        for candidate in binding_candidates.get(key, ()):
+            statement, assigned_value, path, _target = candidate
+            grouped.setdefault(
+                (id(statement), id(assigned_value), path),
+                candidate,
+            )
+        result = tuple(grouped.values())
+        selection_binding_candidates_cache[key] = result
+        return result
+
+    def selected_assignment_expressions(
+        expression: ast.AST,
+        path: tuple[int, ...],
+    ) -> tuple[ast.AST, ...]:
+        if len(path) > BOOTSTRAP_V2_MAX_PYTHON_AST_DEPTH:
+            raise ValueError(
+                "Python bound string method selection exceeds the trusted path depth"
+            )
+        if not path:
+            return (expression,)
+        cache_key = (id(expression), path)
+        cached = selected_assignment_path_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        selected: dict[int, ast.AST] = {}
+        pending: list[tuple[ast.AST, tuple[int, ...]]] = []
+        scheduled: set[tuple[int, tuple[int, ...]]] = set()
+
+        def enqueue(current: ast.AST, remaining: tuple[int, ...]) -> None:
+            nonlocal selected_subscript_states
+            consume_selected_subscript_operation()
+            if len(remaining) > BOOTSTRAP_V2_MAX_PYTHON_AST_DEPTH:
+                raise ValueError(
+                    "Python bound string method selection exceeds the trusted "
+                    "path depth"
+                )
+            state = (id(current), remaining)
+            if state in scheduled:
+                return
+            if selected_subscript_states >= selected_subscript_state_limit:
+                raise ValueError(
+                    "Python bound string method selection exceeds the trusted "
+                    "candidate state limit"
+                )
+            selected_subscript_states += 1
+            scheduled.add(state)
+            pending.append((current, remaining))
+
+        enqueue(expression, path)
+        while pending:
+            current, remaining = pending.pop()
+            if not remaining:
+                selected[id(current)] = current
+                continue
+            if isinstance(current, (ast.Tuple, ast.List)):
+                index = remaining[0]
+                if not -len(current.elts) <= index < len(current.elts):
+                    continue
+                child = current.elts[index]
+                if isinstance(child, ast.Starred):
+                    child = child.value
+                enqueue(child, remaining[1:])
+                continue
+            if isinstance(current, ast.Subscript):
+                for source in selected_subscript_expressions(current):
+                    enqueue(source, remaining)
+                continue
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                key = name_load_binding_key(current)
+                for (
+                    statement,
+                    assigned_value,
+                    source_path,
+                    target,
+                ) in selection_binding_candidates(key):
+                    consume_selected_subscript_operation()
+                    if not event_may_reach_load(current, key, id(target)):
+                        continue
+                    enqueue(assigned_value, (*source_path, *remaining))
+                for event_id, source in ordinary_ambiguous_binding_events.get(key, ()):
+                    consume_selected_subscript_operation()
+                    if event_may_reach_load(current, key, event_id):
+                        enqueue(source, remaining)
+                for candidate in starred_binding_candidates.get(key, ()):
+                    consume_selected_subscript_operation()
+                    if not event_may_reach_load(
+                        current,
+                        key,
+                        id(candidate[5]),
+                    ):
+                        continue
+                    selector = remaining[0]
+                    for ordered, sources in starred_capture_alternatives(candidate):
+                        consume_selected_subscript_operation()
+                        selected_sources = sources
+                        if ordered:
+                            if not -len(sources) <= selector < len(sources):
+                                continue
+                            selected_sources = (sources[selector],)
+                        for source in selected_sources:
+                            enqueue(source, remaining[1:])
+                for event_id, source in parameter_default_sources.get(key, ()):
+                    consume_selected_subscript_operation()
+                    if parameter_default_may_reach_load(current, key, event_id):
+                        enqueue(source, remaining)
+                continue
+            if isinstance(current, ast.NamedExpr):
+                enqueue(current.value, remaining)
+                continue
+            if isinstance(current, ast.IfExp):
+                enqueue(current.body, remaining)
+                enqueue(current.orelse, remaining)
+                continue
+            if isinstance(current, ast.BoolOp):
+                for value in current.values:
+                    enqueue(value, remaining)
+        result = tuple(selected.values())
+        selected_assignment_path_cache[cache_key] = result
+        return result
+
     def selected_assignment_expression(
         expression: ast.AST,
         path: tuple[int, ...],
     ) -> ast.AST | None:
-        for index in path:
-            if not isinstance(expression, (ast.Tuple, ast.List)):
-                return None
-            if index >= len(expression.elts):
-                return None
-            expression = expression.elts[index]
-        return expression
+        selected = selected_assignment_expressions(expression, path)
+        return selected[0] if len(selected) == 1 else None
+
+    def resolved_starred_parent_sources(
+        expression: ast.AST,
+    ) -> tuple[ast.AST, ...]:
+        nonlocal selected_subscript_states
+        resolved: dict[int, ast.AST] = {}
+        pending: list[ast.AST] = []
+        scheduled: set[int] = set()
+
+        def enqueue(source: ast.AST) -> None:
+            nonlocal selected_subscript_states
+            consume_selected_subscript_operation()
+            source_id = id(source)
+            if source_id in scheduled:
+                return
+            if selected_subscript_states >= selected_subscript_state_limit:
+                raise ValueError(
+                    "Python starred assignment selection exceeds the trusted "
+                    "candidate state limit"
+                )
+            selected_subscript_states += 1
+            scheduled.add(source_id)
+            pending.append(source)
+
+        enqueue(expression)
+        while pending:
+            current = pending.pop()
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                key = name_load_binding_key(current)
+                found_source = False
+                for _, value, path, target in selection_binding_candidates(key):
+                    consume_selected_subscript_operation()
+                    if not event_may_reach_load(current, key, id(target)):
+                        continue
+                    found_source = True
+                    for source in selected_assignment_expressions(value, path):
+                        enqueue(source)
+                for event_id, source in ordinary_ambiguous_binding_events.get(key, ()):
+                    consume_selected_subscript_operation()
+                    if event_may_reach_load(current, key, event_id):
+                        found_source = True
+                        enqueue(source)
+                for event_id, source in parameter_default_sources.get(key, ()):
+                    consume_selected_subscript_operation()
+                    if parameter_default_may_reach_load(current, key, event_id):
+                        found_source = True
+                        enqueue(source)
+                if not found_source or starred_binding_candidates.get(key):
+                    resolved[id(current)] = current
+                continue
+            if isinstance(current, ast.Subscript):
+                sources = selected_subscript_expressions(current)
+                if sources:
+                    for source in sources:
+                        enqueue(source)
+                else:
+                    resolved[id(current)] = current
+                continue
+            if isinstance(current, ast.NamedExpr):
+                enqueue(current.value)
+                continue
+            if isinstance(current, ast.IfExp):
+                enqueue(current.body)
+                enqueue(current.orelse)
+                continue
+            if isinstance(current, ast.BoolOp):
+                for source in current.values:
+                    enqueue(source)
+                continue
+            resolved[id(current)] = current
+        return tuple(resolved.values())
+
+    def starred_capture_alternatives(
+        candidate: StarredBindingCandidate,
+    ) -> tuple[StarredCaptureAlternative, ...]:
+        nonlocal starred_capture_retained_alternatives
+        nonlocal starred_capture_retained_sources
+        (
+            _,
+            assigned_value,
+            parent_path,
+            prefix_count,
+            suffix_count,
+            _,
+            iterates_assigned_value,
+        ) = candidate
+        capture_key = (
+            id(assigned_value),
+            parent_path,
+            prefix_count,
+            suffix_count,
+            iterates_assigned_value,
+        )
+        cached = starred_capture_alternatives_cache.get(capture_key)
+        if cached is not None:
+            return cached
+        if capture_key in starred_capture_alternatives_in_progress:
+            raise ValueError("Python starred assignment selection is cyclic")
+        starred_capture_alternatives_in_progress.add(capture_key)
+        try:
+            captured: dict[tuple[bool, tuple[int, ...]], StarredCaptureAlternative] = {}
+
+            def alternatives_match(
+                left: StarredCaptureAlternative,
+                ordered: bool,
+                sources: tuple[ast.AST, ...],
+            ) -> bool:
+                left_ordered, left_sources = left
+                if left_ordered != ordered or len(left_sources) != len(sources):
+                    return False
+                for left_source, source in zip(left_sources, sources, strict=True):
+                    consume_selected_subscript_operation()
+                    if left_source is not source:
+                        return False
+                return True
+
+            def alternative_key(
+                ordered: bool,
+                sources: tuple[ast.AST, ...],
+            ) -> tuple[bool, tuple[int, ...]]:
+                source_ids: list[int] = []
+                for source in sources:
+                    consume_selected_subscript_operation()
+                    source_ids.append(id(source))
+                return (ordered, tuple(source_ids))
+
+            def duplicate_is_retained(
+                alternatives: dict[
+                    tuple[bool, tuple[int, ...]], StarredCaptureAlternative
+                ],
+                ordered: bool,
+                sources: tuple[ast.AST, ...],
+            ) -> bool:
+                for alternative in alternatives.values():
+                    consume_selected_subscript_operation()
+                    if alternatives_match(alternative, ordered, sources):
+                        return True
+                return False
+
+            def retain(
+                ordered: bool,
+                sources: tuple[ast.AST, ...],
+            ) -> None:
+                nonlocal starred_capture_retained_alternatives
+                nonlocal starred_capture_retained_sources
+                consume_selected_subscript_operation()
+                if (
+                    starred_capture_retained_alternatives
+                    >= selected_subscript_state_limit
+                    or len(sources)
+                    > selected_subscript_state_limit - starred_capture_retained_sources
+                ):
+                    if duplicate_is_retained(captured, ordered, sources):
+                        return
+                    raise ValueError(
+                        "Python starred assignment selection exceeds the trusted "
+                        "retained source limit"
+                    )
+                retained_key = alternative_key(ordered, sources)
+                if retained_key in captured:
+                    return
+                starred_capture_retained_alternatives += 1
+                starred_capture_retained_sources += len(sources)
+                captured[retained_key] = (ordered, sources)
+
+            def collect_local_alternative(
+                alternatives: dict[
+                    tuple[bool, tuple[int, ...]], StarredCaptureAlternative
+                ],
+                source_count: list[int],
+                ordered: bool,
+                sources: tuple[ast.AST, ...],
+            ) -> None:
+                consume_selected_subscript_operation()
+                if (
+                    len(alternatives) >= selected_subscript_state_limit
+                    or len(sources) > selected_subscript_state_limit - source_count[0]
+                ):
+                    if duplicate_is_retained(alternatives, ordered, sources):
+                        return
+                    raise ValueError(
+                        "Python starred assignment selection exceeds the trusted "
+                        "intermediate alternative limit"
+                    )
+                retained_key = alternative_key(ordered, sources)
+                if retained_key in alternatives:
+                    return
+                alternatives[retained_key] = (ordered, sources)
+                source_count[0] += len(sources)
+
+            def sequence_alternatives(
+                expression: ast.AST,
+            ) -> tuple[StarredCaptureAlternative, ...]:
+                consume_selected_subscript_operation()
+                alternatives: dict[
+                    tuple[bool, tuple[int, ...]], StarredCaptureAlternative
+                ] = {}
+                source_count = [0]
+                if isinstance(expression, (ast.Tuple, ast.List)):
+                    if not sequence_has_starred(expression):
+                        if len(expression.elts) > selected_subscript_state_limit:
+                            raise ValueError(
+                                "Python starred assignment selection exceeds the "
+                                "trusted intermediate source limit"
+                            )
+                        collect_local_alternative(
+                            alternatives,
+                            source_count,
+                            True,
+                            tuple(expression.elts),
+                        )
+                        return tuple(alternatives.values())
+                    partials: dict[
+                        tuple[bool, tuple[int, ...]], StarredCaptureAlternative
+                    ] = {}
+                    partial_source_count = [0]
+                    collect_local_alternative(
+                        partials,
+                        partial_source_count,
+                        True,
+                        (),
+                    )
+                    for child in expression.elts:
+                        consume_selected_subscript_operation()
+                        if isinstance(child, ast.Starred):
+                            child_alternatives = sequence_alternatives(child.value)
+                        else:
+                            child_alternatives = ((True, (child,)),)
+                        next_partials: dict[
+                            tuple[bool, tuple[int, ...]], StarredCaptureAlternative
+                        ] = {}
+                        next_source_count = [0]
+                        for partial_ordered, partial_sources in partials.values():
+                            for child_ordered, child_sources in child_alternatives:
+                                consume_selected_subscript_operation()
+                                if len(partial_sources) > (
+                                    selected_subscript_state_limit - len(child_sources)
+                                ):
+                                    raise ValueError(
+                                        "Python starred assignment selection exceeds "
+                                        "the trusted intermediate source limit"
+                                    )
+                                collect_local_alternative(
+                                    next_partials,
+                                    next_source_count,
+                                    partial_ordered and child_ordered,
+                                    (*partial_sources, *child_sources),
+                                )
+                        partials = next_partials
+                        if not partials:
+                            break
+                    for ordered, sources in partials.values():
+                        collect_local_alternative(
+                            alternatives,
+                            source_count,
+                            ordered,
+                            sources,
+                        )
+                    return tuple(alternatives.values())
+                if isinstance(expression, ast.BinOp) and isinstance(
+                    expression.op, ast.Add
+                ):
+                    left_alternatives = sequence_alternatives(expression.left)
+                    right_alternatives = sequence_alternatives(expression.right)
+                    if left_alternatives and right_alternatives:
+                        for left_ordered, left_sources in left_alternatives:
+                            for right_ordered, right_sources in right_alternatives:
+                                consume_selected_subscript_operation()
+                                if len(left_sources) > (
+                                    selected_subscript_state_limit - len(right_sources)
+                                ):
+                                    raise ValueError(
+                                        "Python starred assignment selection exceeds "
+                                        "the trusted intermediate source limit"
+                                    )
+                                collect_local_alternative(
+                                    alternatives,
+                                    source_count,
+                                    left_ordered and right_ordered,
+                                    (*left_sources, *right_sources),
+                                )
+                        return tuple(alternatives.values())
+                if isinstance(expression, ast.BinOp) and isinstance(
+                    expression.op, ast.Mult
+                ):
+                    right_multiplier = normalized_literal_selector(expression.right)
+                    left_multiplier = normalized_literal_selector(expression.left)
+                    if type(right_multiplier) is int:
+                        sequence = expression.left
+                        multiplier = right_multiplier
+                    elif type(left_multiplier) is int:
+                        sequence = expression.right
+                        multiplier = left_multiplier
+                    else:
+                        sequence = None
+                        multiplier = 0
+                    if sequence is not None:
+                        if multiplier <= 0:
+                            collect_local_alternative(
+                                alternatives,
+                                source_count,
+                                True,
+                                (),
+                            )
+                            return tuple(alternatives.values())
+                        for ordered, sources in sequence_alternatives(sequence):
+                            consume_selected_subscript_operation()
+                            if ordered and sources:
+                                if multiplier > (
+                                    selected_subscript_state_limit // len(sources)
+                                ):
+                                    raise ValueError(
+                                        "Python starred assignment selection exceeds "
+                                        "the trusted intermediate source limit"
+                                    )
+                                sources = sources * multiplier
+                            collect_local_alternative(
+                                alternatives,
+                                source_count,
+                                ordered,
+                                sources,
+                            )
+                        if alternatives:
+                            return tuple(alternatives.values())
+                if isinstance(expression, ast.Name) and isinstance(
+                    expression.ctx, ast.Load
+                ):
+                    key = name_load_binding_key(expression)
+                    resolved_sources = resolved_starred_parent_sources(expression)
+                    for resolved_source in resolved_sources:
+                        consume_selected_subscript_operation()
+                        if resolved_source is not expression:
+                            for ordered, sources in sequence_alternatives(
+                                resolved_source
+                            ):
+                                collect_local_alternative(
+                                    alternatives,
+                                    source_count,
+                                    ordered,
+                                    sources,
+                                )
+                            continue
+                        for inner_candidate in starred_binding_candidates.get(key, ()):
+                            consume_selected_subscript_operation()
+                            if not event_may_reach_load(
+                                expression,
+                                key,
+                                id(inner_candidate[5]),
+                            ):
+                                continue
+                            for ordered, sources in starred_capture_alternatives(
+                                inner_candidate
+                            ):
+                                collect_local_alternative(
+                                    alternatives,
+                                    source_count,
+                                    ordered,
+                                    sources,
+                                )
+                    if alternatives:
+                        return tuple(alternatives.values())
+                sources = selected_container_expressions(
+                    expression,
+                    unknown_subscript_selector,
+                )
+                if sources:
+                    collect_local_alternative(
+                        alternatives,
+                        source_count,
+                        False,
+                        sources,
+                    )
+                return tuple(alternatives.values())
+
+            def parent_alternatives(
+                expression: ast.AST,
+                path: tuple[int, ...],
+            ) -> tuple[StarredCaptureAlternative, ...]:
+                consume_selected_subscript_operation()
+                if not path:
+                    return sequence_alternatives(expression)
+                alternatives: dict[
+                    tuple[bool, tuple[int, ...]], StarredCaptureAlternative
+                ] = {}
+                source_count = [0]
+
+                def collect_from_source(source: ast.AST) -> None:
+                    consume_selected_subscript_operation()
+                    for ordered, sources in parent_alternatives(source, remaining):
+                        collect_local_alternative(
+                            alternatives,
+                            source_count,
+                            ordered,
+                            sources,
+                        )
+
+                index, remaining = path[0], path[1:]
+                if isinstance(expression, (ast.Tuple, ast.List)) and not (
+                    sequence_has_starred(expression)
+                ):
+                    if not -len(expression.elts) <= index < len(expression.elts):
+                        return ()
+                    return parent_alternatives(expression.elts[index], remaining)
+                if isinstance(expression, ast.Name) and isinstance(
+                    expression.ctx, ast.Load
+                ):
+                    key = name_load_binding_key(expression)
+                    found_resolved_source = False
+                    for resolved_source in resolved_starred_parent_sources(expression):
+                        consume_selected_subscript_operation()
+                        if resolved_source is not expression:
+                            found_resolved_source = True
+                            for ordered, sources in parent_alternatives(
+                                resolved_source,
+                                path,
+                            ):
+                                collect_local_alternative(
+                                    alternatives,
+                                    source_count,
+                                    ordered,
+                                    sources,
+                                )
+                            continue
+                        for inner_candidate in starred_binding_candidates.get(key, ()):
+                            consume_selected_subscript_operation()
+                            if not event_may_reach_load(
+                                expression,
+                                key,
+                                id(inner_candidate[5]),
+                            ):
+                                continue
+                            found_resolved_source = True
+                            for ordered, sources in starred_capture_alternatives(
+                                inner_candidate
+                            ):
+                                consume_selected_subscript_operation()
+                                if ordered:
+                                    if -len(sources) <= index < len(sources):
+                                        collect_from_source(sources[index])
+                                else:
+                                    for source in sources:
+                                        collect_from_source(source)
+                    if found_resolved_source:
+                        return tuple(alternatives.values())
+                for source in selected_assignment_expressions(expression, path):
+                    consume_selected_subscript_operation()
+                    for ordered, sources in sequence_alternatives(source):
+                        collect_local_alternative(
+                            alternatives,
+                            source_count,
+                            ordered,
+                            sources,
+                        )
+                return tuple(alternatives.values())
+
+            root_sources = resolved_starred_parent_sources(assigned_value)
+            if iterates_assigned_value:
+                iterated_sources: dict[int, ast.AST] = {}
+                for root_source in root_sources:
+                    for source in selected_container_expressions(
+                        root_source,
+                        unknown_subscript_selector,
+                    ):
+                        iterated_sources[id(source)] = source
+                root_sources = tuple(iterated_sources.values())
+            for root_source in root_sources:
+                consume_selected_subscript_operation()
+                for ordered, sources in parent_alternatives(
+                    root_source,
+                    parent_path,
+                ):
+                    consume_selected_subscript_operation()
+                    if ordered:
+                        stop = (
+                            len(sources) - suffix_count
+                            if suffix_count
+                            else len(sources)
+                        )
+                        if stop < prefix_count:
+                            continue
+                        sources = sources[prefix_count:stop]
+                    retain(ordered, sources)
+            result = tuple(captured.values())
+            starred_capture_alternatives_cache[capture_key] = result
+            return result
+        finally:
+            starred_capture_alternatives_in_progress.remove(capture_key)
 
     def ambiguous_selection_sources(
         key: tuple[int, str],
+        load: ast.Name | None = None,
     ) -> tuple[ast.AST, ...]:
-        cached = ambiguous_selection_sources_cache.get(key)
+        cache_key = (key, id(load) if load is not None else 0)
+        cached = ambiguous_selection_sources_cache.get(cache_key)
         if cached is not None:
             return cached
         sources: dict[int, ast.AST] = {}
-        for _, assigned_value, path, _ in binding_candidates.get(key, ()):
+        for _, assigned_value, path, target in selection_binding_candidates(key):
             consume_selected_subscript_operation()
-            source = selected_assignment_expression(assigned_value, path)
-            if source is not None:
+            if load is not None and not event_may_reach_load(load, key, id(target)):
+                continue
+            for source in selected_assignment_expressions(assigned_value, path):
                 sources[id(source)] = source
-        for source in ordinary_ambiguous_binding_values.get(key, ()):
+        ordinary_events = ordinary_ambiguous_binding_events.get(key, ())
+        for event_id, source in ordinary_events:
             consume_selected_subscript_operation()
+            if load is not None and not event_may_reach_load(load, key, event_id):
+                continue
             sources[id(source)] = source
+        if not ordinary_events:
+            for source in ordinary_ambiguous_binding_values.get(key, ()):
+                consume_selected_subscript_operation()
+                sources[id(source)] = source
+        for event_id, source in parameter_default_sources.get(key, ()):
+            consume_selected_subscript_operation()
+            if load is None or parameter_default_may_reach_load(load, key, event_id):
+                sources[id(source)] = source
         result = tuple(sources.values())
-        ambiguous_selection_sources_cache[key] = result
+        ambiguous_selection_sources_cache[cache_key] = result
         return result
 
     def sequence_has_starred(sequence: ast.Tuple | ast.List) -> bool:
@@ -6096,6 +7114,106 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         result = tuple(items)
         mapping_items_cache[mapping_id] = result
         return result
+
+    def static_sequence_length(expression: ast.AST) -> int | None:
+        expression_id = id(expression)
+        if expression_id in static_sequence_length_cache:
+            return static_sequence_length_cache[expression_id]
+        if expression_id in static_sequence_length_in_progress:
+            return None
+        consume_selected_subscript_operation()
+        static_sequence_length_in_progress.add(expression_id)
+        try:
+            result: int | None = None
+            if isinstance(expression, (ast.Tuple, ast.List)):
+                if not sequence_has_starred(expression):
+                    result = len(expression.elts)
+            elif isinstance(expression, ast.Name) and isinstance(
+                expression.ctx, ast.Load
+            ):
+                key = name_load_binding_key(expression)
+                lengths: set[int] = set()
+                found_source = False
+                exact = key not in explicitly_ambiguous_binding_keys
+
+                def observe_source(source: ast.AST) -> None:
+                    nonlocal exact, found_source
+                    consume_selected_subscript_operation()
+                    found_source = True
+                    source_length = static_sequence_length(source)
+                    if source_length is None:
+                        exact = False
+                    else:
+                        lengths.add(source_length)
+
+                for _, assigned_value, path, target in selection_binding_candidates(
+                    key
+                ):
+                    consume_selected_subscript_operation()
+                    if event_may_reach_load(expression, key, id(target)):
+                        for source in selected_assignment_expressions(
+                            assigned_value,
+                            path,
+                        ):
+                            observe_source(source)
+                for event_id, source in ordinary_ambiguous_binding_events.get(key, ()):
+                    consume_selected_subscript_operation()
+                    if event_may_reach_load(expression, key, event_id):
+                        if event_id in non_guaranteed_binding_event_ids:
+                            found_source = True
+                            exact = False
+                            continue
+                        observe_source(source)
+                for event_id, source in parameter_default_sources.get(key, ()):
+                    consume_selected_subscript_operation()
+                    if parameter_default_may_reach_load(expression, key, event_id):
+                        observe_source(source)
+                for candidate in starred_binding_candidates.get(key, ()):
+                    consume_selected_subscript_operation()
+                    if event_may_reach_load(expression, key, id(candidate[5])):
+                        found_source = True
+                        exact = False
+                if exact and found_source and len(lengths) == 1:
+                    result = next(iter(lengths))
+            elif isinstance(expression, ast.BinOp) and isinstance(
+                expression.op, ast.Add
+            ):
+                left_length = static_sequence_length(expression.left)
+                right_length = static_sequence_length(expression.right)
+                if (
+                    left_length is not None
+                    and right_length is not None
+                    and left_length <= selected_subscript_state_limit - right_length
+                ):
+                    result = left_length + right_length
+            elif isinstance(expression, ast.BinOp) and isinstance(
+                expression.op, ast.Mult
+            ):
+                right_multiplier = normalized_literal_selector(expression.right)
+                left_multiplier = normalized_literal_selector(expression.left)
+                if type(right_multiplier) is int:
+                    sequence = expression.left
+                    multiplier = max(right_multiplier, 0)
+                elif type(left_multiplier) is int:
+                    sequence = expression.right
+                    multiplier = max(left_multiplier, 0)
+                else:
+                    sequence = None
+                    multiplier = 0
+                if sequence is not None:
+                    sequence_length = static_sequence_length(sequence)
+                    if sequence_length == 0 or multiplier == 0:
+                        result = 0
+                    elif (
+                        sequence_length is not None
+                        and multiplier
+                        <= selected_subscript_state_limit // sequence_length
+                    ):
+                        result = sequence_length * multiplier
+            static_sequence_length_cache[expression_id] = result
+            return result
+        finally:
+            static_sequence_length_in_progress.remove(expression_id)
 
     def selected_container_expressions(
         container: ast.AST,
@@ -6175,10 +7293,123 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             if isinstance(current, ast.Starred):
                 enqueue(current.value, selector_path_id)
                 continue
+            if isinstance(current, ast.BinOp) and isinstance(current.op, ast.Add):
+                if selector_path_id == 0:
+                    record_selected(current)
+                    continue
+                current_selector, remaining_path_id, _ = selector_paths[
+                    selector_path_id
+                ]
+                left_length = static_sequence_length(current.left)
+                right_length = static_sequence_length(current.right)
+                if (
+                    type(current_selector) is int
+                    and left_length is not None
+                    and right_length is not None
+                ):
+                    total_length = left_length + right_length
+                    normalized_index = current_selector
+                    if normalized_index < 0:
+                        normalized_index += total_length
+                    if not 0 <= normalized_index < total_length:
+                        continue
+                    if normalized_index < left_length:
+                        source = current.left
+                        source_index = normalized_index
+                    else:
+                        source = current.right
+                        source_index = normalized_index - left_length
+                    enqueue(
+                        source,
+                        prepend_selector(source_index, remaining_path_id),
+                    )
+                    continue
+                for source in (current.left, current.right):
+                    enqueue(
+                        source,
+                        prepend_selector(
+                            unknown_subscript_selector,
+                            remaining_path_id,
+                        ),
+                    )
+                continue
+            if isinstance(current, ast.BinOp) and isinstance(current.op, ast.Mult):
+                if selector_path_id == 0:
+                    record_selected(current)
+                    continue
+                right_multiplier = normalized_literal_selector(current.right)
+                left_multiplier = normalized_literal_selector(current.left)
+                if type(right_multiplier) is int:
+                    sources = (current.left,)
+                    multiplier = right_multiplier
+                elif type(left_multiplier) is int:
+                    sources = (current.right,)
+                    multiplier = left_multiplier
+                else:
+                    sources = (current.left, current.right)
+                    multiplier = None
+                if type(multiplier) is int and multiplier <= 0:
+                    continue
+                current_selector, remaining_path_id, _ = selector_paths[
+                    selector_path_id
+                ]
+                if type(multiplier) is int and len(sources) == 1:
+                    sequence_length = static_sequence_length(sources[0])
+                    total_length = static_sequence_length(current)
+                    if sequence_length is not None and total_length is not None:
+                        normalized_index = current_selector
+                        if type(normalized_index) is int:
+                            if normalized_index < 0:
+                                normalized_index += total_length
+                            if not 0 <= normalized_index < total_length:
+                                continue
+                            if sequence_length == 0:
+                                continue
+                            enqueue(
+                                sources[0],
+                                prepend_selector(
+                                    normalized_index % sequence_length,
+                                    remaining_path_id,
+                                ),
+                            )
+                            continue
+                for source in sources:
+                    enqueue(
+                        source,
+                        prepend_selector(
+                            unknown_subscript_selector,
+                            remaining_path_id,
+                        ),
+                    )
+                continue
             if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
                 key = name_load_binding_key(current)
+                if selector_path_id:
+                    current_selector, remaining_path_id, _ = selector_paths[
+                        selector_path_id
+                    ]
+                    for candidate in starred_binding_candidates.get(key, ()):
+                        consume_selected_subscript_operation()
+                        if not event_may_reach_load(
+                            current,
+                            key,
+                            id(candidate[5]),
+                        ):
+                            continue
+                        for ordered, sources in starred_capture_alternatives(candidate):
+                            consume_selected_subscript_operation()
+                            selected_sources = sources
+                            if ordered and type(current_selector) is int:
+                                if not -len(sources) <= current_selector < len(sources):
+                                    continue
+                                selected_sources = (sources[current_selector],)
+                            for source in selected_sources:
+                                if remaining_path_id:
+                                    enqueue(source, remaining_path_id)
+                                else:
+                                    record_selected(source)
                 if key in ambiguous_binding_keys:
-                    for source in ambiguous_selection_sources(key):
+                    for source in ambiguous_selection_sources(key, current):
                         enqueue(source, selector_path_id)
                 else:
                     for statement, assigned_value, path, _ in binding_candidates.get(
@@ -6350,13 +7581,32 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
 
         for node in nodes:
             consume_operation()
-            if (
-                isinstance(node, ast.Attribute)
-                and node.attr in bound_string_method_names
+            if isinstance(node, ast.Attribute) and (
+                node.attr in bound_string_method_names or node.attr == "to_bytes"
             ):
                 seed_expression(node, node.attr)
+            elif (
+                isinstance(node, ast.Call)
+                and len(node.args) in {2, 3}
+                and not node.keywords
+                and has_static_builtin_origin(node.func, frozenset({"getattr"}))
+            ):
+                receiver = evaluate_binding_expression(node.args[0])
+                method_name = evaluate_binding_expression(node.args[1])
+                if len(node.args) == 3 and static_getattr_default_is_possible(
+                    receiver,
+                    method_name,
+                ):
+                    add_expression_edge(node.args[2], node)
+                if method_name == "to_bytes":
+                    seed_expression(node, "to_bytes")
+                elif method_name is not_pure:
+                    seed_expression(node, unresolved_int_method_kind)
             elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
                 key = name_load_binding_key(node)
+                for event_id, source in parameter_default_sources.get(key, ()):
+                    if parameter_default_may_reach_load(node, key, event_id):
+                        add_expression_edge(source, node)
                 candidates = binding_candidates.get(key)
                 if (
                     candidates is not None or key in ordinary_ambiguous_binding_values
@@ -6772,6 +8022,19 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             return value[1]
         return not_pure
 
+    def unresolved_int_method_value(receiver: Any) -> tuple[object, Any]:
+        return (unresolved_int_method_marker, receiver)
+
+    def unpack_unresolved_int_method(value: Any) -> Any:
+        if (
+            type(value) is tuple
+            and len(value) == 2
+            and value[0] is unresolved_int_method_marker
+            and (type(value[1]) is int or value[1] is int)
+        ):
+            return value[1]
+        return not_pure
+
     def unshadowed_builtin_name(
         node: ast.AST,
         names: frozenset[str],
@@ -6804,7 +8067,21 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         return range if unshadowed_builtin_name(node, frozenset({"range"})) else None
 
     def unshadowed_static_int_builtin(node: ast.AST) -> Any:
-        return int if unshadowed_builtin_name(node, frozenset({"int"})) else None
+        if unshadowed_builtin_name(node, frozenset({"int"})):
+            return int
+        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+            return None
+        key = name_load_binding_key(node)
+        return (
+            int
+            if any(
+                imported_name == "int" and event_may_reach_load(node, key, event_id)
+                for event_id, imported_name in static_builtin_import_bindings.get(
+                    key, ()
+                )
+            )
+            else None
+        )
 
     def unshadowed_builtin_text_type(node: ast.AST) -> type[str] | type[bytes] | None:
         value = unshadowed_deterministic_text_builtin(node)
@@ -7067,18 +8344,66 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             result = bytes(result)
         return validate_text_method_result(result)
 
+    def evaluate_static_int_to_bytes_method_reference(
+        node: ast.AST,
+        evaluate_node: Any,
+    ) -> Any:
+        if isinstance(node, ast.Attribute) and node.attr == "to_bytes":
+            receiver = evaluate_node(node.value)
+            if type(receiver) is int or receiver is int:
+                return bound_int_to_bytes_method_value(receiver)
+            return not_pure
+        if (
+            isinstance(node, ast.Call)
+            and len(node.args) in {2, 3}
+            and not node.keywords
+            and has_static_builtin_origin(node.func, frozenset({"getattr"}))
+        ):
+            receiver = evaluate_node(node.args[0])
+            method_name = evaluate_node(node.args[1])
+            if type(receiver) is int or receiver is int:
+                if method_name is not_pure:
+                    return unresolved_int_method_value(receiver)
+                if method_name == "to_bytes":
+                    return bound_int_to_bytes_method_value(receiver)
+            if len(node.args) == 3 and static_getattr_default_is_possible(
+                receiver,
+                method_name,
+            ):
+                default_method = evaluate_node(node.args[2])
+                default_receiver = unpack_bound_int_to_bytes_method(default_method)
+                if default_receiver is int or type(default_receiver) is int:
+                    return default_method
+                unresolved_receiver = unpack_unresolved_int_method(default_method)
+                if unresolved_receiver is int or type(unresolved_receiver) is int:
+                    return default_method
+        return not_pure
+
     def evaluate_static_int_to_bytes_call(
         node: ast.Call,
         evaluate_node: Any,
+        *,
+        receiver_override: Any = static_int_receiver_unset,
     ) -> Any:
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "to_bytes":
-            receiver = evaluate_node(node.func.value)
-            if type(receiver) is not int and receiver is not int:
-                return not_pure
+        if receiver_override is not static_int_receiver_unset:
+            receiver = receiver_override
         else:
-            receiver = unpack_bound_int_to_bytes_method(evaluate_node(node.func))
-            if receiver is not int and type(receiver) is not int:
-                return not_pure
+            method_value = evaluate_static_int_to_bytes_method_reference(
+                node.func,
+                evaluate_node,
+            )
+            if method_value is not_pure:
+                method_value = evaluate_node(node.func)
+            unresolved_receiver = unpack_unresolved_int_method(method_value)
+            if unresolved_receiver is int or type(unresolved_receiver) is int:
+                raise ValueError(
+                    "Python deterministic int.to_bytes uses an unresolved int "
+                    "method name "
+                    f"at line {getattr(node, 'lineno', 0)}"
+                )
+            receiver = unpack_bound_int_to_bytes_method(method_value)
+        if receiver is not int and type(receiver) is not int:
+            return not_pure
 
         if any(isinstance(argument, ast.Starred) for argument in node.args):
             raise ValueError("Python deterministic int.to_bytes uses starred arguments")
@@ -7563,6 +8888,11 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 evaluate_binding_expression,
             )
             if result is not_pure:
+                result = evaluate_static_int_to_bytes_method_reference(
+                    node,
+                    evaluate_binding_expression,
+                )
+            if result is not_pure:
                 result = evaluate_static_text_operator_call(
                     node,
                     evaluate_binding_expression,
@@ -7606,53 +8936,352 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     def decoder_binding_sources(
         key: tuple[int, str],
         load: ast.Name | None = None,
+        *,
+        include_shadowed_assignments: bool = False,
     ) -> list[ast.AST]:
-        return [
-            selected_assignment_expression(value, path) or value
-            for _, value, path, target in binding_candidates.get(key, ())
-            if load is None or event_may_reach_load(load, key, id(target))
-        ] + list(ordinary_ambiguous_binding_values.get(key, ()))
+        sources: dict[int, ast.AST] = {}
+        for _, value, path, target in selection_binding_candidates(key):
+            charge()
+            if (
+                load is not None
+                and not include_shadowed_assignments
+                and not event_may_reach_load(load, key, id(target))
+            ):
+                continue
+            selected = selected_assignment_expressions(value, path)
+            if selected:
+                for source in selected:
+                    sources[id(source)] = source
+            else:
+                sources[id(value)] = value
+        ordinary_events = ordinary_ambiguous_binding_events.get(key, ())
+        for event_id, source in ordinary_events:
+            charge()
+            if (
+                load is None
+                or include_shadowed_assignments
+                or event_may_reach_load(load, key, event_id)
+            ):
+                sources[id(source)] = source
+        if not ordinary_events:
+            for source in ordinary_ambiguous_binding_values.get(key, ()):
+                charge()
+                sources[id(source)] = source
+        for event_id, source in parameter_default_sources.get(key, ()):
+            charge()
+            if load is None or parameter_default_may_reach_load(load, key, event_id):
+                sources[id(source)] = source
+        return list(sources.values())
+
+    binding_event_statement_cache: dict[int, ast.stmt | None] = {}
 
     def binding_event_statement(event_id: int) -> ast.stmt | None:
+        if event_id in binding_event_statement_cache:
+            return binding_event_statement_cache[event_id]
         current = node_by_id.get(event_id)
         while current is not None and not isinstance(current, ast.stmt):
+            consume_binding_reachability_step()
             current = parent_by_node_id.get(id(current))
-        return current if isinstance(current, ast.stmt) else None
+        result = current if isinstance(current, ast.stmt) else None
+        binding_event_statement_cache[event_id] = result
+        return result
+
+    direct_binding_event_statements_cache: dict[
+        tuple[int, str],
+        dict[tuple[int, str], tuple[tuple[int, int], ...]],
+    ] = {}
+    latest_binding_statement_cache: dict[tuple[int, tuple[int, str]], int | None] = {}
+    loop_body_ancestor_ids_cache: dict[int, frozenset[int]] = {}
+    loop_at_most_one_iteration_cache: dict[int, bool] = {}
+    statement_loop_backedge_cache: dict[tuple[int, int], bool] = {}
+
+    def loop_body_ancestor_ids(node: ast.AST) -> frozenset[int]:
+        node_id = id(node)
+        cached = loop_body_ancestor_ids_cache.get(node_id)
+        if cached is not None:
+            return cached
+        ancestor_ids: set[int] = set()
+        node_scope = scope_by_node_id[node_id]
+        current: ast.AST | None = node
+        while current is not None:
+            consume_binding_reachability_step()
+            parent = parent_by_node_id.get(id(current))
+            if (
+                isinstance(parent, ast.While)
+                and current is parent.test
+                and scope_by_node_id[id(parent)] == node_scope
+            ) or (
+                isinstance(parent, (ast.For, ast.AsyncFor))
+                and current is parent.target
+                and scope_by_node_id[id(parent)] == node_scope
+            ):
+                ancestor_ids.add(id(parent))
+            if isinstance(current, ast.stmt):
+                location = statement_membership.get(id(current))
+                if location is not None and location[0][1] == "body":
+                    block_parent = node_by_id.get(location[0][0])
+                    if isinstance(
+                        block_parent, (ast.For, ast.AsyncFor, ast.While)
+                    ) and (scope_by_node_id[id(block_parent)] == node_scope):
+                        ancestor_ids.add(id(block_parent))
+            current = parent
+        result = frozenset(ancestor_ids)
+        loop_body_ancestor_ids_cache[node_id] = result
+        return result
+
+    def loop_has_at_most_one_iteration(
+        loop: ast.For | ast.AsyncFor | ast.While,
+    ) -> bool:
+        loop_id = id(loop)
+        cached = loop_at_most_one_iteration_cache.get(loop_id)
+        if cached is not None:
+            return cached
+        result = False
+        if isinstance(loop, ast.For):
+            iterable = loop.iter
+            if isinstance(iterable, (ast.List, ast.Tuple, ast.Set)):
+                result = (
+                    not any(
+                        isinstance(element, ast.Starred) for element in iterable.elts
+                    )
+                    and len(iterable.elts) <= 1
+                )
+            elif isinstance(iterable, ast.Dict):
+                result = (
+                    all(key is not None for key in iterable.keys)
+                    and len(iterable.keys) <= 1
+                )
+        loop_at_most_one_iteration_cache[loop_id] = result
+        return result
+
+    def nearest_loop_ancestor(node: ast.AST) -> ast.AST | None:
+        current = parent_by_node_id.get(id(node))
+        while current is not None:
+            consume_binding_reachability_step()
+            if isinstance(current, (ast.For, ast.AsyncFor, ast.While)):
+                return current
+            current = parent_by_node_id.get(id(current))
+        return None
+
+    def statement_can_reach_loop_backedge(
+        statement: ast.stmt,
+        loop: ast.For | ast.AsyncFor | ast.While,
+    ) -> bool:
+        cache_key = (id(statement), id(loop))
+        cached = statement_loop_backedge_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        if loop_has_at_most_one_iteration(loop):
+            statement_loop_backedge_cache[cache_key] = False
+            return False
+        current: ast.AST | None = statement
+        while current is not None and current is not loop:
+            consume_binding_reachability_step()
+            if isinstance(current, ast.stmt):
+                location = statement_membership.get(id(current))
+                if location is not None:
+                    block_parent = node_by_id.get(location[0][0])
+                    if block_parent is loop and location[0][1] == "body":
+                        if current is not statement:
+                            if not isinstance(
+                                current, (ast.For, ast.AsyncFor, ast.While)
+                            ) or statement_can_reach_loop_backedge(statement, current):
+                                statement_loop_backedge_cache[cache_key] = True
+                                return True
+                        elif isinstance(
+                            current,
+                            (
+                                ast.If,
+                                ast.Match,
+                                ast.Try,
+                                ast.TryStar,
+                                ast.With,
+                                ast.AsyncWith,
+                                ast.For,
+                                ast.AsyncFor,
+                                ast.While,
+                            ),
+                        ):
+                            statement_loop_backedge_cache[cache_key] = True
+                            return True
+                        block = getattr(block_parent, location[0][1], ())
+                        if not isinstance(block, list):
+                            statement_loop_backedge_cache[cache_key] = True
+                            return True
+                        for following_index in range(location[1] + 1, len(block)):
+                            consume_binding_reachability_step()
+                            following = block[following_index]
+                            if isinstance(following, ast.Continue):
+                                statement_loop_backedge_cache[cache_key] = True
+                                return True
+                            if isinstance(following, ast.Break):
+                                if nearest_loop_ancestor(following) is loop:
+                                    statement_loop_backedge_cache[cache_key] = False
+                                    return False
+                                statement_loop_backedge_cache[cache_key] = True
+                                return True
+                            if isinstance(following, (ast.Return, ast.Raise)):
+                                statement_loop_backedge_cache[cache_key] = False
+                                return False
+                            if isinstance(
+                                following,
+                                (
+                                    ast.If,
+                                    ast.Match,
+                                    ast.Try,
+                                    ast.TryStar,
+                                    ast.With,
+                                    ast.AsyncWith,
+                                    ast.For,
+                                    ast.AsyncFor,
+                                    ast.While,
+                                ),
+                            ):
+                                statement_loop_backedge_cache[cache_key] = True
+                                return True
+                        statement_loop_backedge_cache[cache_key] = True
+                        return True
+            current = parent_by_node_id.get(id(current))
+        statement_loop_backedge_cache[cache_key] = True
+        return True
+
+    def direct_binding_event_statements(
+        key: tuple[int, str],
+    ) -> dict[tuple[int, str], tuple[tuple[int, int], ...]]:
+        cached = direct_binding_event_statements_cache.get(key)
+        if cached is not None:
+            return cached
+        direct_ids = direct_statement_ids_by_scope.get(key[0], set())
+        statements: dict[int, ast.stmt] = {}
+        for event_id in binding_event_ids.get(key, ()):
+            consume_binding_reachability_step()
+            if event_id in non_guaranteed_binding_event_ids:
+                continue
+            statement = binding_event_statement(event_id)
+            if statement is not None and id(statement) in direct_ids:
+                statements[id(statement)] = statement
+        grouped: dict[tuple[int, str], list[tuple[int, int]]] = {}
+        for statement_id, statement in statements.items():
+            location = statement_membership.get(statement_id)
+            if location is not None:
+                grouped.setdefault(location[0], []).append((location[1], statement_id))
+        result = {block: tuple(sorted(entries)) for block, entries in grouped.items()}
+        direct_binding_event_statements_cache[key] = result
+        return result
+
+    def latest_binding_statement_for_load(
+        load: ast.Name,
+        key: tuple[int, str],
+    ) -> int | None:
+        cache_key = (id(load), key)
+        if cache_key in latest_binding_statement_cache:
+            return latest_binding_statement_cache[cache_key]
+        statements_by_block = direct_binding_event_statements(key)
+        current: ast.AST | None = load
+        result: int | None = None
+        while current is not None:
+            consume_binding_reachability_step()
+            if isinstance(current, ast.stmt):
+                location = statement_membership.get(id(current))
+                if location is not None:
+                    entries = statements_by_block.get(location[0], ())
+                    position = (
+                        bisect_right(
+                            entries,
+                            (location[1] - 1, sys.maxsize),
+                        )
+                        - 1
+                    )
+                    if position >= 0:
+                        result = entries[position][1]
+                        break
+            current = parent_by_node_id.get(id(current))
+        latest_binding_statement_cache[cache_key] = result
+        return result
 
     def event_may_reach_load(
         load: ast.Name,
         key: tuple[int, str],
         event_id: int,
     ) -> bool:
-        latest_index = -1
-        latest: set[int] = set()
-        direct_ids = direct_statement_ids_by_scope.get(key[0], set())
-        for candidate_id in binding_event_ids.get(key, ()):
-            statement = binding_event_statement(candidate_id)
-            if (
-                statement is None
-                or id(statement) not in direct_ids
-                or not statement_dominates_load(statement, load)
-            ):
-                continue
-            location = statement_membership.get(id(statement))
-            if location is None or location[1] < latest_index:
-                continue
-            if location[1] > latest_index:
-                latest.clear()
-                latest_index = location[1]
-            latest.add(candidate_id)
-        if event_id in latest:
-            return True
+        consume_binding_reachability_step()
+        if event_id in non_guaranteed_binding_event_ids:
+            statement = binding_event_statement(event_id)
+            if not isinstance(statement, (ast.For, ast.AsyncFor)):
+                raise ValueError("Python non-guaranteed binding event is invalid")
+            if scope_by_node_id[id(load)] != key[0]:
+                return True
+            child: ast.AST = load
+            while parent_by_node_id.get(id(child)) is not statement:
+                consume_binding_reachability_step()
+                parent = parent_by_node_id.get(id(child))
+                if parent is None:
+                    break
+                child = parent
+            if id(child) in non_guaranteed_binding_body_ids[id(statement)]:
+                return True
+            if id(child) in non_guaranteed_binding_orelse_ids[id(statement)]:
+                return True
+            return (load.lineno, load.col_offset) >= (
+                statement.end_lineno,
+                statement.end_col_offset,
+            )
         statement = binding_event_statement(event_id)
         if statement is None:
             return True
+        if scope_by_node_id[id(load)] == key[0] and (
+            load.lineno,
+            load.col_offset,
+        ) < (
+            statement.lineno,
+            statement.col_offset,
+        ):
+            has_backedge = False
+            for loop_id in loop_body_ancestor_ids(load) & loop_body_ancestor_ids(
+                statement
+            ):
+                loop = node_by_id[loop_id]
+                if isinstance(loop, (ast.For, ast.AsyncFor, ast.While)) and (
+                    statement_can_reach_loop_backedge(statement, loop)
+                ):
+                    has_backedge = True
+                    break
+            if not has_backedge:
+                return False
+        if id(statement) == latest_binding_statement_for_load(load, key):
+            return True
+        direct_ids = direct_statement_ids_by_scope.get(key[0], set())
         if id(statement) not in direct_ids:
             return True
         return bool(
             scope_by_node_id[id(load)] != key[0]
             and not statement_dominates_load(statement, load)
         )
+
+    def parameter_default_may_reach_load(
+        load: ast.Name,
+        key: tuple[int, str],
+        event_id: int,
+    ) -> bool:
+        if event_id not in binding_event_ids.get(key, ()):
+            raise ValueError("Python parameter default event is not bound")
+        for binding_event_id in binding_event_ids.get(key, ()):
+            consume_binding_reachability_step()
+            if binding_event_id not in non_guaranteed_binding_event_ids:
+                continue
+            statement = binding_event_statement(binding_event_id)
+            if not isinstance(statement, (ast.For, ast.AsyncFor)):
+                raise ValueError("Python non-guaranteed binding event is invalid")
+            child: ast.AST = load
+            while parent_by_node_id.get(id(child)) is not statement:
+                consume_binding_reachability_step()
+                parent = parent_by_node_id.get(id(child))
+                if parent is None:
+                    break
+                child = parent
+            if id(child) in non_guaranteed_binding_body_ids[id(statement)]:
+                return False
+        return latest_binding_statement_for_load(load, key) is None
 
     input_ops = 0
     input_limit = min(
@@ -7680,7 +9309,13 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 return True
             if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
                 key = name_load_binding_key(current)
-                pending.extend(decoder_binding_sources(key, current))
+                pending.extend(
+                    decoder_binding_sources(
+                        key,
+                        current,
+                        include_shadowed_assignments=True,
+                    )
+                )
         return False
 
     def static_receiver(node: ast.AST) -> bool:
@@ -7737,6 +9372,18 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             observed_expression_ids.add(id(current))
             if unshadowed_builtin_name(current, builtin_names):
                 return True
+            if isinstance(current, ast.Subscript):
+                pending.extend(selected_subscript_expressions(current))
+                continue
+            if isinstance(current, ast.NamedExpr):
+                pending.append(current.value)
+                continue
+            if isinstance(current, ast.IfExp):
+                pending.extend((current.body, current.orelse))
+                continue
+            if isinstance(current, ast.BoolOp):
+                pending.extend(current.values)
+                continue
             if not isinstance(current, ast.Name) or not isinstance(
                 current.ctx, ast.Load
             ):
@@ -7745,6 +9392,14 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             if key in observed_binding_keys:
                 continue
             observed_binding_keys.add(key)
+            if any(
+                imported_name in builtin_names
+                and event_may_reach_load(current, key, event_id)
+                for event_id, imported_name in static_builtin_import_bindings.get(
+                    key, ()
+                )
+            ):
+                return True
             pending.extend(decoder_binding_sources(key, current))
         return False
 
@@ -8348,70 +10003,388 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             record_constructed(assignment, binding)
             recorded_literal_binding_statements.add(id(assignment))
 
+    ambiguous_receiver_cache: dict[int, tuple[bool, tuple[Any, ...]]] = {}
+    ambiguous_receiver_operations = 0
+    ambiguous_receiver_retained_states = 0
+    ambiguous_receiver_cached_value_ids: set[int] = set()
+    ambiguous_receiver_cached_bytes = 0
+    ambiguous_receiver_operation_limit = min(
+        max(node_count * 32, 1),
+        BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS,
+    )
+
+    def consume_ambiguous_receiver_operation() -> None:
+        nonlocal ambiguous_receiver_operations
+        if ambiguous_receiver_operations >= ambiguous_receiver_operation_limit:
+            raise ValueError(
+                "Python ambiguous receiver analysis exceeds the trusted operation limit"
+            )
+        ambiguous_receiver_operations += 1
+
+    def charge_ambiguous_receiver_state() -> None:
+        nonlocal ambiguous_receiver_retained_states
+        next_states = ambiguous_receiver_retained_states + 1
+        if next_states > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUES:
+            raise ValueError(
+                "Python ambiguous receiver analysis exceeds the trusted state limit"
+            )
+        ambiguous_receiver_retained_states = next_states
+
+    def charge_ambiguous_receiver_cache(values: tuple[Any, ...]) -> None:
+        nonlocal ambiguous_receiver_cached_bytes
+        for value in values:
+            if type(value) not in {str, bytes}:
+                continue
+            value_id = id(value)
+            if value_id in ambiguous_receiver_cached_value_ids:
+                continue
+            next_bytes = ambiguous_receiver_cached_bytes + evaluated_text_payload_size(
+                value
+            )
+            if next_bytes > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_BYTES:
+                raise ValueError(
+                    "Python ambiguous receiver cache exceeds the trusted byte limit"
+                )
+            ambiguous_receiver_cached_value_ids.add(value_id)
+            ambiguous_receiver_cached_bytes = next_bytes
+
     def ambiguous_static_receiver_values(
         expression: ast.AST,
-        observed_keys: frozenset[tuple[int, str]] = frozenset(),
-    ) -> tuple[bool, tuple[str | bytes, ...]]:
-        if isinstance(expression, ast.Name) and isinstance(expression.ctx, ast.Load):
-            key = name_load_binding_key(expression)
-            if key in observed_keys:
-                return False, ()
-            candidates = binding_candidates.get(key, ())
-            selected_sources = tuple(
-                selected_assignment_expression(candidate[1], candidate[2])
-                for candidate in candidates
-            )
-            next_observed = observed_keys | {key}
-            if key in ambiguous_binding_keys:
-                values: list[str | bytes] = []
-                for source in selected_sources:
-                    if source is None:
-                        continue
-                    value = evaluate_binding_expression(source)
-                    if type(value) in {str, bytes}:
-                        values.append(value)
-                        continue
-                    nested_ambiguous, nested_values = ambiguous_static_receiver_values(
-                        source, next_observed
+    ) -> tuple[bool, tuple[Any, ...]]:
+        cached = ambiguous_receiver_cache.get(id(expression))
+        if cached is not None:
+            return cached
+
+        expressions: dict[int, ast.AST] = {}
+        dependents: dict[int, set[int]] = {}
+        call_method_names: dict[int, str] = {}
+        forced_ambiguous_ids: set[int] = set()
+        direct_values: dict[int, Any] = {}
+        pending = [expression]
+        while pending:
+            consume_ambiguous_receiver_operation()
+            current = pending.pop()
+            current_id = id(current)
+            if current_id in expressions:
+                continue
+            expressions[current_id] = current
+            current_dependencies: tuple[ast.AST, ...] = ()
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                key = name_load_binding_key(current)
+                if key in ambiguous_binding_keys:
+                    current_dependencies = ambiguous_selection_sources(key, current)
+                    forced_ambiguous_ids.add(current_id)
+                else:
+                    current_dependencies = tuple(decoder_binding_sources(key, current))
+                    if len(current_dependencies) > 1:
+                        forced_ambiguous_ids.add(current_id)
+                if key in function_parameter_binding_keys and any(
+                    parameter_default_may_reach_load(current, key, event_id)
+                    for event_id, _ in parameter_default_sources.get(key, ())
+                ):
+                    forced_ambiguous_ids.add(current_id)
+            elif isinstance(current, ast.Call) and isinstance(
+                current.func,
+                ast.Attribute,
+            ):
+                current_dependencies = (current.func.value,)
+                call_method_names[current_id] = current.func.attr
+            elif isinstance(current, ast.Attribute):
+                current_dependencies = (current.value,)
+            elif isinstance(current, ast.Subscript):
+                current_dependencies = selected_subscript_expressions(current)
+                if len(current_dependencies) > 1:
+                    forced_ambiguous_ids.add(current_id)
+            elif isinstance(current, ast.NamedExpr):
+                current_dependencies = (current.value,)
+            elif isinstance(current, ast.IfExp):
+                current_dependencies = (current.body, current.orelse)
+                forced_ambiguous_ids.add(current_id)
+            elif isinstance(current, ast.BoolOp):
+                current_dependencies = tuple(current.values)
+                if len(current_dependencies) > 1:
+                    forced_ambiguous_ids.add(current_id)
+
+            for child in current_dependencies:
+                child_id = id(child)
+                dependents.setdefault(child_id, set()).add(current_id)
+                pending.append(child)
+            direct = evaluate_binding_expression(current)
+            if type(direct) in {str, bytes, int} or direct is int:
+                direct_values[current_id] = direct
+
+        state_ambiguity = {expression_id: False for expression_id in expressions}
+        state_values: dict[int, dict[int, Any]] = {
+            expression_id: {} for expression_id in expressions
+        }
+        events: list[tuple[int, bool, int | None]] = []
+        retained_value_ids: set[int] = set()
+        retained_value_bytes = 0
+
+        def mark_ambiguous(expression_id: int) -> None:
+            if state_ambiguity[expression_id]:
+                return
+            state_ambiguity[expression_id] = True
+            events.append((expression_id, True, None))
+
+        def add_value(expression_id: int, value: Any) -> None:
+            nonlocal retained_value_bytes
+            key = id(value)
+            if key in state_values[expression_id]:
+                return
+            charge_ambiguous_receiver_state()
+            if type(value) in {str, bytes} and id(value) not in retained_value_ids:
+                next_bytes = retained_value_bytes + evaluated_text_payload_size(value)
+                if next_bytes > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_BYTES:
+                    raise ValueError(
+                        "Python ambiguous receiver analysis exceeds the trusted "
+                        "byte limit"
                     )
-                    if nested_ambiguous:
-                        values.extend(nested_values)
-                return True, tuple(values)
-            if len(selected_sources) == 1 and selected_sources[0] is not None:
-                return ambiguous_static_receiver_values(
-                    selected_sources[0],
-                    next_observed,
-                )
-            return False, ()
-        if isinstance(expression, ast.Call) and isinstance(
-            expression.func, ast.Attribute
-        ):
-            is_ambiguous, receivers = ambiguous_static_receiver_values(
-                expression.func.value,
-                observed_keys,
+                retained_value_ids.add(id(value))
+                retained_value_bytes = next_bytes
+            state_values[expression_id][key] = value
+            events.append((expression_id, False, key))
+
+        for expression_id in forced_ambiguous_ids:
+            mark_ambiguous(expression_id)
+        for expression_id, value in direct_values.items():
+            add_value(expression_id, value)
+
+        event_index = 0
+        while event_index < len(events):
+            consume_ambiguous_receiver_operation()
+            source_id, ambiguity_event, value_key = events[event_index]
+            event_index += 1
+            for dependent_id in dependents.get(source_id, ()):
+                consume_ambiguous_receiver_operation()
+                if ambiguity_event:
+                    mark_ambiguous(dependent_id)
+                    continue
+                assert value_key is not None
+                receiver = state_values[source_id][value_key]
+                method_name = call_method_names.get(dependent_id)
+                if method_name is None:
+                    add_value(dependent_id, receiver)
+                    continue
+                current = expressions[dependent_id]
+                assert isinstance(current, ast.Call)
+                consume_ambiguous_receiver_operation()
+                if method_name == "to_bytes" and (
+                    type(receiver) is int or receiver is int
+                ):
+                    result = evaluate_static_int_to_bytes_call(
+                        current,
+                        evaluate_binding_expression,
+                        receiver_override=receiver,
+                    )
+                else:
+                    result = evaluate_bound_string_method_call(
+                        current,
+                        bound_string_method_value(method_name, receiver),
+                        evaluate_binding_expression,
+                    )
+                if type(result) in {str, bytes, int} or result is int:
+                    add_value(dependent_id, result)
+
+        expression_id = id(expression)
+        result = (
+            state_ambiguity[expression_id],
+            tuple(state_values[expression_id].values()),
+        )
+        charge_ambiguous_receiver_cache(result[1])
+        ambiguous_receiver_cache[expression_id] = result
+        return result
+
+    int_to_bytes_origin_cache: dict[
+        int,
+        tuple[tuple[ast.AST, ...], tuple[ast.AST, ...], bool],
+    ] = {}
+    int_to_bytes_origin_operations = 0
+    int_to_bytes_origin_operation_limit = min(
+        max(node_count * 8, 1),
+        BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS,
+    )
+
+    def consume_int_to_bytes_origin_operation() -> None:
+        nonlocal int_to_bytes_origin_operations
+        if int_to_bytes_origin_operations >= int_to_bytes_origin_operation_limit:
+            raise ValueError(
+                "Python int.to_bytes origin analysis exceeds the trusted "
+                "operation limit"
             )
-            if not is_ambiguous:
-                return False, ()
-            values: list[str | bytes] = []
-            for receiver in receivers:
-                method_value = bound_string_method_value(
-                    expression.func.attr,
+        int_to_bytes_origin_operations += 1
+
+    def int_to_bytes_receiver_sources(
+        expression: ast.AST,
+    ) -> tuple[tuple[ast.AST, ...], tuple[ast.AST, ...], bool]:
+        cached = int_to_bytes_origin_cache.get(id(expression))
+        if cached is not None:
+            return cached
+        pending = [expression]
+        observed_expression_ids: set[int] = set()
+        receivers: dict[int, ast.AST] = {}
+        unresolved: dict[int, ast.AST] = {}
+        origin_is_ambiguous = False
+        while pending:
+            consume_int_to_bytes_origin_operation()
+            current = pending.pop()
+            if id(current) in observed_expression_ids:
+                continue
+            observed_expression_ids.add(id(current))
+            if isinstance(current, ast.Attribute) and current.attr == "to_bytes":
+                receivers[id(current.value)] = current.value
+                pending.append(current.value)
+                continue
+            if (
+                isinstance(current, ast.Call)
+                and len(current.args) in {2, 3}
+                and not current.keywords
+                and has_static_builtin_origin(
+                    current.func,
+                    frozenset({"getattr"}),
+                )
+            ):
+                method_name = evaluate_binding_expression(current.args[1])
+                if method_name == "to_bytes":
+                    receivers[id(current.args[0])] = current.args[0]
+                elif method_name is not_pure:
+                    unresolved[id(current.args[0])] = current.args[0]
+                receiver = evaluate_binding_expression(current.args[0])
+                if len(current.args) == 3 and static_getattr_default_is_possible(
                     receiver,
+                    method_name,
+                ):
+                    origin_is_ambiguous = True
+                    pending.append(current.args[2])
+                pending.append(current.func)
+                continue
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                key = name_load_binding_key(current)
+                origin_is_ambiguous = (
+                    origin_is_ambiguous
+                    or key in ambiguous_binding_keys
+                    or key in function_parameter_binding_keys
                 )
-                result = evaluate_bound_string_method_call(
-                    expression,
-                    method_value,
-                    evaluate_binding_expression,
+                pending.extend(decoder_binding_sources(key, current))
+                continue
+            if isinstance(current, ast.Subscript):
+                selected = selected_subscript_expressions(current)
+                origin_is_ambiguous = origin_is_ambiguous or len(selected) > 1
+                pending.extend(selected)
+                continue
+            if isinstance(current, ast.NamedExpr):
+                pending.append(current.value)
+                continue
+            if isinstance(current, ast.IfExp):
+                origin_is_ambiguous = True
+                pending.extend((current.body, current.orelse))
+                continue
+            if isinstance(current, ast.BoolOp):
+                origin_is_ambiguous = origin_is_ambiguous or len(current.values) > 1
+                pending.extend(current.values)
+        result = (
+            tuple(receivers.values()),
+            tuple(unresolved.values()),
+            origin_is_ambiguous,
+        )
+        int_to_bytes_origin_cache[id(expression)] = result
+        return result
+
+    ambiguous_result_items = 0
+    ambiguous_result_bytes = 0
+
+    def ambiguous_result_contains_privacy_risk(result: Any) -> bool:
+        nonlocal ambiguous_result_bytes, ambiguous_result_items
+        pending = [result]
+        while pending:
+            ambiguous_result_items += 1
+            if ambiguous_result_items > BOOTSTRAP_V2_MAX_PYTHON_AST_NODES:
+                raise ValueError(
+                    "Python ambiguous text method result exceeds the trusted item limit"
                 )
-                if type(result) in {str, bytes}:
-                    values.append(result)
-            return True, tuple(values)
-        if isinstance(expression, (ast.Attribute, ast.Subscript)):
-            return ambiguous_static_receiver_values(
-                expression.value,
-                observed_keys,
+            current = pending.pop()
+            if type(current) in {str, bytes}:
+                payload_size = evaluated_text_payload_size(current)
+                if payload_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
+                    raise ValueError(
+                        "Python ambiguous text method result exceeds the trusted "
+                        "byte limit"
+                    )
+                ambiguous_result_bytes += payload_size
+                if ambiguous_result_bytes > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_BYTES:
+                    raise ValueError(
+                        "Python ambiguous text method results exceed the trusted byte limit"
+                    )
+                if isinstance(current, bytes):
+                    try:
+                        text = current.decode("utf-8")
+                    except UnicodeDecodeError:
+                        text = current.decode("latin-1")
+                else:
+                    text = current
+                if bootstrap_v2_privacy_risk_lines(text):
+                    return True
+            elif type(current) in {tuple, list}:
+                pending.extend(current)
+            elif type(current) is dict:
+                for key, child in current.items():
+                    pending.extend((key, child))
+        return False
+
+    def ambiguous_int_to_bytes_constructs_privacy_risk(node: ast.Call) -> bool:
+        (
+            receiver_sources,
+            unresolved_sources,
+            origin_is_ambiguous,
+        ) = int_to_bytes_receiver_sources(node.func)
+        for source in unresolved_sources:
+            value = evaluate_binding_expression(source)
+            is_ambiguous, receivers = ambiguous_static_receiver_values(source)
+            if (
+                value is int
+                or type(value) is int
+                or has_static_builtin_origin(source, frozenset({"int"}))
+                or (
+                    is_ambiguous
+                    and any(
+                        receiver is int or type(receiver) is int
+                        for receiver in receivers
+                    )
+                )
+            ):
+                raise ValueError(
+                    "Python deterministic int method uses an unresolved int method "
+                    f"at line {getattr(node, 'lineno', 0)}"
+                )
+        candidates: dict[tuple[type[Any], Any], Any] = {}
+        receiver_requires_scan = origin_is_ambiguous
+        for source in receiver_sources:
+            value = evaluate_binding_expression(source)
+            if value is int or type(value) is int:
+                candidates[(type(value), value)] = value
+            if value is not int and has_static_builtin_origin(
+                source, frozenset({"int"})
+            ):
+                candidates[(type, int)] = int
+                receiver_requires_scan = True
+            is_ambiguous, receivers = ambiguous_static_receiver_values(source)
+            receiver_requires_scan = receiver_requires_scan or is_ambiguous
+            for receiver in receivers:
+                if receiver is int or type(receiver) is int:
+                    candidates[(type(receiver), receiver)] = receiver
+        if not receiver_requires_scan:
+            return False
+        for receiver in candidates.values():
+            result = evaluate_static_int_to_bytes_call(
+                node,
+                evaluate_binding_expression,
+                receiver_override=receiver,
             )
-        return False, ()
+            if result is not not_pure and ambiguous_result_contains_privacy_risk(
+                result
+            ):
+                return True
+        return False
 
     def ambiguous_method_constructs_privacy_risk(node: ast.Call) -> bool:
         if not isinstance(node.func, ast.Attribute):
@@ -8419,49 +10392,6 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         is_ambiguous, receivers = ambiguous_static_receiver_values(node.func.value)
         if not is_ambiguous:
             return False
-        observed_items = 0
-        observed_bytes = 0
-
-        def result_contains_privacy_risk(result: Any) -> bool:
-            nonlocal observed_bytes, observed_items
-            pending = [result]
-            while pending:
-                observed_items += 1
-                if observed_items > BOOTSTRAP_V2_MAX_PYTHON_AST_NODES:
-                    raise ValueError(
-                        "Python ambiguous text method result exceeds the trusted "
-                        "item limit"
-                    )
-                current = pending.pop()
-                if type(current) in {str, bytes}:
-                    payload_size = evaluated_text_payload_size(current)
-                    if payload_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
-                        raise ValueError(
-                            "Python ambiguous text method result exceeds the trusted "
-                            "byte limit"
-                        )
-                    observed_bytes += payload_size
-                    if observed_bytes > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_BYTES:
-                        raise ValueError(
-                            "Python ambiguous text method results exceed the trusted "
-                            "byte limit"
-                        )
-                    if isinstance(current, bytes):
-                        try:
-                            text = current.decode("utf-8")
-                        except UnicodeDecodeError:
-                            text = current.decode("latin-1")
-                    else:
-                        text = current
-                    if bootstrap_v2_privacy_risk_lines(text):
-                        return True
-                elif type(current) in {tuple, list}:
-                    pending.extend(current)
-                elif type(current) is dict:
-                    for key, child in current.items():
-                        pending.extend((key, child))
-            return False
-
         for receiver in receivers:
             method_value = bound_string_method_value(node.func.attr, receiver)
             result = evaluate_bound_string_method_call(
@@ -8469,7 +10399,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 method_value,
                 evaluate_binding_expression,
             )
-            if result is not not_pure and result_contains_privacy_risk(result):
+            if result is not not_pure and ambiguous_result_contains_privacy_risk(
+                result
+            ):
                 return True
         return False
 
@@ -8502,9 +10434,10 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 node.op, (ast.Add, ast.Mult, ast.Mod)
             ) and augassign_may_output_text(node)
         if isinstance(node, ast.Call):
+            method_kinds = bound_string_method_kinds(node.func)
             is_supported_string_constructor = (
                 is_supported_string_constructor
-                or bool(bound_string_method_kinds(node.func))
+                or bool(method_kinds - {unresolved_int_method_kind})
                 or has_static_callable_origin(
                     node.func,
                     static_text_operator_qualified_names,
@@ -8526,6 +10459,23 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             is_supported_string_constructor = (
                 is_supported_string_constructor or type(int_to_bytes_result) is bytes
             )
+            reflected_method_call = (
+                isinstance(node.func, ast.Call)
+                and len(node.func.args) in {2, 3}
+                and not node.func.keywords
+                and has_static_builtin_origin(
+                    node.func.func,
+                    frozenset({"getattr"}),
+                )
+            )
+            if (
+                bool(method_kinds & {"to_bytes", unresolved_int_method_kind})
+                or reflected_method_call
+            ) and ambiguous_int_to_bytes_constructs_privacy_risk(node):
+                raise ValueError(
+                    "Python string construction depends on an ambiguous name binding "
+                    f"at line {getattr(node, 'lineno', 0)}"
+                )
         ambiguity_sensitive_constructor = is_supported_string_constructor
         if (
             isinstance(node, ast.Call)
@@ -8858,7 +10808,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 f"at line {getattr(node, 'lineno', 0)}"
             )
 
-        if isinstance(node, ast.Call) and bound_string_method_kinds(node.func):
+        if isinstance(node, ast.Call) and (
+            bound_string_method_kinds(node.func) & bound_string_method_names
+        ):
             if (
                 isinstance(node.func, ast.Attribute)
                 and node.func.attr in bound_string_method_names
@@ -12328,6 +14280,7 @@ class HistoryV2GitHubSquashCommit(NamedTuple):
     committer_identity_sha256: str
     author_timestamp: int
     committer_timestamp: int
+    pull_request_number: int | None
 
 
 class HistoryV2PhysicalCommit(NamedTuple):
@@ -12903,6 +14856,15 @@ def parse_history_v2_github_squash_commit(
         squash=True,
         github_provider=True,
     )
+    message_subject = message.decode("utf-8").split("\n", 1)[0]
+    provider_suffix = HISTORY_V2_GITHUB_SQUASH_SUFFIX_RE.fullmatch(message_subject)
+    pull_request_number = (
+        int(provider_suffix.group("pull_request_number"))
+        if provider_suffix is not None
+        else None
+    )
+    if provider_suffix is not None and provider_suffix.group("title").endswith(" "):
+        raise ValueError("history-v2 GitHub squash commit subject is not canonical")
     decode_history_v2_commit_signature_armor(signature_armor)
     signed_payload = b"\n".join(unsigned_header_lines) + b"\n\n" + message
     return HistoryV2GitHubSquashCommit(
@@ -12914,6 +14876,7 @@ def parse_history_v2_github_squash_commit(
         committer_identity_sha256=hashlib.sha256(committer_value).hexdigest(),
         author_timestamp=author_timestamp,
         committer_timestamp=committer_timestamp,
+        pull_request_number=pull_request_number,
     )
 
 
@@ -13505,6 +15468,13 @@ def validate_history_v2_github_squash_receipt(
     ):
         raise ValueError(
             "history-v2 GitHub squash verification receipt provenance is invalid"
+        )
+    if (
+        commit.pull_request_number is not None
+        and commit.pull_request_number != pull_request_number
+    ):
+        raise ValueError(
+            "history-v2 GitHub squash verification receipt differs from the exact commit"
         )
     expected_repository_identity = hashlib.sha256(
         f"{repository_id}:{repository}".encode("utf-8")

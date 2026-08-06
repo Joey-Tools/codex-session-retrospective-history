@@ -516,7 +516,9 @@ def read_stable_policy_file(path: Path, label: str, *, max_bytes: int) -> bytes:
     except FileNotFoundError as exc:
         raise GateError(f"{label} is missing after read") from exc
     except PermissionError as exc:
-        raise GateError(f"{label} became unreadable during identity revalidation") from exc
+        raise GateError(
+            f"{label} became unreadable during identity revalidation"
+        ) from exc
     except OSError as exc:
         raise GateError(f"{label} identity could not be revalidated") from exc
     if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (
@@ -715,9 +717,7 @@ def validate_closed_git_object_store(git_dir: Path) -> None:
         except FileNotFoundError:
             continue
         except PermissionError as exc:
-            raise GateError(
-                "trusted Git alternate policy is unreadable"
-            ) from exc
+            raise GateError("trusted Git alternate policy is unreadable") from exc
         except OSError as exc:
             raise GateError(
                 "trusted Git alternate policy could not be inspected"
@@ -1138,6 +1138,13 @@ def verify_default_github_commit(
         head_sha=head_sha,
         token=token,
     )
+    if (
+        parsed.pull_request_number is not None
+        and parsed.pull_request_number != pull_evidence["pull_request_number"]
+    ):
+        raise GateError(
+            "GitHub squash subject pull request differs from the associated pull request"
+        )
     return {
         "schema_version": 2,
         "kind": GITHUB_SQUASH_RECEIPT_KIND,
@@ -1395,9 +1402,7 @@ def verify_default_merged_pull_request(
         "repository_identity_sha256": hashlib.sha256(
             f"{repository_id}:{repository}".encode("utf-8")
         ).hexdigest(),
-        "pull_request_provenance_sha256": hashlib.sha256(
-            provenance_bytes
-        ).hexdigest(),
+        "pull_request_provenance_sha256": hashlib.sha256(provenance_bytes).hexdigest(),
         "pull_request_merged_at": merged_at,
     }
 
@@ -1571,9 +1576,7 @@ def read_trusted_predecessor_audit_evidence(
             "predecessor audit check completion",
         )
         if check_started_time > check_completed_time:
-            raise GateError(
-                "predecessor audit evidence timestamps are inconsistent"
-            )
+            raise GateError("predecessor audit evidence timestamps are inconsistent")
         workflow_run_id = int(details_match.group("run_id"))
         job_id = int(details_match.group("job_id"))
         check_node_ids.add(check_run_node_id)
@@ -1689,9 +1692,7 @@ def read_trusted_predecessor_audit_evidence(
         )
         check_url = job.get("check_run_url")
         check_url_match = (
-            check_url_re.fullmatch(check_url)
-            if isinstance(check_url, str)
-            else None
+            check_url_re.fullmatch(check_url) if isinstance(check_url, str) else None
         )
         if check_url_match is None:
             raise GateError("predecessor audit job evidence is lookalike")
@@ -1709,8 +1710,7 @@ def read_trusted_predecessor_audit_evidence(
             or job.get("workflow_name") != PERMANENT_WORKFLOW_NAME
             or job.get("html_url") != check["details_url"]
             or job_id != check["job_id"]
-            or job.get("conclusion")
-            != check["check_run"].get("conclusion")
+            or job.get("conclusion") != check["check_run"].get("conclusion")
             or job_attempt in attempts
             or check_run_id in matched_check_ids
         ):
@@ -1724,9 +1724,7 @@ def read_trusted_predecessor_audit_evidence(
             "predecessor audit job completion",
         )
         if job_started_time > job_completed_time:
-            raise GateError(
-                "predecessor audit evidence timestamps are inconsistent"
-            )
+            raise GateError("predecessor audit evidence timestamps are inconsistent")
         matched_check_ids.add(check_run_id)
         attempts[job_attempt] = {
             "job": job,
@@ -1751,13 +1749,10 @@ def read_trusted_predecessor_audit_evidence(
         previous = attempts[earlier]
         current = attempts[later]
         if (
-            previous["check"]["completed_time"]
-            > current["check"]["started_time"]
+            previous["check"]["completed_time"] > current["check"]["started_time"]
             or previous["job_completed_time"] > current["job_started_time"]
         ):
-            raise GateError(
-                "predecessor audit evidence timestamps are inconsistent"
-            )
+            raise GateError("predecessor audit evidence timestamps are inconsistent")
     selected = attempts[workflow_run_attempt]
     selected_check = selected["check"]
     if (
@@ -1787,9 +1782,7 @@ def read_trusted_predecessor_audit_evidence(
         <= workflow_created_time
         <= workflow_started_time
         <= workflow_updated_time
-        and merged_time
-        <= check_started_time
-        <= check_completed_time
+        and merged_time <= check_started_time <= check_completed_time
         and merged_time <= job_started_time <= job_completed_time
     ):
         raise GateError("predecessor audit evidence timestamps are inconsistent")
@@ -1905,9 +1898,7 @@ def validate_repository_merge_configuration(
         or value.get("squash_merge_commit_title") != "PR_TITLE"
         or value.get("squash_merge_commit_message") != "BLANK"
     ):
-        raise GateError(
-            "repository is not PR-only, squash-only, and queue-compatible"
-        )
+        raise GateError("repository is not PR-only, squash-only, and queue-compatible")
     return value
 
 
@@ -2126,8 +2117,7 @@ def validate_merge_group_pull_request(
         head_repo.get("full_name") != repository
         or not isinstance(head_ref, str)
         or not head_ref
-        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}", head_ref)
-        is None
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}", head_ref) is None
         or ".." in head_ref
         or "@{" in head_ref
         or head_ref.endswith(".lock")
@@ -2377,14 +2367,14 @@ def _safe_git_path(raw_path: bytes) -> str:
         path.as_posix() != value
         or len(path.parts) > MAX_TREE_PATH_DEPTH
         or any(
-            part in {"", ".", ".."}
-            or part.casefold() == ".git"
-            or part != part.strip()
+            part in {"", ".", ".."} or part.casefold() == ".git" or part != part.strip()
             for part in path.parts
         )
     ):
         raise GateError("candidate tree contains a non-canonical path")
-    if len(raw_path) > 1024 or any(len(part.encode("utf-8")) > 255 for part in path.parts):
+    if len(raw_path) > 1024 or any(
+        len(part.encode("utf-8")) > 255 for part in path.parts
+    ):
         raise GateError("candidate tree path exceeds the trusted length limit")
     return value
 
@@ -2395,11 +2385,7 @@ def _sensitive_candidate_path(path: str) -> bool:
     for component in PurePosixPath(path).parts:
         folded = unicodedata.normalize("NFKC", component).casefold()
         compact = re.sub(r"[^a-z0-9]+", "", folded)
-        sensitive_tokens = {
-            token
-            for token in re.split(r"[^a-z0-9]+", folded)
-            if token
-        }
+        sensitive_tokens = {token for token in re.split(r"[^a-z0-9]+", folded) if token}
         if (
             folded in _FORBIDDEN_CANDIDATE_COMPONENTS
             or folded in _FORBIDDEN_CANDIDATE_FILENAMES
@@ -2680,8 +2666,7 @@ def validate_candidate_commit_object(
             raise GateError("candidate commit coordinates are incomplete")
         tree_oid = canonical_oid(tree_values[0], "candidate commit tree")
         parents = tuple(
-            canonical_oid(parent, "candidate commit parent")
-            for parent in parent_values
+            canonical_oid(parent, "candidate commit parent") for parent in parent_values
         )
         if len(parents) > 2 or len(set(parents)) != len(parents):
             raise GateError("candidate commit parent set is invalid")
@@ -2741,9 +2726,7 @@ def reconstruct_candidate_tree_oid(
         entries,
         expected_oid_length=len(expected_tree_sha),
         require_blob_sizes=all(
-            entry.size is not None
-            for entry in entries
-            if entry.object_type == "blob"
+            entry.size is not None for entry in entries if entry.object_type == "blob"
         ),
     )
     index_records = b"".join(
@@ -2810,7 +2793,9 @@ def reconstruct_candidate_tree_oid(
                 "reconstructed candidate tree",
             )
         except (GateError, UnicodeDecodeError) as exc:
-            raise GateError("candidate tree identity could not be reconstructed") from exc
+            raise GateError(
+                "candidate tree identity could not be reconstructed"
+            ) from exc
     if reconstructed_tree != expected_tree_sha:
         raise GateError("reconstructed candidate tree differs from the original")
 
@@ -3001,9 +2986,7 @@ def candidate_local_trees(
             tree_entry_count > MAX_RANGE_TREE_ENTRIES
             or tree_path_bytes > MAX_RANGE_TREE_PATH_BYTES
         ):
-            raise GateError(
-                "candidate range tree inventory exceeds the trusted limit"
-            )
+            raise GateError("candidate range tree inventory exceeds the trusted limit")
         observed[commit.tree_oid] = entries
         trees.append(CandidateTree(commit.tree_oid, entries))
     return tuple(trees)
@@ -3019,10 +3002,7 @@ def _candidate_tree_payloads(
     if tree_payload_loader is not None:
         if tree_payload is not None:
             raise GateError("candidate tree payload sources are ambiguous")
-        return {
-            tree_oid: tree_payload_loader(tree_oid)
-            for tree_oid in expected
-        }
+        return {tree_oid: tree_payload_loader(tree_oid) for tree_oid in expected}
     if tree_payload is None:
         raise GateError("candidate tree API inventory is unavailable")
     if len(expected) == 1 and isinstance(tree_payload, dict) and "tree" in tree_payload:
@@ -3096,9 +3076,7 @@ def validate_oid_only_candidate_store(
     if git_text(git_dir, "remote", max_bytes=1024).strip():
         raise GateError("candidate object store retained a remote fallback")
     base_blob_oids = {
-        entry.object_id
-        for entry in base_entries
-        if entry.object_type == "blob"
+        entry.object_id for entry in base_entries if entry.object_type == "blob"
     }
     candidate_blob_oids = {
         entry.object_id
@@ -3112,15 +3090,12 @@ def validate_oid_only_candidate_store(
         (*sorted(base_blob_oids), *sorted(candidate_only_oids)),
     )
     if any(
-        metadata[object_id] is None
-        or metadata[object_id][0] != "blob"
+        metadata[object_id] is None or metadata[object_id][0] != "blob"
         for object_id in base_blob_oids
     ):
         raise GateError("authenticated base blob closure is incomplete")
     if any(metadata[object_id] is not None for object_id in candidate_only_oids):
-        raise GateError(
-            "candidate blob was present before allowlisted acquisition"
-        )
+        raise GateError("candidate blob was present before allowlisted acquisition")
 
 
 def preflight_git_candidate(
@@ -3254,9 +3229,7 @@ def _parse_preflight_entries(
                 raise GateError("candidate preflight manifest blob size is invalid")
         elif size is not None:
             raise GateError("candidate preflight manifest tree size is invalid")
-        entries.append(
-            TreeEntry(path_value, mode, object_type, object_id, size)
-        )
+        entries.append(TreeEntry(path_value, mode, object_type, object_id, size))
     return validate_complete_tree_entries(
         tuple(entries),
         expected_oid_length=expected_oid_length,
@@ -3320,8 +3293,7 @@ def load_preflight(path: Path) -> GitPreflight:
         if not isinstance(raw_parents, list):
             raise GateError("candidate preflight commit parents are invalid")
         parents = tuple(
-            canonical_oid(parent, "manifest commit parent")
-            for parent in raw_parents
+            canonical_oid(parent, "manifest commit parent") for parent in raw_parents
         )
         if (
             any(
@@ -3390,19 +3362,15 @@ def load_preflight(path: Path) -> GitPreflight:
     )
     blobs = allowed_blob_entries(manifest)
     tree_path_bytes = sum(
-        len(entry.path.encode("utf-8"))
-        for tree in trees
-        for entry in tree.entries
+        len(entry.path.encode("utf-8")) for tree in trees for entry in tree.entries
     )
     if (
         manifest.commit_count != len(commits)
-        or manifest.tree_entry_count
-        != sum(len(tree.entries) for tree in trees)
+        or manifest.tree_entry_count != sum(len(tree.entries) for tree in trees)
         or manifest.tree_entry_count > MAX_RANGE_TREE_ENTRIES
         or tree_path_bytes > MAX_RANGE_TREE_PATH_BYTES
         or manifest.blob_entry_count != len(blobs)
-        or manifest.total_blob_bytes
-        != sum(entry.size or 0 for entry in blobs)
+        or manifest.total_blob_bytes != sum(entry.size or 0 for entry in blobs)
         or manifest.blob_entry_count > MAX_BLOB_ENTRIES
         or manifest.total_blob_bytes > MAX_TREE_BYTES
     ):
@@ -3622,8 +3590,7 @@ def _parse_raw_diff(
             or len(old_oid) != expected_oid_length
             or len(new_oid) != expected_oid_length
             or any(
-                re.fullmatch(r"[0-9a-f]+", oid) is None
-                for oid in (old_oid, new_oid)
+                re.fullmatch(r"[0-9a-f]+", oid) is None for oid in (old_oid, new_oid)
             )
         ):
             raise GateError("merge-group tree delta is outside policy")
@@ -3704,9 +3671,7 @@ def _trust_generation_entries(
         if not separator or len(values) != 3:
             raise GateError("trust-generation inventory is malformed")
         try:
-            mode, object_type, object_id = (
-                value.decode("ascii") for value in values
-            )
+            mode, object_type, object_id = (value.decode("ascii") for value in values)
         except UnicodeDecodeError as exc:
             raise GateError("trust-generation inventory is not ASCII") from exc
         path = _safe_git_path(raw_path)
@@ -3946,9 +3911,7 @@ def _validate_merge_group_graph(
         strict_bootstrap_metadata=False,
     )
     if queue_commit.parents != (snapshot.base_sha, snapshot.candidate_sha):
-        raise GateError(
-            "merge-group Q does not have the exact B1/H parent-edge shape"
-        )
+        raise GateError("merge-group Q does not have the exact B1/H parent-edge shape")
     candidate_commit = validate_candidate_commit_object(
         git_dir,
         snapshot.candidate_sha,
@@ -3989,8 +3952,7 @@ def _validate_merge_group_graph(
         role = plan["role"]
         validator = trusted_validator_module(contract="permanent")
         publication_paths = tuple(
-            validator.history_v2_mutable_artifact(Path(path))
-            for path in changed_paths
+            validator.history_v2_mutable_artifact(Path(path)) for path in changed_paths
         )
         if (role == "publication" and not all(publication_paths)) or (
             role == "admin" and any(publication_paths)
@@ -4018,9 +3980,7 @@ def _validate_merge_group_graph(
             compact_json_bytes(trust_at_candidate_base)
         ).hexdigest()
         if plan["trust_generation"] != observed_trust_generation:
-            raise GateError(
-                "B1 immutable plan does not bind the trust generation"
-            )
+            raise GateError("B1 immutable plan does not bind the trust generation")
         subject = plan["squash_subject"]
         trust_generation = plan["trust_generation"]
         if subject != snapshot.pull_request_title:
@@ -4039,9 +3999,7 @@ def _validate_merge_group_graph(
                 squash_subject=subject,
             )
 
-    delta_sha256 = hashlib.sha256(
-        compact_json_bytes(candidate_delta)
-    ).hexdigest()
+    delta_sha256 = hashlib.sha256(compact_json_bytes(candidate_delta)).hexdigest()
     return MergeGroupProjection(
         policy=policy,
         role=role,
@@ -4134,9 +4092,7 @@ def validate_merge_group_transaction(
                 forced=False,
             )
         except Exception as exc:
-            raise GateError(
-                "B1 prospective-squash validator failed closed"
-            ) from exc
+            raise GateError("B1 prospective-squash validator failed closed") from exc
         if prospective_issues:
             raise GateError(
                 "B1 validator rejected Q as an append-only publication transaction"
@@ -4170,7 +4126,8 @@ def decode_github_blob_payload(
         or not isinstance(content, str)
         or any(
             character != "\n"
-            and character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+            and character
+            not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
             for character in content
         )
     ):
@@ -4241,7 +4198,9 @@ def materialize_preflight_blobs(
         try:
             object_id = observed.decode("ascii").strip()
         except UnicodeDecodeError as exc:
-            raise GateError("candidate blob materialization returned invalid metadata") from exc
+            raise GateError(
+                "candidate blob materialization returned invalid metadata"
+            ) from exc
         if object_id != entry.object_id:
             raise GateError("candidate blob materialization changed its object ID")
 
@@ -4642,9 +4601,7 @@ def prepare_default_execution_tree(
             (entry for entry in entries if entry.object_type == "tree"),
             key=lambda entry: (len(PurePosixPath(entry.path).parts), entry.path),
         ):
-            destination = execution_root / Path(
-                *PurePosixPath(entry.path).parts
-            )
+            destination = execution_root / Path(*PurePosixPath(entry.path).parts)
             destination.mkdir(mode=0o700)
             destination.chmod(0o700)
         total_bytes = 0
@@ -4769,7 +4726,9 @@ def _live_snapshot_from_args(args: argparse.Namespace) -> PullRequestSnapshot:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Trusted retrospective history CI gate.")
+    parser = argparse.ArgumentParser(
+        description="Trusted retrospective history CI gate."
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     snapshot_parser = subparsers.add_parser("snapshot")
@@ -4808,9 +4767,7 @@ def main(argv: list[str] | None = None) -> int:
     materialize_parser.add_argument("--manifest", required=True, type=Path)
     materialize_parser.add_argument("--repository", required=True)
 
-    prepare_default_parser = subparsers.add_parser(
-        "prepare-default-execution"
-    )
+    prepare_default_parser = subparsers.add_parser("prepare-default-execution")
     prepare_default_parser.add_argument(
         "--authority-root",
         required=True,
