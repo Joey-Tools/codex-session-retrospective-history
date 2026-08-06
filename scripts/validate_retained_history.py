@@ -327,7 +327,7 @@ BOOTSTRAP_V2_TRUSTED_OPENPGP_RISK_VALUES_SHA256 = {
 }
 BOOTSTRAP_V2_JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 BOOTSTRAP_V2_MAX_FILE_BYTES = 2 * 1024 * 1024
-BOOTSTRAP_V2_MAX_PYTHON_SOURCE_BYTES = 560 * 1024
+BOOTSTRAP_V2_MAX_PYTHON_SOURCE_BYTES = 576 * 1024
 BOOTSTRAP_V2_MAX_PYTHON_AST_NODES = 100_000
 BOOTSTRAP_V2_MAX_PYTHON_AST_DEPTH = 100
 BOOTSTRAP_V2_MAX_PYTHON_LITERAL_CONSTANTS = 20_000
@@ -7397,10 +7397,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             )
         return False
 
-    def has_static_callable_origin(
+    def has_static_builtin_origin(
         node: ast.AST,
-        qualified_names: frozenset[str],
-        builtin_names: frozenset[str] = frozenset(),
+        builtin_names: frozenset[str],
     ) -> bool:
         pending = [node]
         observed_expression_ids: set[int] = set()
@@ -7413,6 +7412,226 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             observed_expression_ids.add(id(current))
             if unshadowed_builtin_name(current, builtin_names):
                 return True
+            if not isinstance(current, ast.Name) or not isinstance(
+                current.ctx, ast.Load
+            ):
+                continue
+            key = name_load_binding_key(current)
+            if key in observed_binding_keys:
+                continue
+            observed_binding_keys.add(key)
+            pending.extend(decoder_binding_sources(key, current))
+        return False
+
+    def reflective_callable_modules(
+        selector: ast.AST,
+        qualified_names: frozenset[str],
+    ) -> frozenset[str]:
+        all_modules = frozenset(
+            qualified_name.rsplit(".", 1)[0] for qualified_name in qualified_names
+        )
+        selected_name = evaluate_binding_expression(selector)
+        if selected_name is not_pure:
+            return all_modules
+        if type(selected_name) is not str:
+            return frozenset()
+        return frozenset(
+            qualified_name.rsplit(".", 1)[0]
+            for qualified_name in qualified_names
+            if qualified_name.rsplit(".", 1)[1] == selected_name
+        )
+
+    def has_static_module_namespace_origin(
+        node: ast.AST,
+        module_names: frozenset[str],
+    ) -> bool:
+        namespaces = frozenset(f"{module_name}.__dict__" for module_name in module_names)
+        if namespaces and has_static_module_origin(node, namespaces):
+            return True
+        if (
+            isinstance(node, ast.Call)
+            and len(node.args) in {2, 3}
+            and not node.keywords
+            and has_static_builtin_origin(node.func, frozenset({"getattr"}))
+        ):
+            selected_name = evaluate_binding_expression(node.args[1])
+            if (
+                selected_name is not_pure or selected_name == "__dict__"
+            ) and has_static_module_origin(node.args[0], module_names):
+                return True
+        return bool(
+            isinstance(node, ast.Call)
+            and len(node.args) == 1
+            and not node.keywords
+            and has_static_builtin_origin(node.func, frozenset({"vars"}))
+            and has_static_module_origin(node.args[0], module_names)
+        )
+
+    def has_static_module_namespace_accessor_origin(
+        node: ast.AST,
+        module_names: frozenset[str],
+    ) -> bool:
+        pending = [node]
+        observed_expression_ids: set[int] = set()
+        observed_binding_keys: set[tuple[int, str]] = set()
+        while pending:
+            charge_origin()
+            current = pending.pop()
+            if id(current) in observed_expression_ids:
+                continue
+            observed_expression_ids.add(id(current))
+            if (
+                isinstance(current, ast.Attribute)
+                and current.attr in {"__getitem__", "get"}
+                and has_static_module_namespace_origin(
+                    current.value, module_names
+                )
+            ):
+                return True
+            if (
+                isinstance(current, ast.Call)
+                and len(current.args) in {2, 3}
+                and not current.keywords
+                and has_static_builtin_origin(
+                    current.func, frozenset({"getattr"})
+                )
+            ):
+                accessor_name = evaluate_binding_expression(current.args[1])
+                if (
+                    accessor_name is not_pure
+                    or accessor_name in {"__getitem__", "get"}
+                ) and has_static_module_namespace_origin(
+                    current.args[0], module_names
+                ):
+                    return True
+            if not isinstance(current, ast.Name) or not isinstance(
+                current.ctx, ast.Load
+            ):
+                continue
+            key = name_load_binding_key(current)
+            if key in observed_binding_keys:
+                continue
+            observed_binding_keys.add(key)
+            pending.extend(decoder_binding_sources(key, current))
+        return False
+
+    def has_static_callable_origin(
+        node: ast.AST,
+        qualified_names: frozenset[str],
+        builtin_names: frozenset[str] = frozenset(),
+    ) -> bool:
+        all_qualified_modules = frozenset(
+            qualified_name.rsplit(".", 1)[0] for qualified_name in qualified_names
+        )
+        pending = [node]
+        observed_expression_ids: set[int] = set()
+        observed_binding_keys: set[tuple[int, str]] = set()
+        while pending:
+            charge_origin()
+            current = pending.pop()
+            if id(current) in observed_expression_ids:
+                continue
+            observed_expression_ids.add(id(current))
+            if unshadowed_builtin_name(current, builtin_names):
+                return True
+            if isinstance(current, ast.Call):
+                if (
+                    current.args
+                    and all_qualified_modules
+                    and has_static_module_namespace_accessor_origin(
+                        current.func, all_qualified_modules
+                    )
+                ):
+                    module_names = reflective_callable_modules(
+                        current.args[0], qualified_names
+                    )
+                    if module_names and has_static_module_namespace_accessor_origin(
+                        current.func, module_names
+                    ):
+                        return True
+                if (
+                    len(current.args) in {2, 3}
+                    and not current.keywords
+                    and has_static_builtin_origin(
+                        current.func, frozenset({"getattr"})
+                    )
+                ):
+                    module_names = reflective_callable_modules(
+                        current.args[1], qualified_names
+                    )
+                    if module_names and has_static_module_origin(
+                        current.args[0], module_names
+                    ):
+                        return True
+                if (
+                    isinstance(current.func, ast.Attribute)
+                    and current.func.attr == "get"
+                    and current.args
+                    and all_qualified_modules
+                    and has_static_module_namespace_origin(
+                        current.func.value, all_qualified_modules
+                    )
+                ):
+                    module_names = reflective_callable_modules(
+                        current.args[0], qualified_names
+                    )
+                    if module_names and has_static_module_namespace_origin(
+                        current.func.value, module_names
+                    ):
+                        return True
+                if (
+                    len(current.args) >= 2
+                    and all_qualified_modules
+                    and has_static_module_namespace_origin(
+                        current.args[0], all_qualified_modules
+                    )
+                ):
+                    module_names = reflective_callable_modules(
+                        current.args[1], qualified_names
+                    )
+                    if module_names and has_static_module_namespace_origin(
+                        current.args[0], module_names
+                    ):
+                        return True
+                pending.extend(current.args)
+                pending.extend(keyword.value for keyword in current.keywords)
+                continue
+            if isinstance(current, ast.Subscript):
+                if all_qualified_modules and has_static_module_namespace_origin(
+                    current.value, all_qualified_modules
+                ):
+                    module_names = reflective_callable_modules(
+                        current.slice, qualified_names
+                    )
+                    if module_names and has_static_module_namespace_origin(
+                        current.value, module_names
+                    ):
+                        return True
+                if isinstance(current.value, (ast.Tuple, ast.List)):
+                    selector = normalized_literal_selector(current.slice)
+                    if type(selector) is int:
+                        try:
+                            pending.append(current.value.elts[selector])
+                        except IndexError:
+                            pass
+                        continue
+                if isinstance(current.value, ast.Dict):
+                    selector = evaluate_binding_expression(current.slice)
+                    if selector is not not_pure:
+                        matched = False
+                        for key_node, value_node in zip(
+                            current.value.keys, current.value.values, strict=True
+                        ):
+                            if (
+                                key_node is not None
+                                and evaluate_binding_expression(key_node) == selector
+                            ):
+                                pending.append(value_node)
+                                matched = True
+                        if matched:
+                            continue
+                pending.append(current.value)
+                continue
             if isinstance(current, ast.Attribute):
                 module_names = frozenset(
                     qualified_name.rsplit(".", 1)[0]
@@ -7424,6 +7643,21 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     module_names,
                 ):
                     return True
+                continue
+            if isinstance(current, (ast.Tuple, ast.List, ast.Set)):
+                pending.extend(current.elts)
+                continue
+            if isinstance(current, ast.Dict):
+                pending.extend(current.values)
+                continue
+            if isinstance(current, ast.IfExp):
+                pending.extend((current.body, current.orelse))
+                continue
+            if isinstance(current, ast.BoolOp):
+                pending.extend(current.values)
+                continue
+            if isinstance(current, (ast.Lambda, ast.NamedExpr)):
+                pending.append(current.body if isinstance(current, ast.Lambda) else current.value)
                 continue
             if not isinstance(current, ast.Name) or not isinstance(
                 current.ctx, ast.Load

@@ -10467,6 +10467,73 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "unresolved binary decoder uses static text input",
         )
 
+    def test_bootstrap_v2_python_reflective_static_decoders_fail_closed(
+        self,
+    ) -> None:
+        expected = risky_github_classic_token()
+        encoded = base64.b64encode(expected.encode("ascii")).decode("ascii")
+        rejected = (
+            "import base64\n"
+            f'value = getattr(base64, "b64decode")("{encoded}")\n',
+            "import base64\n"
+            "lookup = getattr\n"
+            f'value = lookup(base64, "b64decode")("{encoded}")\n',
+            "import base64\n"
+            f'value = base64.__dict__["b64decode"]("{encoded}")\n',
+            "import base64\n"
+            "namespace = base64.__dict__\n"
+            f'value = namespace["b64decode"]("{encoded}")\n',
+            "import base64\n"
+            f'value = vars(base64).get("b64decode")("{encoded}")\n',
+            "import base64\n"
+            "lookup = base64.__dict__.get\n"
+            f'value = lookup("b64decode")("{encoded}")\n',
+            "import base64\n"
+            f'value = getattr(base64, "__dict__")["b64decode"]("{encoded}")\n',
+            "import base64\n"
+            "lookup = getattr(base64.__dict__, "
+            '"get")\n'
+            f'value = lookup("b64decode")("{encoded}")\n',
+            "import base64\n"
+            "import operator\n"
+            f'value = operator.getitem(base64.__dict__, "b64decode")("{encoded}")\n',
+            "import base64\n"
+            f'value = (base64.b64decode, custom_decode)[0]("{encoded}")\n',
+            "import base64\n"
+            "select = lambda value: value\n"
+            f'value = select(base64.b64decode)("{encoded}")\n',
+            "import base64\n"
+            "method = get_method()\n"
+            f'value = getattr(base64, method)("{encoded}")\n',
+            "import base64\n"
+            "first = second\n"
+            "second = first\n"
+            f'value = getattr(base64, first)("{encoded}")\n',
+        )
+        for source in rejected:
+            with self.subTest(source=source.splitlines()[-1][:56]):
+                self.assert_python_privacy_layers_reject(
+                    source,
+                    "unresolved binary decoder uses static text input",
+                )
+
+        accepted = (
+            'import base64\nvalue = getattr(base64, "b64encode")(b"public")\n',
+            "import base64\n"
+            "getattr = custom_lookup\n"
+            f'value = getattr(base64, "b64decode")("{encoded}")\n',
+            "import base64\n"
+            "base64 = custom_codec\n"
+            f'value = getattr(base64, "b64decode")("{encoded}")\n',
+            'import base64\nvalue = base64.__dict__["b64encode"](b"public")\n',
+        )
+        for source in accepted:
+            with self.subTest(source=source.splitlines()[-1][:56]):
+                self.assertEqual(
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                    [],
+                )
+
     def test_bootstrap_v2_python_dynamic_code_static_input_fails_closed(self) -> None:
         expected = tuple(risky_github_classic_token().encode("ascii"))
         sources = (
