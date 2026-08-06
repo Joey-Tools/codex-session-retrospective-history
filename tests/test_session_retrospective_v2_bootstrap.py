@@ -3559,6 +3559,56 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             )
         )
 
+        protection = branch_protection_payload()
+        del protection["required_pull_request_reviews"][
+            "bypass_pull_request_allowances"
+        ]
+        cases.append(
+            (
+                "missing bypass allowances",
+                repository_configuration_payload(),
+                active_branch_rules_payload(),
+                protection,
+                [],
+                [],
+            )
+        )
+        protection = branch_protection_payload()
+        del protection["required_pull_request_reviews"][
+            "bypass_pull_request_allowances"
+        ]["apps"]
+        cases.append(
+            (
+                "missing bypass actor class",
+                repository_configuration_payload(),
+                active_branch_rules_payload(),
+                protection,
+                [],
+                [],
+            )
+        )
+        for label, allowances in (
+            ("null bypass allowances", None),
+            (
+                "wrong bypass actor type",
+                {"apps": {}, "teams": [], "users": []},
+            ),
+        ):
+            protection = branch_protection_payload()
+            protection["required_pull_request_reviews"][
+                "bypass_pull_request_allowances"
+            ] = allowances
+            cases.append(
+                (
+                    label,
+                    repository_configuration_payload(),
+                    active_branch_rules_payload(),
+                    protection,
+                    [],
+                    [],
+                )
+            )
+
         cases.append(
             (
                 "bypass actor",

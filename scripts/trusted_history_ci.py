@@ -2642,8 +2642,9 @@ def _disabled(payload: Any, label: str) -> bool:
 
 def _empty_actor_allowances(payload: Any, label: str) -> None:
     value = object_value(payload, label)
+    exact_keys(value, {"apps", "teams", "users"}, label)
     for key in ("apps", "teams", "users"):
-        actors = value.get(key, [])
+        actors = value.get(key)
         if not isinstance(actors, list) or actors:
             raise GateError(f"{label} is not empty")
 
@@ -2800,7 +2801,7 @@ def validate_branch_protection(
     ):
         raise GateError("branch pull request review policy is unsafe")
     _empty_actor_allowances(
-        reviews.get("bypass_pull_request_allowances", {}),
+        reviews.get("bypass_pull_request_allowances"),
         "branch pull request bypass allowances",
     )
     _enabled(value.get("enforce_admins"), "branch admin enforcement")
