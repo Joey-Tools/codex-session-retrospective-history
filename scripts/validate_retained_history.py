@@ -497,110 +497,110 @@ BOOTSTRAP_V2_UNMODELED_STATIC_TEXT_CALL_RISK = "python_unmodeled_static_text_cal
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/trusted_history_ci.py"): _trusted_sha256_values_hex(
         (
-            0x4E,
-            0xDA,
-            0xEC,
-            0x8E,
-            0x3B,
-            0x0C,
-            0x15,
-            0x33,
-            0xD6,
+            0x19,
+            0x5E,
+            0x31,
+            0x3C,
+            0x0F,
+            0x2B,
+            0x0B,
             0xB3,
-            0x1B,
-            0x94,
-            0x7B,
-            0x3F,
-            0xA2,
-            0x58,
-            0xD5,
-            0xE9,
-            0x97,
-            0xFA,
-            0x9D,
-            0xBC,
-            0x1B,
-            0x43,
-            0x34,
-            0x0D,
-            0xAB,
-            0x8C,
-            0xFE,
-            0x5F,
-            0xD8,
-            0xFA,
+            0x42,
+            0xDA,
+            0x40,
+            0x40,
+            0xB8,
+            0x72,
+            0x4C,
+            0xF6,
+            0x2E,
+            0x26,
+            0xAC,
+            0xAD,
+            0x56,
+            0x4A,
+            0x2E,
+            0x56,
+            0xC9,
+            0x66,
+            0x63,
+            0xE1,
+            0x8B,
+            0xF9,
+            0xA3,
+            0x65,
         )
     ),
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x92,
-            0xB4,
-            0x4D,
-            0x21,
-            0xB3,
-            0x06,
-            0x26,
-            0xF5,
-            0x62,
-            0x10,
-            0x6F,
-            0x0A,
-            0xE7,
-            0xB9,
-            0xCF,
-            0x1A,
-            0x12,
-            0xE9,
-            0x95,
-            0x52,
-            0x3A,
-            0x48,
-            0x2E,
-            0x45,
-            0x12,
-            0x41,
-            0x44,
-            0xF7,
-            0xC8,
+            0x6A,
+            0xA8,
+            0x09,
+            0x82,
+            0xD5,
             0xB5,
-            0xBF,
-            0x26,
+            0x1E,
+            0xF9,
+            0x4B,
+            0xF9,
+            0x6C,
+            0x3F,
+            0xF7,
+            0xA2,
+            0x59,
+            0xE8,
+            0x52,
+            0x7F,
+            0x2F,
+            0x91,
+            0x9A,
+            0x2C,
+            0x31,
+            0x28,
+            0xB7,
+            0x97,
+            0xF3,
+            0xCB,
+            0x21,
+            0x0D,
+            0xD1,
+            0x6B,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0xED,
-            0x23,
-            0x56,
-            0xE9,
-            0xDA,
-            0x54,
-            0xE9,
-            0x05,
-            0x89,
-            0x1E,
-            0xBE,
-            0xDE,
-            0x92,
-            0x5F,
-            0x6F,
-            0x8B,
-            0x89,
-            0xAF,
-            0xA7,
-            0xEE,
-            0xA3,
-            0x61,
             0x91,
-            0x40,
-            0x4A,
+            0x0E,
+            0xAC,
+            0xF7,
             0x9B,
-            0xE9,
-            0x4C,
-            0x3A,
-            0x2C,
-            0x61,
-            0x01,
+            0x62,
+            0x6E,
+            0x95,
+            0x8C,
+            0xFB,
+            0x45,
+            0x35,
+            0xCF,
+            0xEE,
+            0xED,
+            0x97,
+            0x86,
+            0x80,
+            0xA4,
+            0x6F,
+            0x43,
+            0xE4,
+            0xEC,
+            0x0B,
+            0x32,
+            0xB9,
+            0x3C,
+            0x9E,
+            0x16,
+            0x74,
+            0x92,
+            0x11,
         )
     ),
 }
@@ -15864,6 +15864,7 @@ class HistoryV2SignatureVerifier:
         self.home: Path | None = None
         self.environment: dict[str, str] | None = None
         self.allowed_fingerprints = frozenset[str]()
+        self.verified_signer_fingerprints = set[str]()
 
     def __enter__(self) -> HistoryV2SignatureVerifier:
         if self.relative not in HISTORY_V2_SIGNATURE_KEY_PATHS.values():
@@ -15877,29 +15878,32 @@ class HistoryV2SignatureVerifier:
         key_issues = validate_bootstrap_v2_public_key(
             self.public_key,
             relative=self.relative,
+            allow_trusted_gnupg_aead_type_34=True,
         )
         if key_issues:
             raise ValueError(key_issues[0])
 
-        self._temporary = tempfile.TemporaryDirectory(prefix="history-v2-signature-")
-        self.home = Path(self._temporary.name)
-        self.home.chmod(0o700)
-        self.environment = {
-            **os.environ,
-            "GNUPGHOME": str(self.home),
-            "HOME": str(self.home),
-            "LC_ALL": "C",
-        }
-        common = [
-            "gpg",
-            "--quiet",
-            "--no-options",
-            "--no-autostart",
-            "--batch",
-            "--homedir",
-            str(self.home),
-        ]
         try:
+            self._temporary = tempfile.TemporaryDirectory(
+                prefix="history-v2-signature-"
+            )
+            self.home = Path(self._temporary.name)
+            self.home.chmod(0o700)
+            self.environment = {
+                **os.environ,
+                "GNUPGHOME": str(self.home),
+                "HOME": str(self.home),
+                "LC_ALL": "C",
+            }
+            common = [
+                "gpg",
+                "--quiet",
+                "--no-options",
+                "--no-autostart",
+                "--batch",
+                "--homedir",
+                str(self.home),
+            ]
             bounded_process_output(
                 [*common, "--import"],
                 input_data=self.public_key,
@@ -15921,19 +15925,35 @@ class HistoryV2SignatureVerifier:
             )
             self.allowed_fingerprints = parse_history_v2_key_fingerprints(fingerprints)
         except (BoundedProcessError, OSError, ValueError) as exc:
-            self.__exit__(None, None, None)
+            self.__exit__(type(exc), exc, exc.__traceback__)
             raise ValueError(
                 "history-v2 trusted signing key could not be prepared"
             ) from exc
         return self
 
-    def __exit__(self, *_args: object) -> None:
-        if self._temporary is not None:
-            self._temporary.cleanup()
+    def __exit__(
+        self,
+        _exception_type: object,
+        exception: BaseException | None,
+        _traceback: object,
+    ) -> None:
+        temporary = self._temporary
         self._temporary = None
         self.home = None
         self.environment = None
         self.allowed_fingerprints = frozenset()
+        self.verified_signer_fingerprints.clear()
+        if temporary is None:
+            return
+        try:
+            temporary.cleanup()
+        except OSError as cleanup_error:
+            if exception is None:
+                raise
+            exception.add_note(
+                "history-v2 signature verifier temporary cleanup failed: "
+                f"{type(cleanup_error).__name__}"
+            )
 
     def verify(self, signature: HistoryV2CommitSignature) -> None:
         if self.home is None or self.environment is None:
@@ -15984,6 +16004,7 @@ class HistoryV2SignatureVerifier:
             signature=signature,
             allowed_fingerprints=self.allowed_fingerprints,
         )
+        self.verified_signer_fingerprints.add(signature.signer_fingerprint)
 
 
 def _read_history_v2_policy_file_descriptor(
@@ -16332,6 +16353,33 @@ def _history_v2_validate_admission_snapshot(
     return snapshot
 
 
+def _history_v2_validate_candidate_signature_binding(
+    value: Any,
+    *,
+    role: str,
+) -> dict[str, Any]:
+    if role not in {"admin", "publication"}:
+        raise ValueError("history-v2 candidate signature role is invalid")
+    signature = _history_v2_exact_json_object(
+        value,
+        {"policy", "key_path", "key_sha256", "signer_fingerprint"},
+        "history-v2 admission candidate signature",
+    )
+    signature_policy = "history-v2" if role == "publication" else "bootstrap-v2"
+    signature_key_path = HISTORY_V2_SIGNATURE_KEY_PATHS[signature_policy]
+    signer_fingerprint = signature.get("signer_fingerprint")
+    if (
+        signature.get("policy") != signature_policy
+        or signature.get("key_path") != signature_key_path.as_posix()
+        or signature.get("key_sha256")
+        != BOOTSTRAP_V2_PUBLIC_KEY_SHA256[signature_key_path]
+        or not isinstance(signer_fingerprint, str)
+        or re.fullmatch(r"[0-9A-F]{40}", signer_fingerprint) is None
+    ):
+        raise ValueError("history-v2 admission candidate signature differs")
+    return signature
+
+
 def _history_v2_validate_admission_projection(
     value: Any,
     *,
@@ -16358,6 +16406,7 @@ def _history_v2_validate_admission_projection(
             "trust_generation",
             "changed_path_count",
             "delta_sha256",
+            "candidate_signature",
         },
         "history-v2 admission projection",
     )
@@ -16365,6 +16414,10 @@ def _history_v2_validate_admission_projection(
     role = projection.get("role")
     subject = projection.get("squash_subject")
     changed = projection.get("changed_path_count")
+    _history_v2_validate_candidate_signature_binding(
+        projection.get("candidate_signature"),
+        role=role,
+    )
     oid_fields = (
         "candidate_base_sha",
         "queue_base_sha",
@@ -16383,7 +16436,7 @@ def _history_v2_validate_admission_projection(
         )
     if (
         type(projection.get("schema_version")) is not int
-        or projection.get("schema_version") != 1
+        or projection.get("schema_version") != 2
         or projection.get("kind") != HISTORY_V2_MERGE_GROUP_PROJECTION_KIND
         or policy not in {"bootstrap-v2", "history-v2"}
         or projection.get("validation_mode") != f"{policy}-prospective-squash"
@@ -17178,6 +17231,18 @@ def validate_history_v2_candidate_reproof(
         or projection.get("queue_tree_sha") != head_tree_oid
     ):
         raise ValueError("history-v2 admitted candidate B1 plan differs")
+    signature_binding = _history_v2_validate_candidate_signature_binding(
+        projection.get("candidate_signature"),
+        role=plan.role,
+    )
+    signer_fingerprint = verified_history_v2_candidate_signer_fingerprint(
+        candidate_root,
+        candidate_sha=candidate_sha,
+        trusted_revision=projection["candidate_base_sha"],
+        signature_policy=signature_binding["policy"],
+    )
+    if signer_fingerprint != signature_binding["signer_fingerprint"]:
+        raise ValueError("history-v2 admitted candidate signer fingerprint differs")
     return "history-v2", projection["role"]
 
 
@@ -17372,6 +17437,29 @@ def history_v2_signature_verifier_for_root(
         if not public_key:
             raise ValueError("history-v2 trusted signing key is empty")
     return HistoryV2SignatureVerifier(public_key, relative=relative)
+
+
+def verified_history_v2_candidate_signer_fingerprint(
+    root: Path,
+    *,
+    candidate_sha: str,
+    trusted_revision: str,
+    signature_policy: str,
+) -> str:
+    with history_v2_signature_verifier_for_root(
+        root,
+        policy=signature_policy,
+        revision=trusted_revision,
+    ) as signature_verifier:
+        validate_history_v2_commit_object(
+            root,
+            candidate_sha,
+            signature_verifier=signature_verifier,
+        )
+        fingerprints = frozenset(signature_verifier.verified_signer_fingerprints)
+        if len(fingerprints) != 1:
+            raise ValueError("history-v2 candidate signer fingerprint is ambiguous")
+        return next(iter(fingerprints))
 
 
 def validate_history_v2_commit_object(

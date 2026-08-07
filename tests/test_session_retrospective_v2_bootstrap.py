@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import datetime as dt
 import hashlib
@@ -527,6 +528,7 @@ def fetch_synthetic_candidate_store(
 class StructuralSignatureVerifier:
     def __init__(self, _public_key: bytes, *, relative: Path) -> None:
         self.relative = relative
+        self.verified_signer_fingerprints: set[str] = set()
 
     def __enter__(self) -> StructuralSignatureVerifier:
         return self
@@ -534,10 +536,10 @@ class StructuralSignatureVerifier:
     def __exit__(self, *_args: object) -> None:
         return None
 
-    @staticmethod
-    def verify(signature: object) -> None:
+    def verify(self, signature: object) -> None:
         if not hasattr(signature, "signer_fingerprint"):
             raise AssertionError("commit signature was not structurally validated")
+        self.verified_signer_fingerprints.add(signature.signer_fingerprint)
 
 
 class BootstrapGraph:
@@ -834,6 +836,10 @@ def synthetic_merge_group_projection(
     candidate_tree_sha: str = "1" * 40,
     queue_tree_sha: str = "2" * 40,
 ) -> object:
+    signature_policy = "history-v2" if role == "publication" else "bootstrap-v2"
+    signature_key_path = VALIDATOR_MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS[
+        signature_policy
+    ]
     return CI_MODULE.MergeGroupProjection(
         policy=policy,
         role=role,
@@ -849,6 +855,14 @@ def synthetic_merge_group_projection(
         trust_generation="7" * 64,
         changed_path_count=1,
         delta_sha256="4" * 64,
+        candidate_signature=CI_MODULE.CandidateSignatureBinding(
+            policy=signature_policy,
+            key_path=signature_key_path.as_posix(),
+            key_sha256=VALIDATOR_MODULE.BOOTSTRAP_V2_PUBLIC_KEY_SHA256[
+                signature_key_path
+            ],
+            signer_fingerprint=FIXTURE_SIGNER_FINGERPRINT,
+        ),
     )
 
 
@@ -2809,6 +2823,87 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     ValueError,
                     "transaction timing or scope differs",
                 ),
+            ):
+                VALIDATOR_MODULE.validate_history_v2_candidate_evidence(
+                    changed,
+                    repository=repository,
+                    repository_id=repository_id,
+                    before_rev=base_sha,
+                    head_rev=head_sha,
+                )
+
+    def test_offline_admission_rejects_candidate_signature_binding_drift(
+        self,
+    ) -> None:
+        repository = TEST_REPOSITORY
+        repository_id = TEST_REPOSITORY_ID
+        base_sha = "b" * 40
+        head_sha = "a" * 40
+        candidate_sha = "d" * 40
+        original = synthetic_external_admission(
+            repository=repository,
+            repository_id=repository_id,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            candidate_sha=candidate_sha,
+            candidate_tree_sha="e" * 40,
+            queue_tree_sha="f" * 40,
+            pull_request_number=4,
+            pull_request_node_id="PR_kwDOSyntheticReceipt",
+            pull_request_title="Publish retained history",
+        )
+        mutations = (
+            (
+                "policy",
+                lambda projection: projection["candidate_signature"].__setitem__(
+                    "policy",
+                    "bootstrap-v2",
+                ),
+                "candidate signature differs",
+            ),
+            (
+                "key path",
+                lambda projection: projection["candidate_signature"].__setitem__(
+                    "key_path",
+                    "retrospective-history-v2-admin-public.asc",
+                ),
+                "candidate signature differs",
+            ),
+            (
+                "key digest",
+                lambda projection: projection["candidate_signature"].__setitem__(
+                    "key_sha256",
+                    "f" * 64,
+                ),
+                "candidate signature differs",
+            ),
+            (
+                "fingerprint format",
+                lambda projection: projection["candidate_signature"].__setitem__(
+                    "signer_fingerprint",
+                    FIXTURE_SIGNER_FINGERPRINT.lower(),
+                ),
+                "candidate signature differs",
+            ),
+            (
+                "legacy projection",
+                lambda projection: projection.__setitem__("schema_version", 1),
+                "admission projection differs",
+            ),
+        )
+        for label, mutate, expected in mutations:
+            changed = copy.deepcopy(original)
+            binding = changed["admission_binding"]
+            assert isinstance(binding, dict)
+            admission = binding["admission"]
+            assert isinstance(admission, dict)
+            projection = admission["projection"]
+            assert isinstance(projection, dict)
+            mutate(projection)
+            rebind_synthetic_external_admission(changed)
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(ValueError, expected),
             ):
                 VALIDATOR_MODULE.validate_history_v2_candidate_evidence(
                     changed,
@@ -4999,6 +5094,22 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 history_v2_mutable_artifact = staticmethod(
                     VALIDATOR_MODULE.history_v2_mutable_artifact
                 )
+                HISTORY_V2_SIGNATURE_KEY_PATHS = (
+                    VALIDATOR_MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS
+                )
+                BOOTSTRAP_V2_PUBLIC_KEY_SHA256 = {
+                    relative: hashlib.sha256(
+                        f"Synthetic trusted file: {relative}\n".encode("utf-8")
+                    ).hexdigest()
+                    for relative in HISTORY_V2_SIGNATURE_KEY_PATHS.values()
+                }
+                BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES = (
+                    VALIDATOR_MODULE.BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES
+                )
+                HistoryV2SignatureVerifier = StructuralSignatureVerifier
+                parse_history_v2_commit_object = staticmethod(
+                    VALIDATOR_MODULE.parse_history_v2_commit_object
+                )
 
                 @staticmethod
                 def build_pull_request_candidate_plan(
@@ -5060,6 +5171,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         snapshot,
                         policy="history-v2",
                         plan={**plan, field: value},
+                        candidate_signature=projection.candidate_signature,
                     )
             self.assertEqual(
                 [call[0] for call in calls],
@@ -5072,6 +5184,21 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             self.assertEqual(
                 projection.prospective_tree_sha,
                 projection.queue_tree_sha,
+            )
+            self.assertEqual(
+                projection.candidate_signature,
+                CI_MODULE.CandidateSignatureBinding(
+                    policy="history-v2",
+                    key_path=(
+                        VALIDATOR_MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS[
+                            "history-v2"
+                        ].as_posix()
+                    ),
+                    key_sha256=Validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256[
+                        VALIDATOR_MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS["history-v2"]
+                    ],
+                    signer_fingerprint=FIXTURE_SIGNER_FINGERPRINT,
+                ),
             )
             requirements = CI_MODULE.git_output(
                 graph.git_dir,
@@ -5215,6 +5342,36 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     evidence=evidence,
                     expected_python_executable_sha256="f" * 64,
                 )
+            with mock.patch.object(
+                CI_MODULE,
+                "trusted_validator_module",
+                return_value=Validator,
+            ):
+                self.assertEqual(
+                    CI_MODULE.parse_merge_group_projection(projection.as_dict()),
+                    projection,
+                )
+            for field, value in (
+                ("policy", "bootstrap-v2"),
+                ("key_path", "retrospective-history-v2-admin-public.asc"),
+                ("key_sha256", "f" * 64),
+                ("signer_fingerprint", FIXTURE_SIGNER_FINGERPRINT.lower()),
+            ):
+                invalid_projection = projection.as_dict()
+                invalid_projection["candidate_signature"][field] = value
+                with (
+                    self.subTest(candidate_signature_field=field),
+                    mock.patch.object(
+                        CI_MODULE,
+                        "trusted_validator_module",
+                        return_value=Validator,
+                    ),
+                    self.assertRaisesRegex(
+                        CI_MODULE.GateError,
+                        "candidate signature binding is invalid",
+                    ),
+                ):
+                    CI_MODULE.parse_merge_group_projection(invalid_projection)
             evidence_path = temporary / "runtime-evidence.json"
             CI_MODULE.write_json(evidence_path, evidence.as_dict())
             self.assertEqual(
@@ -5238,6 +5395,239 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             CI_MODULE.write_json(evidence_path, unknown)
             with self.assertRaisesRegex(CI_MODULE.GateError, "schema is invalid"):
                 CI_MODULE.load_merge_group_runtime_evidence(evidence_path)
+
+    def test_bootstrap_merge_group_requires_admin_signature_binding(self) -> None:
+        class RejectingSignatureVerifier(StructuralSignatureVerifier):
+            def verify(self, _signature: object) -> None:
+                raise ValueError("synthetic signature rejected")
+
+        cases = (
+            ("signed", True, StructuralSignatureVerifier, False),
+            ("unsigned", False, StructuralSignatureVerifier, True),
+            ("wrong signature", True, RejectingSignatureVerifier, True),
+        )
+        for label, include_signature, verifier_type, should_reject in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as raw:
+                temporary = Path(raw)
+                graph = MergeGroupGraph(temporary / "repo")
+                subject = "Update trusted history policy"
+                signed_candidate = graph.candidate(role="admin", message=subject)
+                candidate = signed_candidate
+                if not include_signature:
+                    candidate = fixture_raw_commit(
+                        graph.root,
+                        tree_oid=git(
+                            graph.root,
+                            "rev-parse",
+                            f"{signed_candidate}^{{tree}}",
+                        ),
+                        parents=(graph.base,),
+                        message=subject,
+                        include_signature=False,
+                    )
+                queue_base, queue = graph.queue(
+                    candidate=candidate,
+                    role="admin",
+                    advance_base=False,
+                )
+                snapshot = graph.snapshot(
+                    candidate=candidate,
+                    queue_base=queue_base,
+                    queue=queue,
+                    title=subject,
+                )
+                candidate_root = temporary / "candidate"
+                queue_root = temporary / "queue"
+                trusted_base_root = temporary / "trusted-base"
+                for destination, revision in (
+                    (candidate_root, candidate),
+                    (queue_root, queue),
+                    (trusted_base_root, graph.base),
+                ):
+                    git(
+                        graph.root,
+                        "worktree",
+                        "add",
+                        "--quiet",
+                        "--detach",
+                        str(destination),
+                        revision,
+                    )
+
+                key_paths = VALIDATOR_MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS
+
+                class Validator:
+                    HISTORY_V2_SIGNATURE_KEY_PATHS = key_paths
+                    BOOTSTRAP_V2_PUBLIC_KEY_SHA256 = {
+                        relative: hashlib.sha256(
+                            f"Synthetic trusted file: {relative}\n".encode("utf-8")
+                        ).hexdigest()
+                        for relative in key_paths.values()
+                    }
+                    BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES = (
+                        VALIDATOR_MODULE.BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES
+                    )
+                    HistoryV2SignatureVerifier = verifier_type
+                    parse_history_v2_commit_object = staticmethod(
+                        VALIDATOR_MODULE.parse_history_v2_commit_object
+                    )
+
+                    @staticmethod
+                    def validate_bootstrap_v2_candidate(
+                        _trusted_root: Path,
+                        _candidate_root: Path,
+                    ) -> list[str]:
+                        return []
+
+                context = (
+                    self.assertRaisesRegex(
+                        CI_MODULE.GateError,
+                        "candidate commit signature verification failed",
+                    )
+                    if should_reject
+                    else contextlib.nullcontext()
+                )
+                with (
+                    mock.patch.object(
+                        CI_MODULE,
+                        "trusted_validator_module",
+                        return_value=Validator,
+                    ),
+                    context,
+                ):
+                    projection = CI_MODULE.validate_merge_group_transaction(
+                        git_dir=graph.git_dir,
+                        snapshot=snapshot,
+                        candidate_root=candidate_root,
+                        queue_root=queue_root,
+                        policy="bootstrap-v2",
+                        trusted_base_root=trusted_base_root,
+                    )
+                if not should_reject:
+                    admin_key = key_paths["bootstrap-v2"]
+                    self.assertEqual(
+                        projection.candidate_signature,
+                        CI_MODULE.CandidateSignatureBinding(
+                            policy="bootstrap-v2",
+                            key_path=admin_key.as_posix(),
+                            key_sha256=Validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256[
+                                admin_key
+                            ],
+                            signer_fingerprint=FIXTURE_SIGNER_FINGERPRINT,
+                        ),
+                    )
+
+    def test_permanent_admin_merge_group_binds_base_admin_signature(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            graph = MergeGroupGraph(temporary / "repo")
+            subject = "Update trusted history policy"
+            candidate = graph.candidate(role="admin", message=subject)
+            queue_base, queue = graph.queue(
+                candidate=candidate,
+                role="admin",
+                advance_base=False,
+            )
+            plan = graph.plan(
+                candidate=candidate,
+                role="admin",
+                subject=subject,
+            )
+            snapshot = graph.snapshot(
+                candidate=candidate,
+                queue_base=queue_base,
+                queue=queue,
+                title=subject,
+            )
+            candidate_root = temporary / "candidate"
+            queue_root = temporary / "queue"
+            for destination, revision in (
+                (candidate_root, candidate),
+                (queue_root, queue),
+            ):
+                git(
+                    graph.root,
+                    "worktree",
+                    "add",
+                    "--quiet",
+                    "--detach",
+                    str(destination),
+                    revision,
+                )
+
+            key_paths = VALIDATOR_MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS
+
+            class Plan:
+                @staticmethod
+                def as_dict() -> dict:
+                    return plan
+
+            class Validator:
+                history_v2_mutable_artifact = staticmethod(
+                    VALIDATOR_MODULE.history_v2_mutable_artifact
+                )
+                HISTORY_V2_SIGNATURE_KEY_PATHS = key_paths
+                BOOTSTRAP_V2_PUBLIC_KEY_SHA256 = {
+                    relative: hashlib.sha256(
+                        f"Synthetic trusted file: {relative}\n".encode("utf-8")
+                    ).hexdigest()
+                    for relative in key_paths.values()
+                }
+                BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES = (
+                    VALIDATOR_MODULE.BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES
+                )
+                HistoryV2SignatureVerifier = StructuralSignatureVerifier
+                parse_history_v2_commit_object = staticmethod(
+                    VALIDATOR_MODULE.parse_history_v2_commit_object
+                )
+
+                @staticmethod
+                def build_pull_request_candidate_plan(
+                    _root: Path,
+                    _base_sha: str,
+                    _head_sha: str,
+                ) -> tuple[Plan, list[str]]:
+                    return Plan(), []
+
+                @staticmethod
+                def validate_fixed_head_snapshot(
+                    _root: Path,
+                    _head_sha: str,
+                ) -> list[str]:
+                    return []
+
+                @staticmethod
+                def validate_append_only_event_range(
+                    *_args: object, **_kwargs: object
+                ) -> list[str]:
+                    raise AssertionError(
+                        "admin transaction must not enter publication validation"
+                    )
+
+            with mock.patch.object(
+                CI_MODULE,
+                "trusted_validator_module",
+                return_value=Validator,
+            ):
+                projection = CI_MODULE.validate_merge_group_transaction(
+                    git_dir=graph.git_dir,
+                    snapshot=snapshot,
+                    candidate_root=candidate_root,
+                    queue_root=queue_root,
+                    policy="history-v2",
+                )
+            admin_key = key_paths["bootstrap-v2"]
+            self.assertEqual(projection.role, "admin")
+            self.assertEqual(projection.policy, "history-v2")
+            self.assertEqual(
+                projection.candidate_signature,
+                CI_MODULE.CandidateSignatureBinding(
+                    policy="bootstrap-v2",
+                    key_path=admin_key.as_posix(),
+                    key_sha256=Validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256[admin_key],
+                    signer_fingerprint=FIXTURE_SIGNER_FINGERPRINT,
+                ),
+            )
 
     def test_admin_and_bootstrap_require_queue_base_to_equal_candidate_base(
         self,
@@ -5278,6 +5668,11 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         snapshot,
                         policy=policy,
                         plan=supplied_plan,
+                        candidate_signature=synthetic_merge_group_projection(
+                            snapshot,
+                            policy=policy,
+                            role="admin",
+                        ).candidate_signature,
                     )
 
     def test_queue_rejects_head_update_after_snapshot_and_leaves_refs_unchanged(
@@ -5320,6 +5715,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         role="publication",
                         subject="Publish updated history",
                     ),
+                    candidate_signature=synthetic_merge_group_projection(
+                        snapshot,
+                    ).candidate_signature,
                 )
             self.assertEqual(
                 git(graph.root, "rev-parse", "refs/heads/master"),

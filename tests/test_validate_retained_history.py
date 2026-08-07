@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import copy
 import errno
 import hashlib
 import importlib.util
@@ -758,16 +759,37 @@ def validate_synthetic_history_v2_tree(root: Path) -> list[str]:
 
 
 class FixtureStructuralSignatureVerifier:
+    def __init__(self) -> None:
+        self.verified_signer_fingerprints: set[str] = set()
+
     def __enter__(self) -> FixtureStructuralSignatureVerifier:
         return self
 
     def __exit__(self, *_args: object) -> None:
         return None
 
-    @staticmethod
-    def verify(signature: object) -> None:
+    def verify(self, signature: object) -> None:
         if not isinstance(signature, MODULE.HistoryV2CommitSignature):
             raise AssertionError("commit signature was not structurally validated")
+        self.verified_signer_fingerprints.add(signature.signer_fingerprint)
+
+
+def fixture_candidate_signature_binding(
+    role: str,
+    *,
+    digests: dict[Path, str] | None = None,
+) -> dict[str, str]:
+    policy = "history-v2" if role == "publication" else "bootstrap-v2"
+    key_path = MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS[policy]
+    expected_digests = (
+        MODULE.BOOTSTRAP_V2_PUBLIC_KEY_SHA256 if digests is None else digests
+    )
+    return {
+        "policy": policy,
+        "key_path": key_path.as_posix(),
+        "key_sha256": expected_digests[key_path],
+        "signer_fingerprint": FIXTURE_SIGNER_FINGERPRINT,
+    }
 
 
 def validate_synthetic_history_v2_merge_range(
@@ -3616,6 +3638,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                                 "role": plan.role,
                                 "changed_path_count": plan.changed_path_count,
                                 "delta_sha256": plan.delta_sha256,
+                                "candidate_signature": (
+                                    fixture_candidate_signature_binding(
+                                        plan.role,
+                                        digests=digests,
+                                    )
+                                ),
                             },
                         )
                         if plan is not None
@@ -3714,6 +3742,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "role": plan.role,
             "changed_path_count": plan.changed_path_count,
             "delta_sha256": plan.delta_sha256,
+            "candidate_signature": fixture_candidate_signature_binding(
+                plan.role,
+            ),
         }
         with (
             mock.patch.object(
@@ -3731,6 +3762,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "history_v2_trust_generation_digest",
                 return_value=trust,
             ) as trust_digest,
+            mock.patch.object(
+                MODULE,
+                "verified_history_v2_candidate_signer_fingerprint",
+                return_value=FIXTURE_SIGNER_FINGERPRINT,
+            ) as signer_fingerprint,
         ):
             self.assertEqual(
                 MODULE.validate_history_v2_candidate_reproof(
@@ -3755,6 +3791,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         )
         self.assertIs(plan_builder.call_args.kwargs["work_budget"], budget)
         self.assertIs(trust_digest.call_args.kwargs["work_budget"], budget)
+        signer_fingerprint.assert_called_once_with(
+            Path("/synthetic/candidate"),
+            candidate_sha=candidate,
+            trusted_revision=base,
+            signature_policy="history-v2",
+        )
 
         for field, value in (
             ("changed_path_count", 2),
@@ -3778,6 +3820,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     "history_v2_trust_generation_digest",
                     return_value=trust,
                 ),
+                mock.patch.object(
+                    MODULE,
+                    "verified_history_v2_candidate_signer_fingerprint",
+                    return_value=FIXTURE_SIGNER_FINGERPRINT,
+                ),
                 self.assertRaisesRegex(ValueError, "B1 plan differs"),
             ):
                 MODULE.validate_history_v2_candidate_reproof(
@@ -3791,6 +3838,43 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     },
                     projection=changed,
                 )
+
+        changed_signer = copy.deepcopy(projection)
+        changed_signer["candidate_signature"]["signer_fingerprint"] = "F" * 40
+        with (
+            mock.patch.object(
+                MODULE,
+                "validate_fixed_head_snapshot",
+                side_effect=[[], []],
+            ),
+            mock.patch.object(
+                MODULE,
+                "build_pull_request_candidate_plan",
+                return_value=(plan, []),
+            ),
+            mock.patch.object(
+                MODULE,
+                "history_v2_trust_generation_digest",
+                return_value=trust,
+            ),
+            mock.patch.object(
+                MODULE,
+                "verified_history_v2_candidate_signer_fingerprint",
+                return_value=FIXTURE_SIGNER_FINGERPRINT,
+            ),
+            self.assertRaisesRegex(ValueError, "signer fingerprint differs"),
+        ):
+            MODULE.validate_history_v2_candidate_reproof(
+                base_root=Path("/synthetic/base"),
+                candidate_root=Path("/synthetic/candidate"),
+                before_rev=base,
+                head_tree_oid=tree,
+                candidate_evidence={
+                    "authority_mode": "history-v2-admission",
+                    "candidate_sha": candidate,
+                },
+                projection=changed_signer,
+            )
 
     def test_actual_default_reuses_candidate_reproof_for_41_to_64_commits(
         self,
@@ -7765,6 +7849,90 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     ):
                         parse_fixture_commit(root, commit_oid)
 
+    def test_fixed_history_v2_public_keys_initialize_signature_verifier(self) -> None:
+        root = SCRIPT.parents[1]
+        for policy, relative in MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS.items():
+            with self.subTest(policy=policy):
+                public_key = (root / relative).read_bytes()
+                with MODULE.HistoryV2SignatureVerifier(
+                    public_key,
+                    relative=relative,
+                ) as verifier:
+                    self.assertTrue(verifier.allowed_fingerprints)
+                    self.assertEqual(verifier.verified_signer_fingerprints, set())
+
+    def test_history_v2_signature_verifier_cleans_early_enter_failure(self) -> None:
+        root = SCRIPT.parents[1]
+        relative = MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS["bootstrap-v2"]
+        verifier = MODULE.HistoryV2SignatureVerifier(
+            (root / relative).read_bytes(),
+            relative=relative,
+        )
+        temporary = tempfile.TemporaryDirectory(prefix="signature-enter-test-")
+        temporary_path = Path(temporary.name)
+        with (
+            mock.patch.object(
+                MODULE.tempfile,
+                "TemporaryDirectory",
+                return_value=temporary,
+            ),
+            mock.patch.object(
+                MODULE.Path,
+                "chmod",
+                side_effect=OSError("synthetic chmod failure"),
+            ),
+            self.assertRaisesRegex(
+                ValueError,
+                "trusted signing key could not be prepared",
+            ),
+        ):
+            verifier.__enter__()
+        self.assertFalse(temporary_path.exists())
+        self.assertIsNone(verifier._temporary)
+        self.assertIsNone(verifier.home)
+        self.assertIsNone(verifier.environment)
+        self.assertEqual(verifier.allowed_fingerprints, frozenset())
+        self.assertEqual(verifier.verified_signer_fingerprints, set())
+
+    def test_history_v2_signature_verifier_invalidates_before_cleanup_error(
+        self,
+    ) -> None:
+        class FailingTemporaryDirectory:
+            @staticmethod
+            def cleanup() -> None:
+                raise OSError("synthetic cleanup failure")
+
+        verifier = MODULE.HistoryV2SignatureVerifier(
+            b"fixture public key",
+            relative=Path("retrospective-history-v2-publisher.asc"),
+        )
+        verifier._temporary = FailingTemporaryDirectory()
+        verifier.home = Path("/synthetic/signature-home")
+        verifier.environment = {"LC_ALL": "C"}
+        verifier.allowed_fingerprints = frozenset({FIXTURE_SIGNER_FINGERPRINT})
+        verifier.verified_signer_fingerprints.add(FIXTURE_SIGNER_FINGERPRINT)
+        with self.assertRaisesRegex(OSError, "synthetic cleanup failure"):
+            verifier.__exit__(None, None, None)
+        self.assertIsNone(verifier._temporary)
+        self.assertIsNone(verifier.home)
+        self.assertIsNone(verifier.environment)
+        self.assertEqual(verifier.allowed_fingerprints, frozenset())
+        self.assertEqual(verifier.verified_signer_fingerprints, set())
+        with self.assertRaisesRegex(ValueError, "verifier is not active"):
+            verifier.verify(mock.sentinel.signature)
+
+        primary = ValueError("synthetic primary failure")
+        verifier._temporary = FailingTemporaryDirectory()
+        verifier.home = Path("/synthetic/signature-home")
+        verifier.environment = {"LC_ALL": "C"}
+        verifier.__exit__(ValueError, primary, None)
+        self.assertIn(
+            "temporary cleanup failed: OSError",
+            "\n".join(primary.__notes__),
+        )
+        self.assertIsNone(verifier.home)
+        self.assertIsNone(verifier.environment)
+
     def test_history_v2_signature_status_binds_exact_role_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "repo"
@@ -7809,6 +7977,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 self.assertEqual(
                     verify_process.call_args.kwargs["input_data"],
                     signature.signed_payload,
+                )
+                self.assertEqual(
+                    verifier.verified_signer_fingerprints,
+                    {FIXTURE_SIGNER_FINGERPRINT},
                 )
                 self.assertFalse((verifier.home / "commit-signature.asc").exists())
             for label, status, allowed in (

@@ -447,6 +447,17 @@ class PredecessorAuditEvidence:
 
 
 @dataclass(frozen=True)
+class CandidateSignatureBinding:
+    policy: str
+    key_path: str
+    key_sha256: str
+    signer_fingerprint: str
+
+    def as_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class MergeGroupProjection:
     policy: str
     role: str
@@ -462,10 +473,11 @@ class MergeGroupProjection:
     trust_generation: str
     changed_path_count: int
     delta_sha256: str
+    candidate_signature: CandidateSignatureBinding
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "retrospective-history-v2-merge-group-projection",
             "validation_mode": f"{self.policy}-prospective-squash",
             "policy": self.policy,
@@ -482,6 +494,7 @@ class MergeGroupProjection:
             "trust_generation": self.trust_generation,
             "changed_path_count": self.changed_path_count,
             "delta_sha256": self.delta_sha256,
+            "candidate_signature": self.candidate_signature.as_dict(),
         }
 
 
@@ -3761,31 +3774,31 @@ def validate_candidate_commit_object(
     )
 
 
-def candidate_signature_key_bytes(
+def signature_key_bytes_from_entries(
     git_dir: Path,
-    manifest: GitPreflight,
+    *,
+    policy: str,
+    entries: tuple[TreeEntry, ...],
 ) -> tuple[bytes, Path]:
     validator = trusted_validator_module()
     try:
-        relative = validator.HISTORY_V2_SIGNATURE_KEY_PATHS[manifest.policy]
+        relative = validator.HISTORY_V2_SIGNATURE_KEY_PATHS[policy]
         expected_digest = validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256[relative]
         max_bytes = validator.BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES
     except (AttributeError, KeyError, TypeError) as exc:
         raise GateError("candidate signing key role is unavailable") from exc
     entry = next(
-        (
-            candidate
-            for candidate in manifest.entries
-            if candidate.path == relative.as_posix()
-        ),
+        (candidate for candidate in entries if candidate.path == relative.as_posix()),
         None,
     )
+    if entry is None or entry.object_type != "blob" or entry.mode != "100644":
+        raise GateError("candidate signing key artifact is outside policy")
+    metadata = git_object_metadata(git_dir, (entry.object_id,)).get(entry.object_id)
     if (
-        entry is None
-        or entry.object_type != "blob"
-        or entry.mode != "100644"
-        or entry.size is None
-        or not 0 < entry.size <= max_bytes
+        metadata is None
+        or metadata[0] != "blob"
+        or not 0 < metadata[1] <= max_bytes
+        or (entry.size is not None and entry.size != metadata[1])
     ):
         raise GateError("candidate signing key artifact is outside policy")
     value = git_output(
@@ -3795,9 +3808,64 @@ def candidate_signature_key_bytes(
         entry.object_id,
         max_bytes=max_bytes,
     )
-    if len(value) != entry.size or hashlib.sha256(value).hexdigest() != expected_digest:
+    if (
+        len(value) != metadata[1]
+        or hashlib.sha256(value).hexdigest() != expected_digest
+    ):
         raise GateError("candidate signing key differs from trusted policy")
     return value, relative
+
+
+def candidate_signature_key_bytes(
+    git_dir: Path,
+    manifest: GitPreflight,
+) -> tuple[bytes, Path]:
+    return signature_key_bytes_from_entries(
+        git_dir,
+        policy=manifest.policy,
+        entries=manifest.entries,
+    )
+
+
+def verify_candidate_signature_binding(
+    git_dir: Path,
+    *,
+    candidate_sha: str,
+    trusted_revision: str,
+    signature_policy: str,
+) -> tuple[CandidateCommit, CandidateSignatureBinding]:
+    trusted_revision = canonical_oid(
+        trusted_revision,
+        "candidate signature trust revision",
+    )
+    entries = git_tree_entries(git_dir, trusted_revision)
+    public_key, relative = signature_key_bytes_from_entries(
+        git_dir,
+        policy=signature_policy,
+        entries=entries,
+    )
+    try:
+        with trusted_validator_module(contract="bootstrap").HistoryV2SignatureVerifier(
+            public_key,
+            relative=relative,
+        ) as signature_verifier:
+            commit = validate_candidate_commit_object(
+                git_dir,
+                candidate_sha,
+                signature_verifier=signature_verifier,
+                strict_bootstrap_metadata=True,
+            )
+            fingerprints = frozenset(signature_verifier.verified_signer_fingerprints)
+            if len(fingerprints) != 1:
+                raise ValueError("candidate signature verifier did not bind one signer")
+    except (AttributeError, GateError, OSError, TypeError, ValueError) as exc:
+        raise GateError("candidate commit signature verification failed") from exc
+    return commit, CandidateSignatureBinding(
+        policy=signature_policy,
+        key_path=relative.as_posix(),
+        key_sha256=hashlib.sha256(public_key).hexdigest(),
+        signer_fingerprint=next(iter(fingerprints)),
+    )
 
 
 def reconstruct_candidate_tree_oid(
@@ -4704,6 +4772,7 @@ def parse_merge_group_projection(payload: Any) -> MergeGroupProjection:
             "trust_generation",
             "changed_path_count",
             "delta_sha256",
+            "candidate_signature",
         },
         "merge-group projection",
     )
@@ -4713,7 +4782,7 @@ def parse_merge_group_projection(payload: Any) -> MergeGroupProjection:
     changed_path_count = payload.get("changed_path_count")
     if (
         type(payload.get("schema_version")) is not int
-        or payload.get("schema_version") != 1
+        or payload.get("schema_version") != 2
         or payload.get("kind") != "retrospective-history-v2-merge-group-projection"
         or policy not in {"bootstrap-v2", "history-v2"}
         or payload.get("validation_mode") != f"{policy}-prospective-squash"
@@ -4742,6 +4811,41 @@ def parse_merge_group_projection(payload: Any) -> MergeGroupProjection:
     }
     if len({len(value) for value in oids.values()}) != 1:
         raise GateError("merge-group projection hash formats differ")
+    signature_payload = object_value(
+        payload.get("candidate_signature"),
+        "merge-group candidate signature",
+    )
+    exact_keys(
+        signature_payload,
+        {"policy", "key_path", "key_sha256", "signer_fingerprint"},
+        "merge-group candidate signature",
+    )
+    signature_policy = "history-v2" if role == "publication" else "bootstrap-v2"
+    validator = trusted_validator_module()
+    try:
+        expected_key_path = validator.HISTORY_V2_SIGNATURE_KEY_PATHS[signature_policy]
+        expected_key_sha256 = validator.BOOTSTRAP_V2_PUBLIC_KEY_SHA256[
+            expected_key_path
+        ]
+    except (AttributeError, KeyError, TypeError) as exc:
+        raise GateError(
+            "merge-group candidate signature policy is unavailable"
+        ) from exc
+    signer_fingerprint = signature_payload.get("signer_fingerprint")
+    if (
+        signature_payload.get("policy") != signature_policy
+        or signature_payload.get("key_path") != expected_key_path.as_posix()
+        or signature_payload.get("key_sha256") != expected_key_sha256
+        or not isinstance(signer_fingerprint, str)
+        or re.fullmatch(r"[0-9A-F]{40}", signer_fingerprint) is None
+    ):
+        raise GateError("merge-group candidate signature binding is invalid")
+    signature_binding = CandidateSignatureBinding(
+        policy=signature_policy,
+        key_path=expected_key_path.as_posix(),
+        key_sha256=expected_key_sha256,
+        signer_fingerprint=signer_fingerprint,
+    )
     return MergeGroupProjection(
         policy=policy,
         role=role,
@@ -4763,6 +4867,7 @@ def parse_merge_group_projection(payload: Any) -> MergeGroupProjection:
             payload.get("delta_sha256"),
             "merge-group projection delta",
         ),
+        candidate_signature=signature_binding,
     )
 
 
@@ -5219,6 +5324,7 @@ def _validate_merge_group_graph(
     *,
     policy: str,
     plan: dict[str, Any] | None,
+    candidate_signature: CandidateSignatureBinding,
 ) -> MergeGroupProjection:
     if policy not in {"bootstrap-v2", "history-v2"}:
         raise GateError("merge-group policy is invalid")
@@ -5361,6 +5467,7 @@ def _validate_merge_group_graph(
         trust_generation=trust_generation,
         changed_path_count=len(candidate_delta),
         delta_sha256=delta_sha256,
+        candidate_signature=candidate_signature,
     )
 
 
@@ -5389,11 +5496,18 @@ def validate_merge_group_transaction(
         )
         if candidate_issues or queue_issues:
             raise GateError("B1 bootstrap validator rejected H or Q")
+        _signed_commit, signature_binding = verify_candidate_signature_binding(
+            git_dir,
+            candidate_sha=snapshot.candidate_sha,
+            trusted_revision=snapshot.base_sha,
+            signature_policy="bootstrap-v2",
+        )
         return _validate_merge_group_graph(
             git_dir,
             snapshot,
             policy=policy,
             plan=None,
+            candidate_signature=signature_binding,
         )
 
     if policy != "history-v2":
@@ -5415,11 +5529,21 @@ def validate_merge_group_transaction(
     if candidate_issues or plan is None:
         raise GateError("B1 candidate validator rejected B0/H")
     normalized_plan = _normalized_merge_plan(plan)
+    signature_policy = (
+        "history-v2" if normalized_plan["role"] == "publication" else "bootstrap-v2"
+    )
+    _signed_commit, signature_binding = verify_candidate_signature_binding(
+        git_dir,
+        candidate_sha=snapshot.candidate_sha,
+        trusted_revision=candidate_base,
+        signature_policy=signature_policy,
+    )
     projection = _validate_merge_group_graph(
         git_dir,
         snapshot,
         policy=policy,
         plan=normalized_plan,
+        candidate_signature=signature_binding,
     )
     try:
         queue_issues = validator.validate_fixed_head_snapshot(
