@@ -6,6 +6,7 @@ import ast
 import base64
 from bisect import bisect_right
 import binascii
+import builtins as python_builtins
 from collections import Counter
 import contextlib
 from dataclasses import dataclass, field
@@ -568,38 +569,38 @@ BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x20,
-            0x23,
-            0x38,
-            0xE4,
-            0xF1,
-            0xC7,
-            0x52,
-            0x38,
-            0x6D,
-            0x4E,
-            0x90,
-            0x96,
-            0x78,
-            0x4E,
-            0x7A,
-            0x5F,
-            0x5F,
-            0x44,
-            0x97,
+            0xB3,
+            0xBA,
+            0xB8,
+            0xFB,
+            0x8A,
+            0x83,
+            0x2A,
+            0xBB,
+            0xBB,
+            0x43,
+            0x4A,
             0x6B,
-            0xF4,
-            0xAE,
-            0x3E,
-            0x29,
-            0x81,
-            0xAA,
-            0xBC,
+            0x4C,
+            0x67,
+            0xBB,
+            0x5A,
+            0x2F,
             0x90,
-            0x13,
-            0x7B,
-            0xF9,
-            0x36,
+            0x9C,
+            0x2B,
+            0xA8,
+            0xD9,
+            0x27,
+            0x8C,
+            0xBB,
+            0xD3,
+            0xFA,
+            0x81,
+            0x2D,
+            0xF0,
+            0xBC,
+            0xFB,
         )
     ),
 }
@@ -5141,7 +5142,27 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         for name in dir(owner)
         if callable(getattr(owner, name, None))
     )
-    deterministic_text_builtin_names = frozenset({"bytearray", "bytes", "chr", "str"})
+    deterministic_text_builtins = {
+        "ascii": python_builtins.ascii,
+        "bin": python_builtins.bin,
+        "bytearray": python_builtins.bytearray,
+        "bytes": python_builtins.bytes,
+        "chr": python_builtins.chr,
+        "format": python_builtins.format,
+        "hex": python_builtins.hex,
+        "oct": python_builtins.oct,
+        "repr": python_builtins.repr,
+        "str": python_builtins.str,
+    }
+    if any(
+        getattr(python_builtins, name, None) is not builtin
+        for name, builtin in deterministic_text_builtins.items()
+    ):
+        raise ValueError(
+            "Python runtime deterministic text builtins differ from the trusted policy"
+        )
+    deterministic_text_builtin_names = frozenset(deterministic_text_builtins)
+    deterministic_text_builtin_values = tuple(deterministic_text_builtins.values())
     dynamic_code_builtin_names = frozenset({"compile", "eval", "exec"})
     static_import_builtin_names = frozenset({"__import__"})
     decoder_source_keyword_names = frozenset(
@@ -5542,13 +5563,14 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         builtin_names: frozenset[str],
         observed_keys: frozenset[tuple[int, str]] = frozenset(),
     ) -> frozenset[int]:
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in builtin_names
-            and unshadowed_deterministic_text_builtin(node.func) is not None
-        ):
-            return frozenset({id(node)})
+        if isinstance(node, ast.Call):
+            builtin = unshadowed_deterministic_text_builtin(node.func)
+            if builtin is not None and any(
+                name in deterministic_text_builtins
+                and builtin is deterministic_text_builtins[name]
+                for name in builtin_names
+            ):
+                return frozenset({id(node)})
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             return expression_static_text_builtin_origin_ids(
                 node.func.value,
@@ -6009,7 +6031,10 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 )
                 static_stdlib_module_names.update({node.module, qualified_name})
                 static_stdlib_callable_qualified_names.add(qualified_name)
-            if node.module == "builtins" and alias.name in {"getattr", "int"}:
+            if node.module == "builtins" and (
+                alias.name in deterministic_text_builtin_names
+                or alias.name in {"getattr", "int"}
+            ):
                 static_builtin_import_bindings.setdefault(key, []).append(
                     (id(alias), alias.name)
                 )
@@ -8002,6 +8027,61 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         opaque_join_callable_cache[expression_id] = result
         return result
 
+    def static_comprehension_constructs_privacy_risk(
+        expression: ast.GeneratorExp | ast.ListComp | ast.SetComp | ast.DictComp,
+    ) -> bool:
+        if len(expression.generators) != 1:
+            return False
+        generator = expression.generators[0]
+        if generator.is_async or not isinstance(generator.target, ast.Name):
+            return False
+        iterable = evaluate_binding_expression(generator.iter)
+        if type(iterable) not in {tuple, list}:
+            return False
+        if len(iterable) > BOOTSTRAP_V2_MAX_PYTHON_AST_NODES:
+            raise ValueError(
+                "Python static comprehension exceeds the trusted item limit"
+            )
+        producer = (
+            expression.key if isinstance(expression, ast.DictComp) else expression.elt
+        )
+        if not isinstance(producer, ast.Call):
+            return False
+        constructor = evaluate_binding_expression(producer.func)
+        if not any(
+            constructor is candidate for candidate in deterministic_text_builtin_values
+        ):
+            return False
+
+        fragments: list[str] = []
+        aggregate_size = 0
+        for item in iterable:
+
+            def evaluate_local(node: ast.AST) -> Any:
+                if (
+                    isinstance(node, ast.Name)
+                    and isinstance(node.ctx, ast.Load)
+                    and node.id == generator.target.id
+                ):
+                    return item
+                return evaluate_binding_expression(node)
+
+            result = evaluate_deterministic_text_builtin_call(
+                producer,
+                constructor,
+                evaluate_local,
+            )
+            if type(result) not in {str, bytes}:
+                return False
+            text, payload_size = bootstrap_v2_python_constant_text(result)
+            aggregate_size += payload_size
+            if aggregate_size > BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES:
+                raise ValueError(
+                    "Python static comprehension exceeds the trusted byte limit"
+                )
+            fragments.append(text)
+        return bool(bootstrap_v2_privacy_risk_lines("".join(fragments)))
+
     def opaque_join_iterable_may_emit_text(expression: ast.AST) -> bool:
         expression_id = id(expression)
         cached = opaque_join_iterable_cache.get(expression_id)
@@ -8013,7 +8093,12 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         consume_opaque_join_analysis_operation()
         opaque_join_analysis_stack.add(stack_key)
         try:
-            if isinstance(expression, ast.Call):
+            if isinstance(
+                expression,
+                (ast.GeneratorExp, ast.ListComp, ast.SetComp, ast.DictComp),
+            ):
+                result = static_comprehension_constructs_privacy_risk(expression)
+            elif isinstance(expression, ast.Call):
                 result = (
                     selects_opaque_join_callable(expression.func)
                     or any(
@@ -8249,14 +8334,28 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
 
     def unshadowed_deterministic_text_builtin(node: ast.AST) -> Any:
         name = unshadowed_builtin_name(node, deterministic_text_builtin_names)
-        if name is None:
+        if name is not None:
+            return deterministic_text_builtins[name]
+        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
             return None
-        return {
-            "bytearray": bytearray,
-            "bytes": bytes,
-            "chr": chr,
-            "str": str,
-        }[name]
+        key = name_load_binding_key(node)
+        imported_events = static_builtin_import_bindings.get(key, ())
+        reachable_imports = {
+            imported_name
+            for event_id, imported_name in imported_events
+            if imported_name in deterministic_text_builtin_names
+            and event_may_reach_load(node, key, event_id)
+        }
+        if len(reachable_imports) != 1:
+            return None
+        import_event_ids = {event_id for event_id, _ in imported_events}
+        if any(
+            event_id not in import_event_ids
+            and event_may_reach_load(node, key, event_id)
+            for event_id in binding_event_ids.get(key, ())
+        ):
+            return None
+        return deterministic_text_builtins[next(iter(reachable_imports))]
 
     def unshadowed_static_range_builtin(node: ast.AST) -> Any:
         return range if unshadowed_builtin_name(node, frozenset({"range"})) else None
@@ -8356,8 +8455,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     static_constructor_analysis_operations = 0
     static_constructor_analysis_limit = max(node_count * 8, 1)
     static_constructor_builtin_names = set(
-        "bin bytearray bytes chr enumerate filter frozenset hex int iter len list "
-        "map max min oct ord range reversed set str sum tuple zip".split()
+        "ascii bin bytearray bytes chr enumerate filter format frozenset hex int "
+        "iter len list map max min oct ord range repr reversed set str sum tuple "
+        "zip".split()
     )
 
     def consume_static_constructor_analysis_operation() -> None:
@@ -8457,6 +8557,43 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 raise ValueError(
                     "Python deterministic chr call is unsupported"
                 ) from exc
+            return validate_text_method_result(result)
+
+        if constructor is python_builtins.format:
+            if not 1 <= len(arguments) <= 2 or keywords:
+                return not_pure
+            format_spec = arguments[1] if len(arguments) == 2 else ""
+            if type(format_spec) is not str:
+                return not_pure
+            result = bootstrap_v2_python_formatted_value(
+                arguments[0],
+                conversion=-1,
+                format_spec=format_spec,
+                max_output_bytes=BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES,
+            )
+            return validate_text_method_result(result)
+
+        if constructor in {python_builtins.ascii, python_builtins.repr}:
+            if len(arguments) != 1 or keywords:
+                return not_pure
+            result = bootstrap_v2_python_formatted_value(
+                arguments[0],
+                conversion=(
+                    ord("a") if constructor is python_builtins.ascii else ord("r")
+                ),
+                format_spec="",
+                max_output_bytes=BOOTSTRAP_V2_MAX_PYTHON_EVALUATED_VALUE_BYTES,
+            )
+            return validate_text_method_result(result)
+
+        if constructor in {
+            python_builtins.bin,
+            python_builtins.hex,
+            python_builtins.oct,
+        }:
+            if len(arguments) != 1 or keywords or type(arguments[0]) is not int:
+                return not_pure
+            result = constructor(arguments[0])
             return validate_text_method_result(result)
 
         if constructor not in {bytearray, bytes, str}:
@@ -9096,7 +9233,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 callable_value = evaluate_binding_expression(node.func)
                 if any(
                     callable_value is constructor
-                    for constructor in (bytearray, bytes, chr, range, str)
+                    for constructor in (*deterministic_text_builtin_values, range)
                 ):
                     result = evaluate_deterministic_text_builtin_call(
                         node,
@@ -10892,7 +11029,8 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             )
             constructor = unshadowed_deterministic_text_builtin(node.func)
             if any(
-                constructor is candidate for candidate in (bytearray, bytes, chr, str)
+                constructor is candidate
+                for candidate in deterministic_text_builtin_values
             ):
                 constructor_result = evaluate_binding_expression(node)
                 is_supported_string_constructor = (
@@ -11208,17 +11346,19 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             evaluated[id(node)] = rendered
             continue
 
+        constructor = not_pure
+        if isinstance(node, ast.Call):
+            if has_static_builtin_origin(
+                node.func,
+                deterministic_text_builtin_names,
+            ):
+                constructor = evaluate_binding_expression(node.func)
+            else:
+                constructor = unshadowed_static_range_builtin(node.func) or not_pure
         if isinstance(node, ast.Call) and any(
-            (
-                unshadowed_deterministic_text_builtin(node.func)
-                or unshadowed_static_range_builtin(node.func)
-            )
-            is constructor
-            for constructor in (bytearray, bytes, chr, range, str)
+            constructor is candidate
+            for candidate in (*deterministic_text_builtin_values, range)
         ):
-            constructor = unshadowed_deterministic_text_builtin(
-                node.func
-            ) or unshadowed_static_range_builtin(node.func)
             result = evaluate_deterministic_text_builtin_call(
                 node,
                 constructor,

@@ -12080,6 +12080,71 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     MODULE.bootstrap_v2_python_privacy_risk_values(source),
                 )
 
+    def test_bootstrap_v2_python_deterministic_text_builtins_are_scanned(
+        self,
+    ) -> None:
+        expected = risky_github_classic_token()
+        codepoints = tuple(expected.encode("ascii"))
+
+        def format_expression(callable_name: str) -> str:
+            return " + ".join(
+                f'{callable_name}({codepoint}, "c")' for codepoint in codepoints
+            )
+
+        relative = Path("tests/test_retrospective_history_v2.py")
+        rejected = (
+            f"value = {format_expression('format')}\n",
+            f"emit = format\nvalue = {format_expression('emit')}\n",
+            "from builtins import format as emit\n"
+            f"value = {format_expression('emit')}\n",
+        )
+        for source in rejected:
+            with self.subTest(source=source.splitlines()[0]):
+                self.assertFalse(
+                    MODULE.contains_bootstrap_v2_privacy_risk_text(
+                        source,
+                        relative=relative,
+                    )
+                )
+                self.assertIn(
+                    expected,
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                )
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    write_bootstrap_v2_candidate(root)
+                    (root / relative).write_text(source, encoding="utf-8")
+
+                    issues = "\n".join(validate_synthetic_bootstrap_v2_candidate(root))
+
+                self.assertIn(
+                    "infrastructure text contains raw/sensitive evidence",
+                    issues,
+                )
+
+        for source in (
+            "def format(value, spec):\n"
+            '    return "public"\n'
+            f"value = {format_expression('format')}\n",
+            "from builtins import format as emit\n"
+            "emit = custom_format\n"
+            f"value = {format_expression('emit')}\n",
+        ):
+            with self.subTest(shadowed=source.splitlines()[0]):
+                self.assertEqual(
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                    [],
+                )
+
+        constants = MODULE.bootstrap_v2_python_string_constants(
+            'ascii_value = ascii("public")\n'
+            "bin_value = bin(7)\n"
+            "hex_value = hex(31)\n"
+            "oct_value = oct(8)\n"
+            'repr_value = repr("public")\n'
+        )
+        self.assertTrue({"'public'", "0b111", "0x1f", "0o10"} <= set(constants))
+
     def test_bootstrap_v2_python_closed_static_method_receiver_fails_closed(
         self,
     ) -> None:
@@ -12812,6 +12877,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         cases = (
             'value = "".join(reversed(("IJKLMNOP", "ABCDEFGH", "ghp_")))\n',
             f'value = "".join(map(chr, ({codepoints})))\n',
+            f'value = "".join(chr(value) for value in ({codepoints}))\n',
+            f'value = "".join([chr(value) for value in ({codepoints})])\n',
+            f'value = "".join({{chr(value) for value in ({codepoints})}})\n',
+            f'value = "".join({{chr(value): None for value in ({codepoints})}})\n',
+            f"codepoints = ({codepoints})\n"
+            'value = "".join(chr(value) for value in codepoints)\n',
             f'value = "".join(filter(None, map(chr, ({codepoints}))))\n',
             f'value = "".join(iter(map(chr, ({codepoints}))))\n',
             f'value = "".join(list(map(chr, ({codepoints}))))\n',
