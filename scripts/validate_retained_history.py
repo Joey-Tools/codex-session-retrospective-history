@@ -830,6 +830,38 @@ class HistoryV2FileSnapshot:
         return stat.S_ISREG(self.mode)
 
 
+@dataclass(frozen=True)
+class HistoryV2DefaultCheckoutBinding:
+    root: Path
+    base_rev: str
+    head_rev: str
+    head_tree_oid: str
+    root_identity: tuple[int, int, int]
+    root_access: tuple[int, int, int]
+
+    def revalidate(self, root: Path) -> Path:
+        observed_root = root.resolve()
+        if observed_root != self.root:
+            raise ValueError(
+                "history-v2 validation root differs from the authorized checkout"
+            )
+        try:
+            metadata = os.stat(observed_root, follow_symlinks=False)
+        except OSError as exc:
+            raise ValueError(
+                "history-v2 authorized checkout root could not be revalidated"
+            ) from exc
+        if _history_v2_entry_identity(
+            metadata
+        ) != self.root_identity or not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError("history-v2 authorized checkout root identity changed")
+        if _history_v2_entry_access(metadata) != self.root_access:
+            raise ValueError(
+                "history-v2 authorized checkout root access policy changed"
+            )
+        return observed_root
+
+
 class BoundedDiagnosticList(list[str]):
     def __init__(self, values: Iterable[str] = ()) -> None:
         super().__init__()
@@ -14339,6 +14371,33 @@ def validate_history_v2_domain_tree(
             close_inventory()
 
 
+def history_v2_snapshot_blob_entries(
+    snapshots: tuple[HistoryV2FileSnapshot, ...],
+    *,
+    expected_oid_length: int,
+) -> dict[Path, GitIndexEntry]:
+    entries: dict[Path, GitIndexEntry] = {}
+    for snapshot in snapshots:
+        if (
+            snapshot.relative in entries
+            or not snapshot.is_regular
+            or snapshot.value is None
+            or len(snapshot.value) != snapshot.size
+        ):
+            raise ValueError(
+                "history-v2 frozen candidate snapshot is not a regular-file tree"
+            )
+        mode = "100755" if snapshot.mode & 0o111 else "100644"
+        entries[snapshot.relative] = GitIndexEntry(
+            mode,
+            git_blob_bytes_object_id(
+                snapshot.value,
+                expected_length=expected_oid_length,
+            ),
+        )
+    return entries
+
+
 def validate_history_v2_tree(
     root: Path,
     *,
@@ -14346,14 +14405,52 @@ def validate_history_v2_tree(
     work_budget: HistoryV2WorkBudget | None = None,
     trusted_base_rev: str | None = None,
     trusted_revision_domain: bool = False,
+    trusted_checkout: HistoryV2DefaultCheckoutBinding | None = None,
 ) -> list[str]:
     root = root.resolve()
+    budget = work_budget or HistoryV2WorkBudget()
+    trusted_tree_entries: tuple[HistoryV2TreeEntry, ...] | None = None
+    if trusted_checkout is not None:
+        try:
+            if (
+                type(trusted_checkout) is not HistoryV2DefaultCheckoutBinding
+                or not verify_head_tree
+            ):
+                raise ValueError("history-v2 authorized checkout binding is invalid")
+            root = trusted_checkout.revalidate(root)
+            trusted_tree_entries = history_v2_tree_entries(
+                root,
+                trusted_checkout.head_rev,
+                tree_oid=trusted_checkout.head_tree_oid,
+                work_budget=budget,
+            )
+            trusted_checkout.revalidate(root)
+        except (OSError, UnicodeError, ValueError) as exc:
+            return [safe_exception_message(exc)]
     file_snapshots, snapshot_issue = snapshot_bootstrap_v2_files(
         root,
         max_entries=BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES,
     )
     if snapshot_issue is not None or file_snapshots is None:
         return [snapshot_issue or "history-v2 candidate snapshot could not be frozen"]
+    if trusted_checkout is not None and trusted_tree_entries is not None:
+        try:
+            trusted_checkout.revalidate(root)
+            expected_entries = {
+                entry.relative: GitIndexEntry(entry.mode, entry.object_id)
+                for entry in trusted_tree_entries
+                if entry.object_type == "blob"
+            }
+            snapshot_entries = history_v2_snapshot_blob_entries(
+                file_snapshots,
+                expected_oid_length=len(trusted_checkout.head_rev),
+            )
+            if snapshot_entries != expected_entries:
+                raise ValueError(
+                    "history-v2 frozen candidate snapshot differs from the authorized transaction tree"
+                )
+        except (OSError, UnicodeError, ValueError) as exc:
+            return [safe_exception_message(exc)]
     issues = validate_bootstrap_v2_candidate(
         root,
         root,
@@ -14370,6 +14467,20 @@ def validate_history_v2_tree(
     if entry_issue is not None or entries is None:
         issues.append(entry_issue or "history-v2 Git index could not be inspected")
         return list(dict.fromkeys(issues))
+    if trusted_checkout is not None and trusted_tree_entries is not None:
+        try:
+            trusted_checkout.revalidate(root)
+            expected_entries = {
+                entry.relative: GitIndexEntry(entry.mode, entry.object_id)
+                for entry in trusted_tree_entries
+                if entry.object_type == "blob"
+            }
+            if entries != expected_entries:
+                raise ValueError(
+                    "history-v2 Git index differs from the authorized transaction tree"
+                )
+        except (OSError, UnicodeError, ValueError) as exc:
+            return [safe_exception_message(exc)]
     for relative in sorted(entries):
         if not history_v2_tree_artifact_allowed(relative):
             issues.append(
@@ -14390,6 +14501,11 @@ def validate_history_v2_tree(
     visible_snapshots = tuple(
         snapshot_by_relative[relative] for relative in visible_relatives
     )
+    if trusted_checkout is not None:
+        try:
+            trusted_checkout.revalidate(root)
+        except (OSError, UnicodeError, ValueError) as exc:
+            return [safe_exception_message(exc)]
     domain_issues = validate_history_v2_domain_tree(
         root,
         file_snapshots=visible_snapshots,
@@ -14406,8 +14522,12 @@ def validate_history_v2_tree(
             file_snapshots=visible_snapshots,
         )
     )
+    if trusted_checkout is not None and not issues:
+        try:
+            trusted_checkout.revalidate(root)
+        except (OSError, UnicodeError, ValueError) as exc:
+            issues.append(safe_exception_message(exc))
     if verify_head_tree and not issues:
-        budget = work_budget or HistoryV2WorkBudget()
         try:
             head = canonical_history_v2_oid(
                 history_v2_git_text(
@@ -14429,6 +14549,13 @@ def validate_history_v2_tree(
                 ).strip(),
                 "history-v2 default-branch tree",
             )
+            if trusted_checkout is not None and (
+                head != trusted_checkout.head_rev
+                or tree_oid != trusted_checkout.head_tree_oid
+            ):
+                raise ValueError(
+                    "history-v2 default-branch HEAD differs from the authorized transaction"
+                )
             tree_entries = history_v2_tree_entries(
                 root,
                 head,
@@ -14443,6 +14570,8 @@ def validate_history_v2_tree(
                 work_budget=budget,
                 validate_contents=False,
             )
+            if trusted_checkout is not None:
+                trusted_checkout.revalidate(root)
         except (OSError, UnicodeError, ValueError) as exc:
             issues.append(safe_exception_message(exc))
     return list(dict.fromkeys(issues))
@@ -18274,69 +18403,16 @@ def history_v2_bootstrap_admission_app_id() -> int:
     return app_id
 
 
-def validate_history_v2_bootstrap_transaction(
+def _validate_history_v2_bootstrap_transaction_coordinates(
     root: Path,
     *,
     base_rev: str,
     head_rev: str,
-    verify_candidate_signature: bool = True,
-    work_budget: HistoryV2WorkBudget | None = None,
-    github_commit_receipt: dict[str, Any] | None = None,
-    repository: str | None = None,
-    repository_id: int | None = None,
-    base_root: Path | None = None,
-    candidate_root: Path | None = None,
+    head_tree_oid: str,
+    parents: tuple[str, ...],
+    verify_candidate_signature: bool,
+    budget: HistoryV2WorkBudget,
 ) -> dict[str, Any]:
-    history_v2_bootstrap_admission_app_id()
-    root, base_rev, head_rev = validated_history_v2_range_checkout(
-        root,
-        base_rev=base_rev,
-        head_rev=head_rev,
-    )
-    budget = work_budget or HistoryV2WorkBudget()
-    count_text = history_v2_git_text(
-        root,
-        "rev-list",
-        "--count",
-        "--max-count=2",
-        f"{base_rev}..{head_rev}",
-        max_bytes=16,
-    ).strip()
-    if count_text != "1":
-        raise ValueError("history-v2 bootstrap must contain exactly one commit")
-    if type(verify_candidate_signature) is not bool:
-        raise ValueError("history-v2 bootstrap signature mode is invalid")
-    if verify_candidate_signature:
-        with history_v2_signature_verifier_for_root(
-            root,
-            policy="bootstrap-v2",
-        ) as signature_verifier:
-            commit = validate_history_v2_commit_object(
-                root,
-                head_rev,
-                signature_verifier=signature_verifier,
-            )
-        head_tree_oid = commit.tree_oid
-        parents = commit.parents
-    else:
-        head_tree_oid, parents = history_v2_single_parent_squash_coordinates(
-            root,
-            before_rev=base_rev,
-            head_rev=head_rev,
-            github_commit_receipt=github_commit_receipt,
-            repository=repository,
-            repository_id=repository_id,
-            base_root=base_root,
-            candidate_root=candidate_root,
-            work_budget=budget,
-        )
-        if not isinstance(github_commit_receipt, dict):
-            raise ValueError(
-                "history-v2 bootstrap squash lacks candidate reproof evidence"
-            )
-        candidate_evidence = github_commit_receipt["candidate_evidence"]
-        if candidate_evidence.get("authority_mode") != "bootstrap-v2-migration":
-            raise ValueError("history-v2 bootstrap receipt uses another policy branch")
     budget.add_parent_edges(len(parents))
     if parents != (base_rev,):
         raise ValueError(
@@ -18425,6 +18501,80 @@ def validate_history_v2_bootstrap_transaction(
         "commit_count": 1,
         "candidate_signature_retained": verify_candidate_signature,
     }
+
+
+def validate_history_v2_bootstrap_transaction(
+    root: Path,
+    *,
+    base_rev: str,
+    head_rev: str,
+    verify_candidate_signature: bool = True,
+    work_budget: HistoryV2WorkBudget | None = None,
+    github_commit_receipt: dict[str, Any] | None = None,
+    repository: str | None = None,
+    repository_id: int | None = None,
+    base_root: Path | None = None,
+    candidate_root: Path | None = None,
+) -> dict[str, Any]:
+    history_v2_bootstrap_admission_app_id()
+    root, base_rev, head_rev = validated_history_v2_range_checkout(
+        root,
+        base_rev=base_rev,
+        head_rev=head_rev,
+    )
+    budget = work_budget or HistoryV2WorkBudget()
+    count_text = history_v2_git_text(
+        root,
+        "rev-list",
+        "--count",
+        "--max-count=2",
+        f"{base_rev}..{head_rev}",
+        max_bytes=16,
+    ).strip()
+    if count_text != "1":
+        raise ValueError("history-v2 bootstrap must contain exactly one commit")
+    if type(verify_candidate_signature) is not bool:
+        raise ValueError("history-v2 bootstrap signature mode is invalid")
+    if verify_candidate_signature:
+        with history_v2_signature_verifier_for_root(
+            root,
+            policy="bootstrap-v2",
+        ) as signature_verifier:
+            commit = validate_history_v2_commit_object(
+                root,
+                head_rev,
+                signature_verifier=signature_verifier,
+            )
+        head_tree_oid = commit.tree_oid
+        parents = commit.parents
+    else:
+        head_tree_oid, parents = history_v2_single_parent_squash_coordinates(
+            root,
+            before_rev=base_rev,
+            head_rev=head_rev,
+            github_commit_receipt=github_commit_receipt,
+            repository=repository,
+            repository_id=repository_id,
+            base_root=base_root,
+            candidate_root=candidate_root,
+            work_budget=budget,
+        )
+        if not isinstance(github_commit_receipt, dict):
+            raise ValueError(
+                "history-v2 bootstrap squash lacks candidate reproof evidence"
+            )
+        candidate_evidence = github_commit_receipt["candidate_evidence"]
+        if candidate_evidence.get("authority_mode") != "bootstrap-v2-migration":
+            raise ValueError("history-v2 bootstrap receipt uses another policy branch")
+    return _validate_history_v2_bootstrap_transaction_coordinates(
+        root,
+        base_rev=base_rev,
+        head_rev=head_rev,
+        head_tree_oid=head_tree_oid,
+        parents=parents,
+        verify_candidate_signature=verify_candidate_signature,
+        budget=budget,
+    )
 
 
 def history_v2_single_parent_squash_coordinates(
@@ -18519,7 +18669,7 @@ def history_v2_single_parent_squash_coordinates(
     return head_tree_oid, (parent,)
 
 
-def validated_history_v2_default_event_checkout(
+def _validated_history_v2_default_event_coordinates(
     root: Path,
     *,
     before_rev: str,
@@ -18533,7 +18683,7 @@ def validated_history_v2_default_event_checkout(
     repository_id: int | None = None,
     base_root: Path | None = None,
     candidate_root: Path | None = None,
-) -> tuple[Path, str, str]:
+) -> tuple[Path, str, str, str]:
     if any(
         type(value) is not bool
         for value in (event_created, event_deleted, event_forced)
@@ -18560,7 +18710,7 @@ def validated_history_v2_default_event_checkout(
         base_rev=before_rev,
         head_rev=head_rev,
     )
-    history_v2_single_parent_squash_coordinates(
+    head_tree_oid, _parents = history_v2_single_parent_squash_coordinates(
         root,
         before_rev=before_rev,
         head_rev=head_rev,
@@ -18573,39 +18723,52 @@ def validated_history_v2_default_event_checkout(
     )
     if work_budget is not None:
         work_budget.authorized_domain_revisions.add((root, before_rev))
-    return root, before_rev, head_rev
+    return root, before_rev, head_rev, head_tree_oid
 
 
-def validate_history_v2_actual_squash_transaction(
+def validated_history_v2_default_event_checkout(
     root: Path,
     *,
     before_rev: str,
     head_rev: str,
+    event_created: bool,
+    event_deleted: bool,
+    event_forced: bool,
     work_budget: HistoryV2WorkBudget | None = None,
     github_commit_receipt: dict[str, Any] | None = None,
     repository: str | None = None,
     repository_id: int | None = None,
     base_root: Path | None = None,
     candidate_root: Path | None = None,
+) -> tuple[Path, str, str]:
+    validated_root, validated_before, validated_head, _head_tree_oid = (
+        _validated_history_v2_default_event_coordinates(
+            root,
+            before_rev=before_rev,
+            head_rev=head_rev,
+            event_created=event_created,
+            event_deleted=event_deleted,
+            event_forced=event_forced,
+            work_budget=work_budget,
+            github_commit_receipt=github_commit_receipt,
+            repository=repository,
+            repository_id=repository_id,
+            base_root=base_root,
+            candidate_root=candidate_root,
+        )
+    )
+    return validated_root, validated_before, validated_head
+
+
+def _validate_history_v2_actual_squash_transaction_coordinates(
+    root: Path,
+    *,
+    before_rev: str,
+    head_rev: str,
+    head_tree_oid: str,
+    budget: HistoryV2WorkBudget,
+    github_commit_receipt: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    root, before_rev, head_rev = validated_history_v2_range_checkout(
-        root,
-        base_rev=before_rev,
-        head_rev=head_rev,
-    )
-    budget = work_budget or HistoryV2WorkBudget()
-    head_tree_oid, _parents = history_v2_single_parent_squash_coordinates(
-        root,
-        before_rev=before_rev,
-        head_rev=head_rev,
-        github_commit_receipt=github_commit_receipt,
-        repository=repository,
-        repository_id=repository_id,
-        base_root=base_root,
-        candidate_root=candidate_root,
-        work_budget=budget,
-    )
-    budget.authorized_domain_revisions.add((root, before_rev))
     changed = parse_history_v2_changed_paths(
         history_v2_diff_output(
             root,
@@ -18671,6 +18834,46 @@ def validate_history_v2_actual_squash_transaction(
     }
 
 
+def validate_history_v2_actual_squash_transaction(
+    root: Path,
+    *,
+    before_rev: str,
+    head_rev: str,
+    work_budget: HistoryV2WorkBudget | None = None,
+    github_commit_receipt: dict[str, Any] | None = None,
+    repository: str | None = None,
+    repository_id: int | None = None,
+    base_root: Path | None = None,
+    candidate_root: Path | None = None,
+) -> dict[str, Any]:
+    root, before_rev, head_rev = validated_history_v2_range_checkout(
+        root,
+        base_rev=before_rev,
+        head_rev=head_rev,
+    )
+    budget = work_budget or HistoryV2WorkBudget()
+    head_tree_oid, _parents = history_v2_single_parent_squash_coordinates(
+        root,
+        before_rev=before_rev,
+        head_rev=head_rev,
+        github_commit_receipt=github_commit_receipt,
+        repository=repository,
+        repository_id=repository_id,
+        base_root=base_root,
+        candidate_root=candidate_root,
+        work_budget=budget,
+    )
+    budget.authorized_domain_revisions.add((root, before_rev))
+    return _validate_history_v2_actual_squash_transaction_coordinates(
+        root,
+        before_rev=before_rev,
+        head_rev=head_rev,
+        head_tree_oid=head_tree_oid,
+        budget=budget,
+        github_commit_receipt=github_commit_receipt,
+    )
+
+
 def validate_history_v2_default_transaction(
     root: Path,
     *,
@@ -18686,48 +18889,115 @@ def validate_history_v2_default_transaction(
     base_root: Path | None = None,
     candidate_root: Path | None = None,
 ) -> dict[str, Any]:
-    root, before_rev, head_rev = validated_history_v2_default_event_checkout(
-        root,
-        before_rev=before_rev,
-        head_rev=head_rev,
-        event_created=event_created,
-        event_deleted=event_deleted,
-        event_forced=event_forced,
-        work_budget=work_budget,
-        github_commit_receipt=github_commit_receipt,
-        repository=repository,
-        repository_id=repository_id,
-        base_root=base_root,
-        candidate_root=candidate_root,
-    )
-
-    markers = history_v2_bootstrap_markers(root, before_rev)
-    if markers:
-        if markers != BOOTSTRAP_V2_TEMPORARY_PATHS:
-            raise ValueError("history-v2 bootstrap base marker set is incomplete")
-        return validate_history_v2_bootstrap_transaction(
+    budget = work_budget or HistoryV2WorkBudget()
+    root, before_rev, head_rev, head_tree_oid = (
+        _validated_history_v2_default_event_coordinates(
             root,
-            base_rev=before_rev,
+            before_rev=before_rev,
             head_rev=head_rev,
-            verify_candidate_signature=False,
-            work_budget=work_budget,
+            event_created=event_created,
+            event_deleted=event_deleted,
+            event_forced=event_forced,
+            work_budget=budget,
             github_commit_receipt=github_commit_receipt,
             repository=repository,
             repository_id=repository_id,
             base_root=base_root,
             candidate_root=candidate_root,
         )
-    return validate_history_v2_actual_squash_transaction(
+    )
+
+    markers = history_v2_bootstrap_markers(root, before_rev)
+    if markers:
+        if markers != BOOTSTRAP_V2_TEMPORARY_PATHS:
+            raise ValueError("history-v2 bootstrap base marker set is incomplete")
+        history_v2_bootstrap_admission_app_id()
+        if not isinstance(github_commit_receipt, dict):
+            raise ValueError(
+                "history-v2 bootstrap squash lacks candidate reproof evidence"
+            )
+        candidate_evidence = github_commit_receipt["candidate_evidence"]
+        if candidate_evidence.get("authority_mode") != "bootstrap-v2-migration":
+            raise ValueError("history-v2 bootstrap receipt uses another policy branch")
+        return _validate_history_v2_bootstrap_transaction_coordinates(
+            root,
+            base_rev=before_rev,
+            head_rev=head_rev,
+            head_tree_oid=head_tree_oid,
+            parents=(before_rev,),
+            verify_candidate_signature=False,
+            budget=budget,
+        )
+    return _validate_history_v2_actual_squash_transaction_coordinates(
         root,
         before_rev=before_rev,
         head_rev=head_rev,
-        work_budget=work_budget,
+        head_tree_oid=head_tree_oid,
+        budget=budget,
         github_commit_receipt=github_commit_receipt,
-        repository=repository,
-        repository_id=repository_id,
-        base_root=base_root,
-        candidate_root=candidate_root,
     )
+
+
+def revalidate_history_v2_default_transaction_checkout(
+    root: Path,
+    transaction: dict[str, Any],
+) -> HistoryV2DefaultCheckoutBinding:
+    if not isinstance(transaction, dict):
+        raise ValueError("history-v2 default transaction evidence is invalid")
+    try:
+        base_rev = canonical_history_v2_oid(
+            transaction["base_sha"],
+            "history-v2 default transaction base",
+        )
+        head_rev = canonical_history_v2_oid(
+            transaction["head_sha"],
+            "history-v2 default transaction head",
+        )
+        expected_tree_oid = canonical_history_v2_oid(
+            transaction["head_tree_sha"],
+            "history-v2 default transaction tree",
+        )
+    except (KeyError, TypeError) as exc:
+        raise ValueError("history-v2 default transaction evidence is invalid") from exc
+    root = root.resolve()
+    try:
+        root_metadata = os.stat(root, follow_symlinks=False)
+    except OSError as exc:
+        raise ValueError(
+            "history-v2 authorized checkout root could not be inspected"
+        ) from exc
+    if not stat.S_ISDIR(root_metadata.st_mode):
+        raise ValueError("history-v2 authorized checkout root is not a directory")
+    binding = HistoryV2DefaultCheckoutBinding(
+        root=root,
+        base_rev=base_rev,
+        head_rev=head_rev,
+        head_tree_oid=expected_tree_oid,
+        root_identity=_history_v2_entry_identity(root_metadata),
+        root_access=_history_v2_entry_access(root_metadata),
+    )
+    binding.revalidate(root)
+    root, base_rev, head_rev = validated_history_v2_range_checkout(
+        root,
+        base_rev=base_rev,
+        head_rev=head_rev,
+    )
+    observed_tree_oid = canonical_history_v2_oid(
+        history_v2_git_text(
+            root,
+            "rev-parse",
+            "--verify",
+            f"{head_rev}^{{tree}}",
+            max_bytes=128,
+        ).strip(),
+        "history-v2 default transaction observed tree",
+    )
+    if observed_tree_oid != expected_tree_oid:
+        raise ValueError(
+            "history-v2 worktree tree differs from the authorized transaction"
+        )
+    binding.revalidate(root)
+    return binding
 
 
 def write_history_v2_merge_plan(
@@ -19199,7 +19469,7 @@ def main(argv: list[str] | None = None) -> int:
             github_commit_receipt = load_history_v2_github_squash_receipt(
                 args.github_commit_receipt
             )
-            root, before_rev, head_rev = validated_history_v2_default_event_checkout(
+            transaction = validate_history_v2_default_transaction(
                 root,
                 before_rev=args.base_rev,
                 head_rev=args.head_rev,
@@ -19213,33 +19483,27 @@ def main(argv: list[str] | None = None) -> int:
                 base_root=Path(args.base_root),
                 candidate_root=Path(args.candidate_root),
             )
-        except (OSError, UnicodeError, ValueError) as exc:
-            issues = [safe_exception_message(exc)]
-        else:
+            checkout_binding = revalidate_history_v2_default_transaction_checkout(
+                root, transaction
+            )
             issues = validate_history_v2_tree(
                 root,
                 work_budget=work_budget,
-                trusted_base_rev=before_rev,
+                trusted_base_rev=transaction["base_sha"],
                 trusted_revision_domain=True,
+                trusted_checkout=checkout_binding,
             )
-        if not issues:
-            try:
-                validate_history_v2_default_transaction(
+            if not issues:
+                final_binding = revalidate_history_v2_default_transaction_checkout(
                     root,
-                    before_rev=before_rev,
-                    head_rev=head_rev,
-                    event_created=args.event_created == "true",
-                    event_deleted=args.event_deleted == "true",
-                    event_forced=args.event_forced == "true",
-                    work_budget=work_budget,
-                    github_commit_receipt=github_commit_receipt,
-                    repository=args.repository,
-                    repository_id=args.repository_id,
-                    base_root=Path(args.base_root),
-                    candidate_root=Path(args.candidate_root),
+                    transaction,
                 )
-            except (OSError, UnicodeError, ValueError) as exc:
-                issues.append(safe_exception_message(exc))
+                if final_binding != checkout_binding:
+                    raise ValueError(
+                        "history-v2 authorized checkout binding changed during validation"
+                    )
+        except (OSError, UnicodeError, ValueError) as exc:
+            issues = [safe_exception_message(exc)]
     else:
         if (
             args.base_root is not None

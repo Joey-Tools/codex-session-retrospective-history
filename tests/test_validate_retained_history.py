@@ -5,6 +5,7 @@ import base64
 import errno
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -3740,6 +3741,84 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     projection=changed,
                 )
 
+    def test_actual_default_reuses_candidate_reproof_for_41_to_64_commits(
+        self,
+    ) -> None:
+        root = Path("/synthetic/repository")
+        base = "b" * 40
+        head = "c" * 40
+        tree = "d" * 40
+        receipt = {
+            "candidate_evidence": {
+                "authority_mode": "history-v2-admission",
+                "admission_binding": {
+                    "admission": {
+                        "projection": {
+                            "policy": "history-v2",
+                            "role": "admin",
+                        }
+                    }
+                },
+            }
+        }
+
+        for candidate_commits in (41, MODULE.HISTORY_V2_MAX_COMMITS):
+            budget = MODULE.HistoryV2WorkBudget()
+
+            def prove_candidate_once(*_args: object, **kwargs: object) -> object:
+                self.assertIs(kwargs["work_budget"], budget)
+                for _ in range(candidate_commits + 2):
+                    budget.reserve_diff_call()
+                return tree, (base,)
+
+            def read_default_delta(*_args: object, **kwargs: object) -> bytes:
+                self.assertIs(kwargs["work_budget"], budget)
+                budget.reserve_diff_call()
+                return MODULE.NUL_BYTE.join((b"M", b"README.md", b""))
+
+            with (
+                self.subTest(candidate_commits=candidate_commits),
+                mock.patch.object(
+                    MODULE,
+                    "validated_history_v2_range_checkout",
+                    return_value=(root, base, head),
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "history_v2_single_parent_squash_coordinates",
+                    side_effect=prove_candidate_once,
+                ) as coordinates,
+                mock.patch.object(
+                    MODULE,
+                    "history_v2_bootstrap_markers",
+                    return_value=frozenset(),
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "history_v2_diff_output",
+                    side_effect=read_default_delta,
+                ) as default_delta,
+            ):
+                transaction = MODULE.validate_history_v2_default_transaction(
+                    root,
+                    before_rev=base,
+                    head_rev=head,
+                    event_created=False,
+                    event_deleted=False,
+                    event_forced=False,
+                    work_budget=budget,
+                    github_commit_receipt=receipt,
+                    repository="Joey-Tools/codex-session-retrospective-history",
+                    repository_id=FIXTURE_REPOSITORY_ID,
+                    base_root=Path("/synthetic/base"),
+                    candidate_root=Path("/synthetic/candidate"),
+                )
+
+            self.assertEqual(transaction["transaction_role"], "admin")
+            self.assertEqual(budget.diff_calls, candidate_commits + 3)
+            coordinates.assert_called_once()
+            default_delta.assert_called_once()
+
     def test_domain_helpers_execute_only_frozen_source_with_closed_dependencies(
         self,
     ) -> None:
@@ -5183,6 +5262,353 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("requires --root", result.stderr)
 
+    def test_actual_default_cli_runs_one_transaction_before_tree_validation(
+        self,
+    ) -> None:
+        root = Path("/synthetic/repository")
+        base = "a" * 40
+        head = "b" * 40
+        tree = "c" * 40
+        receipt = {"schema_version": 3}
+        calls: list[str] = []
+        binding = MODULE.HistoryV2DefaultCheckoutBinding(
+            root=root,
+            base_rev=base,
+            head_rev=head,
+            head_tree_oid=tree,
+            root_identity=(1, 2, stat.S_IFDIR),
+            root_access=(0o700, 1, 1),
+        )
+        with (
+            mock.patch.object(
+                MODULE,
+                "load_history_v2_github_squash_receipt",
+                return_value=receipt,
+            ),
+            mock.patch.object(
+                MODULE,
+                "validated_history_v2_default_event_checkout",
+                side_effect=AssertionError("CLI repeated the default preflight"),
+            ),
+            mock.patch.object(
+                MODULE,
+                "validate_history_v2_default_transaction",
+                side_effect=lambda *_args, **_kwargs: (
+                    calls.append("transaction")
+                    or {
+                        "base_sha": base,
+                        "head_sha": head,
+                        "head_tree_sha": tree,
+                    }
+                ),
+            ) as transaction,
+            mock.patch.object(
+                MODULE,
+                "revalidate_history_v2_default_transaction_checkout",
+                side_effect=lambda *_args, **_kwargs: (
+                    calls.append("revalidate") or binding
+                ),
+            ) as revalidate,
+            mock.patch.object(
+                MODULE,
+                "validate_history_v2_tree",
+                side_effect=lambda *_args, **_kwargs: (calls.append("tree") or []),
+            ) as validate_tree,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            result = MODULE.main(
+                [
+                    "--root",
+                    str(root),
+                    "--base-root",
+                    "/synthetic/base",
+                    "--candidate-root",
+                    "/synthetic/candidate",
+                    "--mode",
+                    "history-v2-actual-default-squash",
+                    "--base-rev",
+                    base,
+                    "--head-rev",
+                    head,
+                    "--repository",
+                    "Joey-Tools/codex-session-retrospective-history",
+                    "--repository-id",
+                    str(FIXTURE_REPOSITORY_ID),
+                    "--github-commit-receipt",
+                    "/synthetic/receipt.json",
+                    "--event-created",
+                    "false",
+                    "--event-deleted",
+                    "false",
+                    "--event-forced",
+                    "false",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(stdout.getvalue(), "history v2 tree is valid\n")
+        self.assertEqual(
+            calls,
+            ["transaction", "revalidate", "tree", "revalidate"],
+        )
+        transaction.assert_called_once()
+        self.assertEqual(revalidate.call_count, 2)
+        validate_tree.assert_called_once()
+        self.assertEqual(validate_tree.call_args.kwargs["trusted_base_rev"], base)
+        self.assertIs(
+            validate_tree.call_args.kwargs["trusted_checkout"],
+            binding,
+        )
+
+    def test_actual_default_cli_rejects_checkout_change_after_tree_validation(
+        self,
+    ) -> None:
+        root = Path("/synthetic/repository")
+        base = "a" * 40
+        head = "b" * 40
+        tree = "c" * 40
+        transaction = {
+            "base_sha": base,
+            "head_sha": head,
+            "head_tree_sha": tree,
+        }
+        binding = MODULE.HistoryV2DefaultCheckoutBinding(
+            root=root,
+            base_rev=base,
+            head_rev=head,
+            head_tree_oid=tree,
+            root_identity=(1, 2, stat.S_IFDIR),
+            root_access=(0o700, 1, 1),
+        )
+        calls: list[str] = []
+
+        def revalidate(*_args: object, **_kwargs: object) -> object:
+            calls.append("revalidate")
+            if calls.count("revalidate") == 2:
+                raise ValueError(
+                    "history-v2 worktree head differs from the authorized head"
+                )
+            return binding
+
+        with (
+            mock.patch.object(
+                MODULE,
+                "load_history_v2_github_squash_receipt",
+                return_value={"schema_version": 3},
+            ),
+            mock.patch.object(
+                MODULE,
+                "validate_history_v2_default_transaction",
+                side_effect=lambda *_args, **_kwargs: (
+                    calls.append("transaction") or transaction
+                ),
+            ),
+            mock.patch.object(
+                MODULE,
+                "revalidate_history_v2_default_transaction_checkout",
+                side_effect=revalidate,
+            ) as revalidate_checkout,
+            mock.patch.object(
+                MODULE,
+                "validate_history_v2_tree",
+                side_effect=lambda *_args, **_kwargs: (calls.append("tree") or []),
+            ),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            result = MODULE.main(
+                [
+                    "--root",
+                    str(root),
+                    "--base-root",
+                    "/synthetic/base",
+                    "--candidate-root",
+                    "/synthetic/candidate",
+                    "--mode",
+                    "history-v2-actual-default-squash",
+                    "--base-rev",
+                    base,
+                    "--head-rev",
+                    head,
+                    "--repository",
+                    "Joey-Tools/codex-session-retrospective-history",
+                    "--repository-id",
+                    str(FIXTURE_REPOSITORY_ID),
+                    "--github-commit-receipt",
+                    "/synthetic/receipt.json",
+                    "--event-created",
+                    "false",
+                    "--event-deleted",
+                    "false",
+                    "--event-forced",
+                    "false",
+                ]
+            )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(
+            stdout.getvalue(),
+            "history-v2 worktree head differs from the authorized head\n",
+        )
+        self.assertEqual(
+            calls,
+            ["transaction", "revalidate", "tree", "revalidate"],
+        )
+        self.assertEqual(revalidate_checkout.call_count, 2)
+
+    def test_default_transaction_checkout_revalidation_binds_head_tree(self) -> None:
+        base = "a" * 40
+        head = "b" * 40
+        expected_tree = "c" * 40
+        replacement_tree = "d" * 40
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            with (
+                mock.patch.object(
+                    MODULE,
+                    "validated_history_v2_range_checkout",
+                    return_value=(root, base, head),
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "history_v2_git_text",
+                    return_value=replacement_tree + "\n",
+                ) as git_text,
+                self.assertRaisesRegex(
+                    ValueError,
+                    "worktree tree differs from the authorized transaction",
+                ),
+            ):
+                MODULE.revalidate_history_v2_default_transaction_checkout(
+                    root,
+                    {
+                        "base_sha": base,
+                        "head_sha": head,
+                        "head_tree_sha": expected_tree,
+                    },
+                )
+
+            git_text.assert_called_once_with(
+                root,
+                "rev-parse",
+                "--verify",
+                f"{head}^{{tree}}",
+                max_bytes=128,
+            )
+
+    def test_default_event_checkout_preserves_three_value_contract(self) -> None:
+        root = Path("/synthetic/repository")
+        base = "a" * 40
+        head = "b" * 40
+        tree = "c" * 40
+        with mock.patch.object(
+            MODULE,
+            "_validated_history_v2_default_event_coordinates",
+            return_value=(root, base, head, tree),
+        ) as coordinates:
+            observed = MODULE.validated_history_v2_default_event_checkout(
+                root,
+                before_rev=base,
+                head_rev=head,
+                event_created=False,
+                event_deleted=False,
+                event_forced=False,
+            )
+
+        self.assertEqual(observed, (root, base, head))
+        coordinates.assert_called_once()
+
+    def test_authorized_tree_rejects_temporary_worktree_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            workspace = Path(raw)
+            authorized = workspace / "authorized"
+            replacement = workspace / "replacement"
+            held_authorized = workspace / "held-authorized"
+
+            authorized.mkdir()
+            (authorized / "README.md").write_text("base\n", encoding="utf-8")
+            initialize_bootstrap_v2_git_index(authorized)
+            base = fixture_commit_all(
+                authorized,
+                "authorized base",
+                include_signature=False,
+            )
+            (authorized / "README.md").write_text(
+                "authorized\n",
+                encoding="utf-8",
+            )
+            head = fixture_commit_all(
+                authorized,
+                "authorized head",
+                include_signature=False,
+            )
+            tree = run_fixture_git(
+                authorized,
+                "rev-parse",
+                "HEAD^{tree}",
+            ).stdout.strip()
+
+            replacement.mkdir()
+            (replacement / "README.md").write_text(
+                "replacement\n",
+                encoding="utf-8",
+            )
+            initialize_bootstrap_v2_git_index(replacement)
+            fixture_commit_all(
+                replacement,
+                "replacement head",
+                include_signature=False,
+            )
+
+            transaction = {
+                "base_sha": base,
+                "head_sha": head,
+                "head_tree_sha": tree,
+            }
+            binding = MODULE.revalidate_history_v2_default_transaction_checkout(
+                authorized,
+                transaction,
+            )
+            original_snapshot = MODULE.snapshot_bootstrap_v2_files
+
+            def snapshot_replacement(
+                root: Path,
+                *,
+                max_entries: int,
+            ) -> object:
+                self.assertEqual(root, authorized.resolve())
+                authorized.rename(held_authorized)
+                replacement.rename(authorized)
+                try:
+                    return original_snapshot(
+                        authorized,
+                        max_entries=max_entries,
+                    )
+                finally:
+                    authorized.rename(replacement)
+                    held_authorized.rename(authorized)
+
+            with mock.patch.object(
+                MODULE,
+                "snapshot_bootstrap_v2_files",
+                side_effect=snapshot_replacement,
+            ):
+                issues = MODULE.validate_history_v2_tree(
+                    authorized,
+                    trusted_base_rev=base,
+                    trusted_revision_domain=True,
+                    trusted_checkout=binding,
+                )
+
+            self.assertEqual(
+                issues,
+                [
+                    "history-v2 frozen candidate snapshot differs from the authorized transaction tree"
+                ],
+            )
+            self.assertTrue(authorized.is_dir())
+            self.assertTrue(replacement.is_dir())
+            self.assertFalse(held_authorized.exists())
+
     def test_bootstrap_transaction_requires_configured_admission_app_id(self) -> None:
         for app_id, expected_error in (
             (None, "bootstrap cutover requires a configured admission App ID"),
@@ -5211,6 +5637,55 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     head_rev="b" * 40,
                 )
             validate_range.assert_not_called()
+
+    def test_bootstrap_transaction_rejects_multiple_commits_before_reproof(
+        self,
+    ) -> None:
+        root = Path("/synthetic/repository")
+        base = "a" * 40
+        head = "b" * 40
+
+        for verify_candidate_signature in (True, False):
+            with (
+                self.subTest(
+                    verify_candidate_signature=verify_candidate_signature,
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "validated_history_v2_range_checkout",
+                    return_value=(root, base, head),
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "history_v2_bootstrap_admission_app_id",
+                    return_value=123,
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "history_v2_git_text",
+                    return_value="2\n",
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "history_v2_signature_verifier_for_root",
+                ) as signature_verifier,
+                mock.patch.object(
+                    MODULE,
+                    "history_v2_single_parent_squash_coordinates",
+                ) as provider_reproof,
+                self.assertRaisesRegex(
+                    ValueError,
+                    "bootstrap must contain exactly one commit",
+                ),
+            ):
+                MODULE.validate_history_v2_bootstrap_transaction(
+                    root,
+                    base_rev=base,
+                    head_rev=head,
+                    verify_candidate_signature=verify_candidate_signature,
+                )
+            signature_verifier.assert_not_called()
+            provider_reproof.assert_not_called()
 
     def test_candidate_authorization_barrier_precedes_all_domain_control(
         self,

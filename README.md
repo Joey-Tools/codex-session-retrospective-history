@@ -124,8 +124,14 @@ signature role and single parent, and proves that `tree(H) == tree(S)` for the
 provider squash `S`. In permanent history-v2 mode, the evidence binds the same
 canonical admission JSON digest to both the candidate-`H` admission check and
 the queue-`Q` gate check from the pinned App. The offline validator then reruns
-the B1 candidate plan against `H`, recomputes the predecessor trust generation,
-and proves that the admitted prospective and queue trees both equal `tree(S)`.
+the B1 candidate plan against `H` exactly once per default audit, carries the
+validated squash coordinates into transaction validation under the same work
+budget, recomputes the predecessor trust generation, and revalidates the exact
+authorized `HEAD`, tree, and pristine checkout before and after retained-tree
+validation. During validation, the frozen file snapshot and Git index must equal
+the authorized tree's exact blob and mode inventory, while root object identity
+and access policy remain stable. It then proves that the admitted prospective
+and queue trees both equal `tree(S)`.
 Decoded-object equality is insufficient: both checks must carry the exact same
 SHA-256 digest, and every nested schema version is an exact integer.
 
