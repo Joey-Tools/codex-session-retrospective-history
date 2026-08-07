@@ -42,6 +42,10 @@ CLOSED_GIT_WORKFLOW_ENV = {
 FIXTURE_TIMESTAMP = 1_784_073_600
 FIXTURE_SIGNER_FINGERPRINT = "0123456789ABCDEF0123456789ABCDEF01234567"
 ACTUAL_BASE_SHA = "97f236c56cbbf24776899178175e2603ecf30fb0"
+RETAINED_HISTORY_BASE_TREE_OIDS = {
+    "data": "c18f704c92524beb2acf1f743635b3a73731fa9f",
+    "reports": "9d5828a5d012802c66ed3918e436e4526ac1162a",
+}
 LEGACY_CI = (
     "name: CI\n"
     "\n"
@@ -5809,24 +5813,12 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         )
 
     def test_trust_seed_does_not_change_retained_history_artifacts(self) -> None:
-        changed = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(ROOT),
-                "diff",
-                "--name-only",
-                "-z",
-                ACTUAL_BASE_SHA,
-                "--",
-                "data",
-                "reports",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-        ).stdout
-        self.assertEqual(changed, b"")
+        for relative, expected_tree_oid in RETAINED_HISTORY_BASE_TREE_OIDS.items():
+            with self.subTest(relative=relative):
+                self.assertEqual(
+                    git(ROOT, "rev-parse", "--verify", f"HEAD:{relative}"),
+                    expected_tree_oid,
+                )
 
     def test_bootstrap_preflight_rejects_raw_commit_metadata_attacks(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
