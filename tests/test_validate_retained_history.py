@@ -3456,13 +3456,28 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         "\n".join(MODULE.validate_root(root)),
                     )
 
-    def test_ordinary_mode_rejects_v2_only_artifacts(self) -> None:
+    def test_ordinary_mode_accepts_only_exact_seed_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
+            for relative in MODULE.TRUST_SEED_DEPENDENCY_SHA256:
+                (root / relative).write_bytes(
+                    (SCRIPT.parents[1] / relative).read_bytes()
+                )
+
+            self.assertEqual(MODULE.validate_root(root), [])
+
             (root / "requirements-v2.in").write_text(
                 "jsonschema==4.23.0\n", encoding="utf-8"
             )
+            issues = "\n".join(MODULE.validate_root(root))
 
+        self.assertIn("trusted seed dependency digest differs", issues)
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            nested = root / "nested" / "requirements-v2.txt"
+            nested.parent.mkdir()
+            nested.write_bytes((SCRIPT.parents[1] / "requirements-v2.txt").read_bytes())
             issues = "\n".join(MODULE.validate_root(root))
 
         self.assertIn("unexpected retained artifact location", issues)
@@ -3507,10 +3522,9 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             fixture_commit_all(root, "append report")
             head = run_fixture_git(root, "rev-parse", "HEAD").stdout.strip()
 
-            self.assertIn(
-                "unexpected retained artifact location",
-                "\n".join(MODULE.validate_root(root)),
-            )
+            ordinary_issues = "\n".join(MODULE.validate_root(root))
+            self.assertIn("unexpected JSON artifact", ordinary_issues)
+            self.assertIn("forbidden raw/transient artifact", ordinary_issues)
             admission_app_patch = mock.patch.object(
                 MODULE,
                 "HISTORY_V2_ADMISSION_RECORD_APP_ID",
@@ -8699,6 +8713,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         trusted_table_names = frozenset(
             {
                 "INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256",
+                "TRUST_SEED_DEPENDENCY_SHA256",
                 "BOOTSTRAP_V2_PUBLIC_KEY_SHA256",
                 "BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256",
                 "BOOTSTRAP_V2_TRUSTED_DECODED_RISK_VALUES_SHA256",
@@ -9130,6 +9145,14 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     entries[table_name, relative] = child
 
         binary_entries = {
+            (
+                "TRUST_SEED_DEPENDENCY_SHA256",
+                "requirements-v2.in",
+            ),
+            (
+                "TRUST_SEED_DEPENDENCY_SHA256",
+                "requirements-v2.txt",
+            ),
             (
                 "INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256",
                 ".github/bootstrap/session-retrospective-v2-permanent-ci.yml",
@@ -15923,6 +15946,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             PERMANENT_CI_TEMPLATE,
             SCRIPT,
             TRUSTED_CI_HELPER,
+            repository_root / "requirements-v2.in",
+            repository_root / "requirements-v2.txt",
             repository_root / "tests" / "test_session_retrospective_v2_bootstrap.py",
             Path(__file__).resolve(),
         )
@@ -15941,6 +15966,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             Path(".github/workflows/ci.yml"),
             Path(".github/bootstrap/session-retrospective-v2-permanent-ci.yml"),
             Path(".github/workflows/session-retrospective-v2-bootstrap.yml"),
+            Path("requirements-v2.txt"),
             Path("scripts/trusted_history_ci.py"),
             Path("scripts/validate_retained_history.py"),
             Path("tests/test_session_retrospective_v2_bootstrap.py"),

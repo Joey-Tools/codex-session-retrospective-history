@@ -68,8 +68,9 @@ out of otherwise harmless literals.
 
 V2 uses an explicit two-stage rollout. The first PR is a trust seed: it keeps
 the legacy `.github/workflows/ci.yml` active and adds the base-owned bootstrap
-workflow, permanent-workflow template, trusted helper, validator, tests, and
-the two public-only signing keys. A `pull_request_target` workflow does not
+workflow, permanent-workflow template, trusted helper, validator, tests, the
+hash-pinned dependency input and lock, and the two public-only signing keys. A
+`pull_request_target` workflow does not
 exist on the default branch until that seed merges, so it cannot validate its
 own introducing PR. The seed therefore requires the legacy CI plus independent
 exact-range review and changes no retained `data/` or `reports/` artifact.

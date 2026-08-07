@@ -5924,6 +5924,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         seeded_paths = (
             ".github/workflows/session-retrospective-v2-bootstrap.yml",
             ".github/bootstrap/session-retrospective-v2-permanent-ci.yml",
+            "requirements-v2.in",
+            "requirements-v2.txt",
             "scripts/trusted_history_ci.py",
             "retrospective-history-v2-admin-public.asc",
             "retrospective-history-v2-publisher.asc",
@@ -5957,6 +5959,22 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             "wip/session-retrospective-v2-history-bootstrap",
         )
         permanent = load_workflow(PERMANENT_CI)
+        candidate_gate = permanent["jobs"]["trusted_history_gate"]
+        dependency_install = steps_by_name(candidate_gate)[
+            "Install B0 trusted dependencies"
+        ]["run"]
+        self.assertIn(
+            '--requirement "$TRUSTED_ROOT/requirements-v2.txt"',
+            dependency_install,
+        )
+        self.assertEqual(
+            hashlib.sha256((ROOT / "requirements-v2.in").read_bytes()).hexdigest(),
+            "756cc9e506ae4ee1a6f6c0507088b5cfc0dc8ba350fb2d2d46f1ffa72033adb6",
+        )
+        self.assertEqual(
+            hashlib.sha256((ROOT / "requirements-v2.txt").read_bytes()).hexdigest(),
+            "3ed72442ea6516ddedeceaf91bdec982322ee2bd87605491383a263fce8b7256",
+        )
         audit = permanent["jobs"]["trusted_default_audit"]
         baseline_checkout = steps_by_name(audit)["Checkout exact trusted B0"]
         self.assertEqual(
@@ -5969,6 +5987,33 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 Path("retrospective-history-v2-admin-public.asc"),
                 Path("retrospective-history-v2-publisher.asc"),
             },
+        )
+
+    def test_trust_seed_dependency_lock_is_path_and_content_bound(self) -> None:
+        relative = Path("requirements-v2.txt")
+        lock = (ROOT / relative).read_text(encoding="utf-8")
+        self.assertTrue(VALIDATOR_MODULE.allowed_infrastructure_artifact(relative))
+        self.assertFalse(
+            VALIDATOR_MODULE.contains_infrastructure_risk_text(
+                lock,
+                relative=relative,
+            )
+        )
+
+        marker = "--hash=sha256:"
+        digest_offset = lock.index(marker) + len(marker)
+        replacement = "0" if lock[digest_offset] != "0" else "1"
+        mutated = lock[:digest_offset] + replacement + lock[digest_offset + 1 :]
+        self.assertTrue(
+            VALIDATOR_MODULE.contains_infrastructure_risk_text(
+                mutated,
+                relative=relative,
+            )
+        )
+        self.assertFalse(
+            VALIDATOR_MODULE.allowed_infrastructure_artifact(
+                Path("nested") / relative,
+            )
         )
 
     def test_trust_seed_does_not_change_retained_history_artifacts(self) -> None:
