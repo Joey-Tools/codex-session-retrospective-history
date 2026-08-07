@@ -492,6 +492,7 @@ BOOTSTRAP_V2_TRUSTED_DECODED_RISK_VALUES_SHA256 = {
         "52e1822e52eef524d48ee8fd528860655d7825c2fd3f52d72502a86979b1c6d6"
     ),
 }
+BOOTSTRAP_V2_UNMODELED_STATIC_TEXT_CALL_RISK = "python_unmodeled_static_text_call_v1"
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/trusted_history_ci.py"): _trusted_sha256_values_hex(
         (
@@ -531,74 +532,74 @@ BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     ),
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x5A,
-            0xE2,
-            0x83,
-            0xDB,
-            0x6D,
-            0x6E,
+            0x6C,
+            0x8B,
+            0x02,
             0x80,
-            0x6A,
-            0x7B,
-            0x75,
-            0x63,
-            0x5E,
-            0x09,
-            0xC0,
-            0x13,
-            0xD9,
-            0x72,
-            0xB2,
-            0x33,
+            0x11,
+            0x4B,
+            0x8B,
+            0x98,
+            0xC2,
+            0x6B,
+            0xFA,
+            0x87,
+            0x4A,
+            0x7C,
+            0x8A,
+            0x1D,
+            0x0F,
+            0x95,
+            0xCC,
+            0x65,
             0xC3,
-            0x3E,
-            0x57,
-            0xEF,
-            0x83,
-            0x20,
-            0x8C,
-            0xC0,
-            0x68,
-            0x88,
-            0x30,
-            0x14,
-            0xBA,
+            0xFA,
+            0xB8,
+            0x55,
+            0x36,
+            0xEB,
+            0xA1,
+            0xFD,
+            0xCE,
+            0xAE,
+            0x91,
+            0x9C,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0xB8,
-            0xFC,
-            0xD5,
-            0x65,
-            0x0C,
-            0x2A,
-            0x7B,
-            0xC1,
-            0xAE,
-            0x2F,
-            0x17,
+            0x20,
+            0x23,
+            0x38,
             0xE4,
-            0x6C,
-            0xC3,
-            0xE9,
-            0x89,
-            0xD8,
-            0x67,
-            0x3B,
-            0x85,
-            0x03,
-            0x73,
-            0x24,
-            0xFC,
-            0x1D,
-            0xCD,
+            0xF1,
+            0xC7,
+            0x52,
+            0x38,
+            0x6D,
+            0x4E,
+            0x90,
+            0x96,
+            0x78,
+            0x4E,
+            0x7A,
+            0x5F,
+            0x5F,
+            0x44,
+            0x97,
+            0x6B,
+            0xF4,
+            0xAE,
+            0x3E,
+            0x29,
+            0x81,
+            0xAA,
+            0xBC,
+            0x90,
+            0x13,
+            0x7B,
             0xF9,
-            0xC4,
-            0x4B,
-            0xA3,
-            0x30,
-            0x02,
+            0x36,
         )
     ),
 }
@@ -619,7 +620,7 @@ BOOTSTRAP_V2_MAX_VALIDATOR_SOURCE_BYTES = (
     - BOOTSTRAP_V2_VALIDATOR_SOURCE_MAINTENANCE_RESERVE_BYTES
 )
 BOOTSTRAP_V2_VALIDATOR_SOURCE_PATH = Path("scripts/validate_retained_history.py")
-BOOTSTRAP_V2_MAX_PYTHON_AST_NODES = 112_000
+BOOTSTRAP_V2_MAX_PYTHON_AST_NODES = 128_000
 BOOTSTRAP_V2_MAX_PYTHON_AST_DEPTH = 100
 BOOTSTRAP_V2_MAX_PYTHON_LITERAL_CONSTANTS = 20_000
 BOOTSTRAP_V2_MAX_PYTHON_LITERAL_BYTES = 512 * 1024
@@ -632,6 +633,7 @@ BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_STATES = 200_000
 BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS = 1_000_000
 BOOTSTRAP_V2_MAX_PYTHON_BINDING_REACHABILITY_STEPS = 2_000_000
 BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS = 1_000_000
+BOOTSTRAP_V2_MAX_UNMODELED_CALL_INPUT_OPS = 1_000_000
 BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES = 256 * 1024
 BOOTSTRAP_V2_MAX_TREE_BYTES = 16 * 1024 * 1024
 BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES = 4096
@@ -5204,6 +5206,13 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         "importlib",
         "operator",
     }
+    modeled_static_callable_qualified_names = (
+        static_binary_decoder_qualified_names
+        | static_byte_constructor_qualified_names
+        | static_text_operator_qualified_names
+        | import_resolver_qualified_names
+    )
+    runtime_stdlib_module_names = frozenset(sys.stdlib_module_names)
 
     def normalized_literal_slice(node: ast.AST) -> slice | None:
         if not isinstance(node, ast.Slice):
@@ -5412,6 +5421,8 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     static_callable_import_bindings: dict[tuple[int, str], list[tuple[int, str]]] = {}
     static_module_import_bindings: dict[tuple[int, str], list[tuple[int, str]]] = {}
     static_builtin_import_bindings: dict[tuple[int, str], list[tuple[int, str]]] = {}
+    static_stdlib_module_names: set[str] = set()
+    static_stdlib_callable_qualified_names: set[str] = set()
     parameter_default_sources: dict[tuple[int, str], list[tuple[int, ast.AST]]] = {}
 
     def record_starred_assignment_targets(
@@ -5938,7 +5949,9 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         if isinstance(node, ast.Import):
             scope = scope_by_node_id[id(node)]
             for alias in node.names:
-                if alias.name not in tracked_static_import_modules:
+                module_root = alias.name.split(".", 1)[0]
+                is_stdlib = module_root in runtime_stdlib_module_names
+                if alias.name not in tracked_static_import_modules and not is_stdlib:
                     continue
                 local_name = alias.asname or alias.name.split(".", 1)[0]
                 imported_name = (
@@ -5948,10 +5961,13 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 static_module_import_bindings.setdefault(key, []).append(
                     (id(alias), imported_name)
                 )
+                if is_stdlib:
+                    static_stdlib_module_names.update({alias.name, imported_name})
             continue
         if not isinstance(node, ast.ImportFrom) or node.level or node.module is None:
             continue
         scope = scope_by_node_id[id(node)]
+        is_stdlib = node.module.split(".", 1)[0] in runtime_stdlib_module_names
         for alias in node.names:
             if alias.name == "*" and node.module in static_binary_producer_modules:
                 if node.module in static_binary_decoder_modules:
@@ -5961,6 +5977,11 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                     )
                 raise ValueError(
                     "Python binary producer module uses a wildcard import "
+                    f"at line {getattr(node, 'lineno', 0)}"
+                )
+            if alias.name == "*" and is_stdlib:
+                raise ValueError(
+                    "Python standard-library module uses a wildcard import "
                     f"at line {getattr(node, 'lineno', 0)}"
                 )
             local_name = alias.asname or alias.name
@@ -5979,11 +6000,32 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 static_callable_import_bindings.setdefault(key, []).append(
                     (id(alias), qualified_name)
                 )
+            if is_stdlib:
+                static_module_import_bindings.setdefault(key, []).append(
+                    (id(alias), qualified_name)
+                )
+                static_callable_import_bindings.setdefault(key, []).append(
+                    (id(alias), qualified_name)
+                )
+                static_stdlib_module_names.update({node.module, qualified_name})
+                static_stdlib_callable_qualified_names.add(qualified_name)
             if node.module == "builtins" and alias.name in {"getattr", "int"}:
                 static_builtin_import_bindings.setdefault(key, []).append(
                     (id(alias), alias.name)
                 )
 
+    observed_static_callable_names = {
+        node.attr
+        for node in nodes
+        if isinstance(node, ast.Attribute) and node.attr.isidentifier()
+    }
+    observed_static_callable_names.update(
+        node.value
+        for node in nodes
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.isidentifier()
+    )
     bytearray_mutating_method_names = frozenset(
         "__delitem__ __iadd__ __imul__ __setitem__ append clear extend insert "
         "pop remove reverse".split()
@@ -9491,6 +9533,16 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             if isinstance(current, ast.Attribute):
                 pending.append((current.value, f".{current.attr}{suffix}"))
                 continue
+            if isinstance(current, ast.Call):
+                if any(
+                    (
+                        f"{imported_name}{suffix}" in module_names
+                        or imported_name.split(".", 1)[0] in module_names
+                    )
+                    for imported_name in static_dynamic_imported_module_names(current)
+                ):
+                    return True
+                continue
             if not isinstance(current, ast.Name) or not isinstance(
                 current.ctx, ast.Load
             ):
@@ -9556,23 +9608,54 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
             pending.extend(decoder_binding_sources(key, current))
         return False
 
+    qualified_callable_inventory_cache: dict[
+        int,
+        tuple[
+            frozenset[str],
+            frozenset[str],
+            dict[str, frozenset[str]],
+        ],
+    ] = {}
+
+    def qualified_callable_inventory(
+        qualified_names: frozenset[str],
+    ) -> tuple[frozenset[str], dict[str, frozenset[str]]]:
+        cached = qualified_callable_inventory_cache.get(id(qualified_names))
+        if cached is not None and cached[0] is qualified_names:
+            return cached[1], cached[2]
+        mutable_modules_by_callable: dict[str, set[str]] = {}
+        for qualified_name in qualified_names:
+            module_name, callable_name = qualified_name.rsplit(".", 1)
+            mutable_modules_by_callable.setdefault(callable_name, set()).add(
+                module_name
+            )
+        modules_by_callable = {
+            callable_name: frozenset(module_names)
+            for callable_name, module_names in mutable_modules_by_callable.items()
+        }
+        all_modules = frozenset(
+            module_name
+            for module_names in modules_by_callable.values()
+            for module_name in module_names
+        )
+        qualified_callable_inventory_cache[id(qualified_names)] = (
+            qualified_names,
+            all_modules,
+            modules_by_callable,
+        )
+        return all_modules, modules_by_callable
+
     def reflective_callable_modules(
         selector: ast.AST,
         qualified_names: frozenset[str],
     ) -> frozenset[str]:
-        all_modules = frozenset(
-            qualified_name.rsplit(".", 1)[0] for qualified_name in qualified_names
-        )
+        all_modules, modules_by_callable = qualified_callable_inventory(qualified_names)
         selected_name = evaluate_binding_expression(selector)
         if selected_name is not_pure:
             return all_modules
         if type(selected_name) is not str:
             return frozenset()
-        return frozenset(
-            qualified_name.rsplit(".", 1)[0]
-            for qualified_name in qualified_names
-            if qualified_name.rsplit(".", 1)[1] == selected_name
-        )
+        return modules_by_callable.get(selected_name, frozenset())
 
     def has_static_module_namespace_origin(
         node: ast.AST,
@@ -9648,8 +9731,8 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         qualified_names: frozenset[str],
         builtin_names: frozenset[str] = frozenset(),
     ) -> bool:
-        all_qualified_modules = frozenset(
-            qualified_name.rsplit(".", 1)[0] for qualified_name in qualified_names
+        all_qualified_modules, modules_by_callable = qualified_callable_inventory(
+            qualified_names
         )
         pending = [node]
         observed_expression_ids: set[int] = set()
@@ -9759,11 +9842,7 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 pending.append(current.value)
                 continue
             if isinstance(current, ast.Attribute):
-                module_names = frozenset(
-                    qualified_name.rsplit(".", 1)[0]
-                    for qualified_name in qualified_names
-                    if qualified_name.rsplit(".", 1)[1] == current.attr
-                )
+                module_names = modules_by_callable.get(current.attr, frozenset())
                 if module_names and has_static_module_origin(
                     current.value,
                     module_names,
@@ -10070,6 +10149,56 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
     def has_static_decoder_input(node: ast.AST) -> bool:
         return static_input_origin(node, False)
 
+    unmodeled_static_text_input_cache: dict[int, bool] = {}
+    unmodeled_static_text_input_operations = 0
+    unmodeled_static_text_input_limit = min(
+        max(node_count * 8, 1),
+        BOOTSTRAP_V2_MAX_UNMODELED_CALL_INPUT_OPS,
+    )
+
+    def unmodeled_call_input_has_static_text(node: ast.AST) -> bool:
+        nonlocal unmodeled_static_text_input_operations
+        cached = unmodeled_static_text_input_cache.get(id(node))
+        if cached is not None:
+            return cached
+        pending = [node]
+        observed_expression_ids: set[int] = set()
+        result = False
+        while pending:
+            unmodeled_static_text_input_operations += 1
+            if (
+                unmodeled_static_text_input_operations
+                > unmodeled_static_text_input_limit
+            ):
+                raise ValueError(
+                    "Python unmodeled static text input exceeds the trusted "
+                    "operation limit"
+                )
+            current = pending.pop()
+            if id(current) in observed_expression_ids:
+                continue
+            observed_expression_ids.add(id(current))
+            if (
+                isinstance(current, ast.Constant)
+                and type(current.value) in {str, bytes}
+                and current.value
+            ):
+                result = True
+                break
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                key = name_load_binding_key(current)
+                pending.extend(
+                    decoder_binding_sources(
+                        key,
+                        current,
+                        include_shadowed_assignments=True,
+                    )
+                )
+                continue
+            pending.extend(ast.iter_child_nodes(current))
+        unmodeled_static_text_input_cache[id(node)] = result
+        return result
+
     def unresolved_static_binary_decoder_call(node: ast.AST) -> bool:
         if not isinstance(node, ast.Call) or not (
             has_static_binary_decoder_origin(node.func)
@@ -10090,6 +10219,41 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
         return tuple(
             keyword.value for keyword in node.keywords if keyword.arg in keyword_names
         )
+
+    def static_dynamic_imported_module_names(node: ast.Call) -> frozenset[str]:
+        if not has_static_dynamic_import_origin(node.func):
+            return frozenset()
+        return frozenset(
+            imported_name
+            for source in call_source_nodes(node, frozenset({"name"}))
+            if isinstance(
+                imported_name := evaluate_binding_expression(source),
+                str,
+            )
+            and imported_name
+        )
+
+    for candidate_call in nodes:
+        if not isinstance(candidate_call, ast.Call):
+            continue
+        for imported_name in static_dynamic_imported_module_names(candidate_call):
+            if imported_name.split(".", 1)[0] in runtime_stdlib_module_names:
+                static_stdlib_module_names.add(imported_name)
+    if (
+        len(static_stdlib_module_names) * len(observed_static_callable_names)
+        > BOOTSTRAP_V2_MAX_PYTHON_METHOD_SELECTION_OPERATIONS
+    ):
+        raise ValueError(
+            "Python standard-library callable inventory exceeds the trusted limit"
+        )
+    static_stdlib_callable_qualified_names.update(
+        f"{module_name}.{callable_name}"
+        for module_name in static_stdlib_module_names
+        for callable_name in observed_static_callable_names
+    )
+    static_stdlib_callable_qualified_names = frozenset(
+        static_stdlib_callable_qualified_names
+    )
 
     def dynamic_code_call_uses_static_input(node: ast.Call) -> bool:
         if not has_static_callable_origin(
@@ -11143,6 +11307,31 @@ def bootstrap_v2_python_string_constants(value: str) -> list[str]:
                 record_constructed_result(node, result)
             continue
 
+        if isinstance(node, ast.Call) and (
+            has_static_callable_origin(
+                node.func,
+                static_stdlib_callable_qualified_names,
+            )
+            and not has_static_callable_origin(
+                node.func,
+                modeled_static_callable_qualified_names,
+            )
+        ):
+            call_sources = (
+                *(
+                    argument.value if isinstance(argument, ast.Starred) else argument
+                    for argument in node.args
+                ),
+                *(keyword.value for keyword in node.keywords),
+            )
+            if any(
+                unmodeled_call_input_has_static_text(source) for source in call_sources
+            ):
+                record_constructed(
+                    node,
+                    BOOTSTRAP_V2_UNMODELED_STATIC_TEXT_CALL_RISK,
+                )
+
         evaluated[id(node)] = not_pure
 
     unknown_format_value = object()
@@ -11676,7 +11865,8 @@ def bootstrap_v2_python_privacy_risk_values(value: str) -> list[str]:
     return [
         constant
         for constant in bootstrap_v2_python_string_constants(value)
-        if bootstrap_v2_privacy_risk_lines(constant)
+        if constant == BOOTSTRAP_V2_UNMODELED_STATIC_TEXT_CALL_RISK
+        or bootstrap_v2_privacy_risk_lines(constant)
     ]
 
 

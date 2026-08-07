@@ -55,6 +55,13 @@ Before committing retained artifacts, run:
 python scripts/validate_retained_history.py --root .
 ```
 
+For tracked Python infrastructure, the validator evaluates its explicitly
+modeled text constructors and decoders. A statically resolved standard-library
+call that consumes statically sourced text but has no output model fails closed,
+including calls reached through a statically resolved dynamic import. This
+prevents an unmodeled library transform from assembling sensitive text out of
+otherwise harmless literals.
+
 ## V2 Admission Boundary
 
 The repository-owned `pull_request_target` workflow provides baseline-owned

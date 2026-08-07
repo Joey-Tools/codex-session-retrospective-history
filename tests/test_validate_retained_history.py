@@ -11922,15 +11922,24 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     "unresolved binary decoder uses static text input",
                 )
 
-        accepted = (
+        unmodeled_stdlib_calls = (
             'import base64\nvalue = getattr(base64, "b64encode")(b"public")\n',
+            'import base64\nvalue = base64.__dict__["b64encode"](b"public")\n',
+        )
+        for source in unmodeled_stdlib_calls:
+            with self.subTest(source=source.splitlines()[-1][:56]):
+                self.assertIn(
+                    MODULE.BOOTSTRAP_V2_UNMODELED_STATIC_TEXT_CALL_RISK,
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                )
+
+        accepted = (
             "import base64\n"
             "getattr = custom_lookup\n"
             f'value = getattr(base64, "b64decode")("{encoded}")\n',
             "import base64\n"
             "base64 = custom_codec\n"
             f'value = getattr(base64, "b64decode")("{encoded}")\n',
-            'import base64\nvalue = base64.__dict__["b64encode"](b"public")\n',
         )
         for source in accepted:
             with self.subTest(source=source.splitlines()[-1][:56]):
@@ -12004,6 +12013,72 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "base64.b64decode(alias)\n"
                 "alias.decode('ascii')\n"
             )
+
+    def test_bootstrap_v2_python_unmodeled_static_text_calls_fail_closed(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "regular-expression substitution",
+                'import re\nvalue = re.sub("X", "@", "aliceXpublic.net")\n',
+            ),
+            (
+                "JSON decoding",
+                "import json\nvalue = json.loads('\"alice\\\\u0040public.net\"')\n",
+            ),
+            (
+                "bound static input",
+                'import re as regex\nsource = "aliceXpublic.net"\n'
+                'value = regex.sub("X", "@", source)\n',
+            ),
+            (
+                "dynamic standard-library import",
+                'import importlib\nmodule = importlib.import_module("re")\n'
+                'value = module.sub("X", "@", "aliceXpublic.net")\n',
+            ),
+            (
+                "builtin dynamic standard-library import",
+                'module = __import__("json")\n'
+                "value = module.loads('\"alice\\\\u0040public.net\"')\n",
+            ),
+        )
+        relative = Path("tests/test_retrospective_history_v2.py")
+        for label, source in cases:
+            with self.subTest(label=label):
+                self.assertFalse(
+                    MODULE.contains_bootstrap_v2_privacy_risk_text(
+                        source,
+                        relative=relative,
+                    )
+                )
+                self.assertIn(
+                    MODULE.BOOTSTRAP_V2_UNMODELED_STATIC_TEXT_CALL_RISK,
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                )
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    write_bootstrap_v2_candidate(root)
+                    (root / relative).write_text(source, encoding="utf-8")
+
+                    issues = "\n".join(validate_synthetic_bootstrap_v2_candidate(root))
+
+                self.assertIn(
+                    f"{relative}: infrastructure text contains raw/sensitive evidence",
+                    issues,
+                )
+
+        for source in (
+            "import re\nvalue = re.sub(pattern, replacement, payload)\n",
+            "import json\nvalue = json.loads(payload)\n",
+            "import importlib\nmodule = importlib.import_module(module_name)\n"
+            "value = module.loads(payload)\n",
+            'value = render_text("public")\n',
+        ):
+            with self.subTest(dynamic=source.splitlines()[-1]):
+                self.assertNotIn(
+                    MODULE.BOOTSTRAP_V2_UNMODELED_STATIC_TEXT_CALL_RISK,
+                    MODULE.bootstrap_v2_python_privacy_risk_values(source),
+                )
 
     def test_bootstrap_v2_python_closed_static_method_receiver_fails_closed(
         self,
@@ -13704,6 +13779,25 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         with (
             mock.patch.object(MODULE, "BOOTSTRAP_V2_MAX_DECODER_INPUT_OPS", 8),
             self.assertRaisesRegex(ValueError, "decoder input exceeds"),
+        ):
+            MODULE.bootstrap_v2_python_privacy_risk_values(source)
+
+    def test_bootstrap_v2_python_unmodeled_call_input_checks_are_bounded(
+        self,
+    ) -> None:
+        source = (
+            "import re\n"
+            "payload_0 = get_payload()\n"
+            + "".join(f"payload_{index + 1} = payload_{index}\n" for index in range(16))
+            + "value = re.sub(pattern, replacement, payload_16)\n"
+        )
+        with (
+            mock.patch.object(
+                MODULE,
+                "BOOTSTRAP_V2_MAX_UNMODELED_CALL_INPUT_OPS",
+                8,
+            ),
+            self.assertRaisesRegex(ValueError, "unmodeled static text input exceeds"),
         ):
             MODULE.bootstrap_v2_python_privacy_risk_values(source)
 
