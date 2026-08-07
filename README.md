@@ -54,3 +54,156 @@ Before committing retained artifacts, run:
 ```bash
 python scripts/validate_retained_history.py --root .
 ```
+
+For tracked Python infrastructure, the validator evaluates its explicitly
+modeled text constructors and decoders. A statically resolved built-in or
+standard-library call that consumes statically sourced text but has no output
+model fails closed, including calls reached through a statically resolved
+dynamic import. Deterministic text-emitting built-ins use one runtime-checked
+classification, and unresolved comprehensions passed to `join` fail closed.
+These controls prevent an unmodeled transform from assembling sensitive text
+out of otherwise harmless literals.
+
+## V2 Trust Seed And Cutover
+
+V2 uses an explicit two-stage rollout. The first PR is a trust seed: it keeps
+the legacy `.github/workflows/ci.yml` active and adds the base-owned bootstrap
+workflow, permanent-workflow template, trusted helper, validator, tests, the
+hash-pinned dependency input and lock, and the two public-only signing keys. A
+`pull_request_target` workflow does not
+exist on the default branch until that seed merges, so it cannot validate its
+own introducing PR. The seed therefore requires the legacy CI plus independent
+exact-range review and changes no retained `data/` or `reports/` artifact.
+
+Only a later product cutover may consume the seeded workflow. That cutover is
+restricted to the designated candidate ref, deletes every temporary bootstrap
+artifact, and replaces the legacy CI file with the exact seeded permanent
+template. Its base-owned validation reads the helper, validator, and public
+keys from the merged seed, never from the candidate. The first permanent
+post-merge audit consequently checks out `github.event.before` at the seed (or
+a later trusted generation); the pre-seed revision does not contain that
+runtime and is deliberately ineligible. Missing or changed seed files and keys
+fail closed.
+
+The trust seed does not bypass the external admission boundary below. It may
+retain an unconfigured App ID, but the one designated cutover candidate may
+replace only the two exact `None` pin lines with the same reviewed positive,
+non-GitHub-Actions integer. Base-owned validation rejects a one-sided pin,
+different IDs, a noncanonical integer, or any other changed byte in either
+protected script. Product cutover remains blocked until that exact transition
+and the external admission service are both ready.
+
+## V2 Admission Boundary
+
+The repository-owned `pull_request_target` workflow provides baseline-owned
+candidate feedback only. It must not handle `merge_group` events or authorize a
+queue SHA: candidate repository code cannot be the authority that admits its
+own formal-history mutation. That feedback pins CPython `3.13.12`, copies exact
+`H` from the verified object store into a sealed execution tree, and runs
+credential-free compile and unit-test commands as a nonprivileged UID before
+the check can succeed. The trusted parent revalidates the source authority and
+sealed tree after execution. This exact-`H` evidence is necessary feedback, but
+it is not reusable as exact-`Q` admission evidence. Dependency installation
+must preserve the pre-bound CPython target, executable digest, version, and
+`pyvenv.cfg`; the venv is sealed against writes before UID drop. The fixed
+commands use an explicit CLI `pycache_prefix` outside the read-only source tree.
+
+Before branch policy enables the v2 merge queue and its `Trusted history gate`
+required check, an external admission service must be installed. That service
+validates the exact queue SHA from independently trusted code, publishes the
+queue check through its bound GitHub App identity, and performs the history
+authority compare-and-swap. Its trusted configuration supplies that dedicated
+repository ID and App ID to `merge-group-snapshot --repository-id
+--admission-app-id`; bootstrap additionally supplies `--policy bootstrap-v2`
+and the exact `--trusted-base-root`. The same App ID is required by
+`validate-merge-group` and `admit-merge-group`.
+GitHub Actions App is explicitly ineligible. Before publishing success or
+attempting CAS, the service must
+materialize the exact `Q` tree with `prepare-runtime-execution`, run the fixed
+CPython `3.13.12` compile and unittest commands without GitHub or CAS
+credentials as a nonprivileged UID, revalidate with
+`verify-runtime-authority`, and produce a parent-owned runtime receipt. The
+receipt binds `B1`, `H`, `Q`, the `Q` and prospective trees, the structural
+projection digest, Python executable and requirements digests, fixed command
+digests, UIDs, empty credential environment, denied authority write access,
+and successful exit codes. `admit-merge-group` recomputes the structural
+projection and rejects a missing, stale, cross-`Q`, writable-authority, failed,
+or otherwise mismatched receipt. Its required
+`--expected-python-sha256` value comes from the external service's independent
+trusted runtime configuration, never from the receipt or candidate tree. After
+runtime validation, the command must reread the live pull request, queue ref,
+repository merge configuration, active branch rules, branch protection, and
+complete ruleset inventory. Every field and the resulting TCB digest must still
+equal the original snapshot, including the immutable repository ID. All nested
+GETs share one request-count, response-byte, and monotonic deadline budget. The
+admission record binds that live-authority digest and a 30-second validity
+window that starts before the first live read; the full response bodies and
+validation must finish inside that window. The external service must
+discard an expired record and repeat admission immediately before publishing
+success or attempting CAS. Only that fresh admission record may feed CAS.
+Until that external producer and receipt flow are proven, cutover is blocked
+and the existing branch rules remain unchanged.
+
+The external producer has a second, separate identity requirement. Its numeric
+GitHub App ID and the fixed `retrospective-history-admission` slug become
+permanent trust roots committed identically in `scripts/trusted_history_ci.py`
+and `scripts/validate_retained_history.py`; an environment or repository
+variable cannot override them after cutover. While the seed still contains two
+exact `None` pins, `history-v2-admission` fails closed. The sole
+`bootstrap-v2-migration` path may carry the external service's reviewed App ID
+only after the trusted seed proves its exact marker set and designated
+candidate ref. Before H or Q can be accepted, the base-owned validator must
+prove that both candidate scripts differ from B1 only by replacing their one
+pin line with that same ID. The live snapshot, structural validation, runtime
+admission, and branch configuration are all bound to the same value. Once the
+marker-removing transaction lands, permanent policy again requires the static
+pins and does not admit another transition.
+
+The post-merge audit emits a schema-v3 provider receipt. It records a canonical
+candidate-evidence object rather than a precomputed validation verdict. In the
+bootstrap authority mode, the offline validator independently reopens clean
+fixed snapshots for `B` and signed candidate `H`, verifies the bootstrap
+signature role and single parent, and proves that `tree(H) == tree(S)` for the
+provider squash `S`. It then reads the two pin blobs directly from `B` and `S`,
+reproves the exact `None`-to-one-ID transform, authorizes only those two blob
+changes, and records that App ID in the default-transaction evidence. The
+permanent validator reverses only those exact configured pin lines when
+comparing privacy fingerprints with the seed; transaction policy continues to
+protect the real configured bytes. In permanent history-v2 mode, the evidence
+binds the same canonical admission JSON digest to both the candidate-`H`
+admission check and the queue-`Q` gate check from the pinned App. The offline
+validator then reruns the B1 candidate plan against `H` exactly once per default
+audit, carries the validated squash coordinates into transaction validation
+under the same work budget, recomputes the predecessor trust generation, and
+revalidates the exact
+authorized `HEAD`, tree, and pristine checkout before and after retained-tree
+validation. During validation, the frozen file snapshot and Git index must equal
+the authorized tree's exact blob and mode inventory, while root object identity
+and access policy remain stable. It then proves that the admitted prospective
+and queue trees both equal `tree(S)`.
+Decoded-object equality is insufficient: both checks must carry the exact same
+SHA-256 digest, and every nested schema version is an exact integer.
+
+Admission timing is ordered as `observation <= H check <= Q check < expiry`.
+The `Q` check must complete no later than the recorded merge, but the merge may
+finish after the admission TTL; the TTL constrains the authority decision, not
+GitHub's subsequent merge latency. Failure to materialize either fixed snapshot
+or to reprove any candidate property blocks the audit rather than trusting the
+network collector's conclusion.
+
+The post-merge default audit also binds the exact local squash object to
+GitHub's read-only commit and pull-request APIs. Before any candidate dependency
+or Python entry point runs, the audit uses the exact `before` revision's helper,
+validator, and public keys to require a valid provider signature, exact payload
+and signature equality, the provider-associated canonical author identity, the
+fixed `web-flow` committer, and one uniquely associated merged same-repository
+pull request whose base and merge commit match the push. The author may use any
+GitHub-verified or GitHub privacy address selected for the merging account; the
+temporary receipt retains only its exact identity digest.
+The repository must use `PR_TITLE` for squash commit titles and `BLANK` for
+squash commit messages. The resulting commit message is one line and must equal
+the exact pull-request title, optionally followed by GitHub's canonical `(#n)`
+suffix for that same pull request.
+Only then may the validated candidate run in the disposable test tree. The
+temporary receipt retains commit and pull-request provenance digests but no raw
+author or committer identity, and an `always()` step removes it after use.

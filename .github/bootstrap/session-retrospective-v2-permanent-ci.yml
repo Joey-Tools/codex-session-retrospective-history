@@ -1,0 +1,1129 @@
+name: CI
+
+on:
+  pull_request_target:
+    branches:
+      - master
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+      - edited
+  push:
+    branches:
+      - master
+
+permissions: {}
+
+env:
+  GIT_ALTERNATE_OBJECT_DIRECTORIES: ""
+  GIT_CONFIG_COUNT: "0"
+  GIT_CONFIG_GLOBAL: /dev/null
+  GIT_CONFIG_NOSYSTEM: "1"
+  GIT_LITERAL_PATHSPECS: "1"
+  GIT_NO_LAZY_FETCH: "1"
+  GIT_NO_REPLACE_OBJECTS: "1"
+  GIT_OPTIONAL_LOCKS: "0"
+  GIT_TERMINAL_PROMPT: "0"
+  RETROSPECTIVE_HISTORY_MUTATION_MODEL: external-admission-cas-only
+  RETROSPECTIVE_HISTORY_S_AUDIT: post-mutation-detection-only
+  RETROSPECTIVE_HISTORY_TCB: baseline-owned-pr-feedback_external-admission-cas
+
+concurrency:
+  group: "trusted-history-${{ github.event.pull_request.number || github.sha }}"
+  cancel-in-progress: false
+
+jobs:
+  trusted_history_gate:
+    name: Trusted history gate
+    if: "${{ github.event_name == 'pull_request_target' && github.event.pull_request.draft == false && github.event.pull_request.base.repo.full_name == github.repository && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == 'master' }}"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      CANDIDATE_GIT_DIR: "${{ github.workspace }}/candidate.git"
+      CANDIDATE_ROOT: "${{ github.workspace }}/candidate"
+      PREFLIGHT_MANIFEST: "${{ github.workspace }}/.trusted-history-state/preflight.json"
+      RESULT_PATH: "${{ github.workspace }}/.trusted-history-state/result.json"
+      TRUSTED_ROOT: "${{ github.workspace }}/trusted"
+      TRUSTED_SHA: "${{ github.event.pull_request.base.sha }}"
+    steps:
+      -
+        name: Bind trusted event source
+        shell: bash
+        env:
+          EVENT_BASE_REF: "${{ github.event.pull_request.base.ref }}"
+          EVENT_BASE_REPOSITORY: "${{ github.event.pull_request.base.repo.full_name }}"
+          EVENT_BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+          EVENT_DRAFT: "${{ github.event.pull_request.draft }}"
+          EVENT_HEAD_REF: "${{ github.event.pull_request.head.ref }}"
+          EVENT_HEAD_REPOSITORY: "${{ github.event.pull_request.head.repo.full_name }}"
+          EVENT_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+          EVENT_MERGED: "${{ github.event.pull_request.merged }}"
+          EVENT_MERGED_AT: "${{ github.event.pull_request.merged_at }}"
+          EVENT_NODE_ID: "${{ github.event.pull_request.node_id }}"
+          EVENT_NUMBER: "${{ github.event.pull_request.number }}"
+          EVENT_STATE: "${{ github.event.pull_request.state }}"
+        run: |
+          set -euo pipefail
+
+          validate_sha() {
+            case "$1" in
+              ""|*[!0-9a-f]*)
+                return 1
+                ;;
+            esac
+            [ "${#1}" -eq 40 ] || [ "${#1}" -eq 64 ]
+          }
+
+          validate_sha "$TRUSTED_SHA" || {
+            echo "Trusted workflow SHA is invalid." >&2
+            exit 1
+          }
+          if [ "$GITHUB_WORKFLOW_SHA" != "$TRUSTED_SHA" ]; then
+            echo "Workflow source is not the exact trusted base." >&2
+            exit 1
+          fi
+          install -d -m 700 "$(dirname "$PREFLIGHT_MANIFEST")"
+          validate_sha "$EVENT_BASE_SHA"
+          validate_sha "$EVENT_HEAD_SHA"
+          case "$EVENT_NUMBER" in
+            ""|0|*[!0-9]*)
+              echo "Pull request number is invalid." >&2
+              exit 1
+              ;;
+          esac
+          if [ "$GITHUB_EVENT_NAME" != pull_request_target ] || \
+             [ "$GITHUB_SHA" != "$EVENT_BASE_SHA" ] || \
+             [ "$EVENT_BASE_REPOSITORY" != "$GITHUB_REPOSITORY" ] || \
+             [ "$EVENT_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ] || \
+             [ "$EVENT_BASE_REF" != master ] || \
+             [ "$EVENT_STATE" != open ] || \
+             [ "$EVENT_MERGED" != false ] || \
+             [ "$EVENT_DRAFT" != false ] || \
+             [ -n "$EVENT_MERGED_AT" ]; then
+            echo "Trusted history gate received an unsupported event." >&2
+            exit 1
+          fi
+          {
+            printf 'EVENT_KIND=candidate\n'
+            printf 'B0_SHA=%s\n' "$EVENT_BASE_SHA"
+            printf 'CANDIDATE_SHA=%s\n' "$EVENT_HEAD_SHA"
+            printf 'PR_NUMBER=%s\n' "$EVENT_NUMBER"
+          } >>"$GITHUB_ENV"
+      -
+        name: Checkout exact trusted B0
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: "${{ github.repository }}"
+          ref: "${{ env.TRUSTED_SHA }}"
+          path: trusted
+          fetch-depth: 65
+          clean: true
+          lfs: false
+          submodules: false
+          set-safe-directory: false
+          persist-credentials: false
+      -
+        name: Set up trusted Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13.12"
+          cache: false
+      -
+        name: Bind trusted control Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          control_python="$(command -v python)"
+          case "$control_python" in
+            /*) ;;
+            *)
+              echo "Trusted control Python is not absolute." >&2
+              exit 1
+              ;;
+          esac
+          [ -x "$control_python" ]
+          control_version="$("$control_python" -I -B --version 2>&1)"
+          if [ "$control_version" != "Python 3.13.12" ]; then
+            echo "Trusted control Python version is invalid." >&2
+            exit 1
+          fi
+          control_home="$RUNNER_TEMP/history-ci/control-home"
+          install -d -m 700 "$control_home"
+          {
+            printf 'CONTROL_HOME=%s\n' "$control_home"
+            printf 'CONTROL_PYTHON=%s\n' "$control_python"
+          } >>"$GITHUB_ENV"
+      -
+        name: Bind live PR
+        shell: bash
+        env:
+          EVENT_BASE_REF: "${{ github.event.pull_request.base.ref }}"
+          EVENT_BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+          EVENT_HEAD_REF: "${{ github.event.pull_request.head.ref }}"
+          EVENT_HEAD_REPOSITORY: "${{ github.event.pull_request.head.repo.full_name }}"
+          EVENT_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+          EVENT_NODE_ID: "${{ github.event.pull_request.node_id }}"
+          EVENT_NUMBER: "${{ github.event.pull_request.number }}"
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          set -euo pipefail
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_ROOT/scripts/trusted_history_ci.py" snapshot \
+            --repository "$GITHUB_REPOSITORY" \
+            --pr-number "$EVENT_NUMBER" \
+            --pr-node-id "$EVENT_NODE_ID" \
+            --base-ref "$EVENT_BASE_REF" \
+            --base-sha "$EVENT_BASE_SHA" \
+            --head-repository "$EVENT_HEAD_REPOSITORY" \
+            --head-ref "$EVENT_HEAD_REF" \
+            --head-sha "$EVENT_HEAD_SHA" \
+            --output "$RUNNER_TEMP/history-ci-pr-snapshot.json"
+      -
+        name: Fetch bounded graph without checkout
+        shell: bash
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -f 131072
+          ulimit -n 256
+
+          authenticated_fetch() {
+            local basic_auth
+            basic_auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+            GIT_CONFIG_COUNT=2 \
+              GIT_CONFIG_KEY_0=protocol.version \
+              GIT_CONFIG_VALUE_0=2 \
+              GIT_CONFIG_KEY_1=http.https://github.com/.extraheader \
+              GIT_CONFIG_VALUE_1="AUTHORIZATION: basic $basic_auth" \
+              timeout --signal=TERM --kill-after=5s 120s \
+                git --git-dir="$CANDIDATE_GIT_DIR" fetch \
+                  --quiet --no-tags "$@"
+            unset basic_auth
+          }
+
+          clear_partial_clone() {
+            local cleanup_status remote_url
+            local -a remotes
+            mapfile -t remotes < <(git --git-dir="$CANDIDATE_GIT_DIR" remote)
+            if [ "${#remotes[@]}" -gt 1 ]; then
+              echo "Candidate store retained multiple remote fallbacks." >&2
+              return 1
+            fi
+            if [ "${#remotes[@]}" -eq 1 ]; then
+              remote_url="$(
+                git --git-dir="$CANDIDATE_GIT_DIR" remote get-url "${remotes[0]}"
+              )"
+              if [ "$remote_url" != "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" ]; then
+                echo "Candidate store retained an unexpected remote fallback." >&2
+                return 1
+              fi
+              git --git-dir="$CANDIDATE_GIT_DIR" remote remove "${remotes[0]}"
+            fi
+            if git --git-dir="$CANDIDATE_GIT_DIR" \
+                config --unset-all extensions.partialClone; then
+              return 0
+            else
+              cleanup_status=$?
+            fi
+            if [ "$cleanup_status" -ne 5 ]; then
+              echo "Partial clone cleanup failed." >&2
+              return 1
+            fi
+          }
+
+          git init --bare --quiet "$CANDIDATE_GIT_DIR"
+          timeout --signal=TERM --kill-after=5s 60s \
+            git --git-dir="$CANDIDATE_GIT_DIR" fetch \
+              --quiet --no-tags --depth=65 "$TRUSTED_ROOT" "$TRUSTED_SHA"
+          authenticated_fetch --depth=66 --filter=blob:none \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" \
+            "+refs/pull/$PR_NUMBER/head:refs/trusted-history/candidate"
+          clear_partial_clone
+          if [ "$(
+              git --git-dir="$CANDIDATE_GIT_DIR" rev-parse \
+                refs/trusted-history/candidate
+            )" != "$CANDIDATE_SHA" ]; then
+            echo "Fetched PR ref differs from H." >&2
+            exit 1
+          fi
+          case "$B0_SHA" in
+            ""|*[!0-9a-f]*)
+              echo "B0 is invalid." >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#B0_SHA}" -ne 40 ] && [ "${#B0_SHA}" -ne 64 ]; then
+            echo "B0 has an unsupported length." >&2
+            exit 1
+          fi
+          if git --git-dir="$CANDIDATE_GIT_DIR" remote | read -r _remote; then
+            echo "Candidate object store retained a remote." >&2
+            exit 1
+          fi
+          printf 'B0_SHA=%s\n' "$B0_SHA" >>"$GITHUB_ENV"
+      -
+        name: Preflight exact B0 to H graph and trees
+        id: preflight
+        shell: bash
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          set -euo pipefail
+          ulimit -f 32768
+          ulimit -n 256
+          ulimit -t 180
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_ROOT/scripts/trusted_history_ci.py" preflight \
+            --git-dir "$CANDIDATE_GIT_DIR" \
+            --base-sha "$B0_SHA" \
+            --head-sha "$CANDIDATE_SHA" \
+            --policy history-v2 \
+            --repository "$GITHUB_REPOSITORY" \
+            --output "$PREFLIGHT_MANIFEST"
+      -
+        name: Materialize only preflight-bounded blobs
+        shell: bash
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -f 131072
+          ulimit -n 256
+          ulimit -t 600
+          timeout --signal=TERM --kill-after=5s 900s \
+            "$CONTROL_PYTHON" -I -B \
+              "$TRUSTED_ROOT/scripts/trusted_history_ci.py" \
+              materialize-blobs \
+              --git-dir "$CANDIDATE_GIT_DIR" \
+              --manifest "$PREFLIGHT_MANIFEST" \
+              --repository "$GITHUB_REPOSITORY"
+      -
+        name: Verify objects and materialize H as data
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 131072
+          ulimit -n 256
+          ulimit -t 300
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            "$CONTROL_PYTHON" -I -B \
+              "$TRUSTED_ROOT/scripts/trusted_history_ci.py" \
+              verify-objects \
+              --git-dir "$CANDIDATE_GIT_DIR" \
+              --manifest "$PREFLIGHT_MANIFEST"
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            git --git-dir="$CANDIDATE_GIT_DIR" fsck \
+              --full --strict --no-dangling "$CANDIDATE_SHA"
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            git --git-dir="$CANDIDATE_GIT_DIR" worktree add \
+              --quiet --detach "$CANDIDATE_ROOT" "$CANDIDATE_SHA"
+      -
+        name: Establish read-only H mount
+        id: mount-data
+        shell: bash
+        run: |
+          set -euo pipefail
+          roots=("$CANDIDATE_ROOT")
+          for root in "${roots[@]}"; do
+            resolved="$(realpath "$root")"
+            case "$resolved" in
+              "$GITHUB_WORKSPACE/candidate")
+                ;;
+              *)
+                echo "Materialized data escaped the expected workspace." >&2
+                exit 1
+                ;;
+            esac
+            sudo mount --bind "$resolved" "$resolved"
+            sudo mount -o remount,bind,ro "$resolved"
+            mountpoint -q "$resolved"
+            case ",$(findmnt --noheadings --output OPTIONS --target "$resolved")," in
+              *,ro,*)
+                ;;
+              *)
+                echo "Materialized data mount is not read-only." >&2
+                exit 1
+                ;;
+            esac
+          done
+      -
+        name: Install B0 trusted dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 8192
+          ulimit -n 256
+          TRUSTED_VENV="$RUNNER_TEMP/history-ci/venv"
+          TRUSTED_HOME="$RUNNER_TEMP/history-ci/home"
+          install -d -m 700 "$TRUSTED_HOME"
+          "$CONTROL_PYTHON" -I -B -m venv "$TRUSTED_VENV"
+          output="$RUNNER_TEMP/history-ci/pip.log"
+          if ! timeout --signal=TERM --kill-after=5s 180s \
+              env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+                HOME="$TRUSTED_HOME" \
+                PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1 \
+                "$TRUSTED_VENV/bin/python" -I -m pip install \
+                  --isolated --no-cache-dir --no-input --only-binary=:all: \
+                  --require-hashes \
+                  --requirement "$TRUSTED_ROOT/requirements-v2.txt" \
+                  --quiet >"$output" 2>&1; then
+            tail -n 80 "$output" >&2
+            exit 1
+          fi
+          {
+            printf 'TRUSTED_HOME=%s\n' "$TRUSTED_HOME"
+            printf 'TRUSTED_PYTHON=%s\n' "$TRUSTED_VENV/bin/python"
+          } >>"$GITHUB_ENV"
+      -
+        name: Import B0 public signing keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 8192
+          ulimit -n 256
+          trusted_gnupg="$RUNNER_TEMP/history-ci/gnupg"
+          install -d -m 700 "$trusted_gnupg"
+          key_files=(
+            "$TRUSTED_ROOT/retrospective-history-v2-admin-public.asc"
+            "$TRUSTED_ROOT/retrospective-history-v2-publisher.asc"
+          )
+          for key_file in "${key_files[@]}"; do
+            records="$(
+              GNUPGHOME="$trusted_gnupg" \
+                timeout --signal=TERM --kill-after=5s 30s \
+                  gpg --quiet --no-options --no-autostart --batch \
+                    --with-colons --import-options show-only --dry-run \
+                    --import "$key_file"
+            )"
+            if ! printf '%s\n' "$records" |
+                awk -F: '$1 == "pub" { found = 1 } END { exit !found }'; then
+              echo "Trusted export has no public primary key." >&2
+              exit 1
+            fi
+            if printf '%s\n' "$records" |
+                awk -F: '$1 == "sec" || $1 == "ssb" { found = 1 } END { exit !found }'; then
+              echo "Trusted public export contains secret key packets." >&2
+              exit 1
+            fi
+          done
+          GNUPGHOME="$trusted_gnupg" \
+            timeout --signal=TERM --kill-after=5s 30s \
+              gpg --quiet --no-options --no-autostart --batch --import \
+                "${key_files[@]}" >/dev/null 2>&1
+          if [ -n "$(
+              GNUPGHOME="$trusted_gnupg" \
+                gpg --quiet --no-options --no-autostart --batch \
+                  --with-colons --list-secret-keys
+            )" ]; then
+            echo "Trusted public import populated the secret keyring." >&2
+            exit 1
+          fi
+          printf 'TRUSTED_GNUPGHOME=%s\n' "$trusted_gnupg" >>"$GITHUB_ENV"
+      -
+        name: Validate B0/H candidate feedback
+        id: trusted-validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 32768
+          ulimit -n 256
+          ulimit -t 600
+          output="$RUNNER_TEMP/history-ci/validation.log"
+          command=(
+            "$TRUSTED_PYTHON" -I
+            "$TRUSTED_ROOT/scripts/validate_retained_history.py"
+            --mode history-v2-candidate-range
+            --root "$CANDIDATE_ROOT"
+            --base-rev "$B0_SHA"
+            --head-rev "$CANDIDATE_SHA"
+            --write-merge-plan "$RESULT_PATH"
+          )
+          if ! timeout --signal=TERM --kill-after=5s 900s \
+              env -i HOME="$TRUSTED_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+                PATH="$PATH" GNUPGHOME="$TRUSTED_GNUPGHOME" \
+                GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+                GIT_OPTIONAL_LOCKS=0 PYTHONDONTWRITEBYTECODE=1 \
+                PYTHONHASHSEED=0 "${command[@]}" >"$output" 2>&1; then
+            tail -n 120 "$output" >&2
+            exit 1
+          fi
+      -
+        name: Prepare sealed candidate runtime tree
+        id: prepare-runtime-execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_state="$RUNNER_TEMP/history-ci/runtime"
+          authority_receipt="$runtime_state/authority-receipt.json"
+          execution_root="$runtime_state/execution"
+          pycache_root="$runtime_state/pycache"
+          test_home="$runtime_state/home"
+          test_tmp="$runtime_state/tmp"
+          install -d -m 755 "$runtime_state"
+          install -d -m 700 "$pycache_root" "$test_home" "$test_tmp"
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_ROOT/scripts/trusted_history_ci.py" \
+            prepare-runtime-execution \
+            --git-dir "$CANDIDATE_GIT_DIR" \
+            --execution-root "$execution_root" \
+            --expected-head "$CANDIDATE_SHA" \
+            --output "$authority_receipt"
+          test_uid="$(id -u nobody)"
+          test_gid="$(id -g nobody)"
+          sudo chown -R "$test_uid:$test_gid" \
+            "$pycache_root" "$test_home" "$test_tmp"
+          sudo -u nobody -- test -r "$execution_root/requirements-v2.txt"
+          sudo -u nobody -- test ! -w "$execution_root"
+          {
+            printf 'RUNTIME_AUTHORITY_RECEIPT=%s\n' "$authority_receipt"
+            printf 'RUNTIME_EXECUTION_ROOT=%s\n' "$execution_root"
+            printf 'RUNTIME_PYCACHE_ROOT=%s\n' "$pycache_root"
+            printf 'RUNTIME_TEST_HOME=%s\n' "$test_home"
+            printf 'RUNTIME_TEST_TMP=%s\n' "$test_tmp"
+          } >>"$GITHUB_ENV"
+      -
+        name: Install sealed candidate test dependencies
+        id: runtime-dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 8192
+          ulimit -n 256
+          test_venv="$RUNNER_TEMP/history-ci/runtime-venv"
+          "$CONTROL_PYTHON" -I -B -m venv "$test_venv"
+          runtime_python="$test_venv/bin/python"
+          runtime_python_target="$(readlink -f -- "$runtime_python")"
+          case "$runtime_python_target" in
+            /*) ;;
+            *)
+              echo "Candidate runtime Python target is not absolute." >&2
+              exit 1
+              ;;
+          esac
+          [ -f "$runtime_python_target" ]
+          [ -x "$runtime_python_target" ]
+          runtime_python_sha256="$(/usr/bin/sha256sum -- "$runtime_python_target")"
+          runtime_python_sha256="${runtime_python_sha256%% *}"
+          runtime_venv_config="$test_venv/pyvenv.cfg"
+          runtime_venv_config_sha256="$(/usr/bin/sha256sum -- "$runtime_venv_config")"
+          runtime_venv_config_sha256="${runtime_venv_config_sha256%% *}"
+          runtime_python_version="$($runtime_python -I -B --version 2>&1)"
+          [ "$runtime_python_version" = "Python 3.13.12" ]
+          verify_runtime_python() {
+            local observed_target observed_sha256 observed_config_sha256
+            observed_target="$(readlink -f -- "$runtime_python")"
+            [ "$observed_target" = "$runtime_python_target" ]
+            observed_sha256="$(/usr/bin/sha256sum -- "$observed_target")"
+            observed_sha256="${observed_sha256%% *}"
+            [ "$observed_sha256" = "$runtime_python_sha256" ]
+            observed_config_sha256="$(/usr/bin/sha256sum -- "$runtime_venv_config")"
+            observed_config_sha256="${observed_config_sha256%% *}"
+            [ "$observed_config_sha256" = "$runtime_venv_config_sha256" ]
+            [ "$($runtime_python -I -B --version 2>&1)" = "Python 3.13.12" ]
+          }
+          output="$RUNNER_TEMP/history-ci/runtime-pip.log"
+          if ! timeout --signal=TERM --kill-after=5s 180s \
+              env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+                HOME="$RUNTIME_TEST_HOME" \
+                PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1 \
+                "$test_venv/bin/python" -I -m pip install \
+                  --isolated --no-cache-dir --no-input --only-binary=:all: \
+                  --require-hashes \
+                  --requirement "$RUNTIME_EXECUTION_ROOT/requirements-v2.txt" \
+                  --quiet >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+          verify_runtime_python
+          chmod -R u+rwX,go=rX "$test_venv"
+          chmod -R a-w "$test_venv"
+          verify_runtime_python
+          sudo -u nobody -- test -x "$test_venv/bin/python"
+          sudo -u nobody -- test ! -w "$test_venv"
+          sudo -u nobody -- test ! -w "$runtime_python_target"
+          {
+            printf 'RUNTIME_TEST_PYTHON=%s\n' "$runtime_python"
+            printf 'RUNTIME_TEST_PYTHON_SHA256=%s\n' "$runtime_python_sha256"
+            printf 'RUNTIME_TEST_PYTHON_TARGET=%s\n' "$runtime_python_target"
+            printf 'RUNTIME_TEST_VENV_CONFIG=%s\n' "$runtime_venv_config"
+            printf 'RUNTIME_TEST_VENV_CONFIG_SHA256=%s\n' \
+              "$runtime_venv_config_sha256"
+          } >>"$GITHUB_ENV"
+      -
+        name: Run sealed candidate compile and tests
+        id: runtime-tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 16384
+          ulimit -n 256
+          ulimit -t 600
+          output="$RUNNER_TEMP/history-ci/runtime-tests.log"
+          observed_target="$(readlink -f -- "$RUNTIME_TEST_PYTHON")"
+          [ "$observed_target" = "$RUNTIME_TEST_PYTHON_TARGET" ]
+          observed_sha256="$(/usr/bin/sha256sum -- "$observed_target")"
+          observed_sha256="${observed_sha256%% *}"
+          [ "$observed_sha256" = "$RUNTIME_TEST_PYTHON_SHA256" ]
+          observed_config_sha256="$(
+            /usr/bin/sha256sum -- "$RUNTIME_TEST_VENV_CONFIG"
+          )"
+          observed_config_sha256="${observed_config_sha256%% *}"
+          [ "$observed_config_sha256" = "$RUNTIME_TEST_VENV_CONFIG_SHA256" ]
+          [ "$($RUNTIME_TEST_PYTHON -I -B --version 2>&1)" = "Python 3.13.12" ]
+          sudo -u nobody -- test ! -w "$(dirname "$RUNTIME_TEST_PYTHON")/.."
+          sudo -u nobody -- test ! -w "$observed_target"
+          run_as_test_uid=(
+            sudo -u nobody --
+            /usr/bin/env -i -C "$RUNTIME_EXECUTION_ROOT"
+            HOME="$RUNTIME_TEST_HOME"
+            LANG=C.UTF-8
+            LC_ALL=C.UTF-8
+            PATH=/usr/bin:/bin
+            TMPDIR="$RUNTIME_TEST_TMP"
+            GIT_CONFIG_GLOBAL=/dev/null
+            GIT_CONFIG_NOSYSTEM=1
+            GIT_OPTIONAL_LOCKS=0
+            PYTHONDONTWRITEBYTECODE=1
+            PYTHONHASHSEED=0
+            "$RUNTIME_TEST_PYTHON"
+          )
+          if ! timeout --signal=TERM --kill-after=5s 900s \
+              "${run_as_test_uid[@]}" \
+                -I -B -X "pycache_prefix=$RUNTIME_PYCACHE_ROOT" \
+                -m compileall -q -f scripts tests \
+                >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+          if ! timeout --signal=TERM --kill-after=5s 900s \
+              "${run_as_test_uid[@]}" \
+                -I -B -X "pycache_prefix=$RUNTIME_PYCACHE_ROOT" \
+                -m unittest discover -s tests \
+                >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+      -
+        name: Verify candidate runtime authority remains pristine
+        id: verify-runtime-authority
+        if: "${{ always() && steps.prepare-runtime-execution.outcome == 'success' }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_ROOT/scripts/trusted_history_ci.py" \
+            verify-runtime-authority \
+            --git-dir "$CANDIDATE_GIT_DIR" \
+            --execution-root "$RUNTIME_EXECUTION_ROOT" \
+            --expected-head "$CANDIDATE_SHA" \
+            --receipt "$RUNTIME_AUTHORITY_RECEIPT"
+      -
+        name: Release read-only H mount
+        id: release-data
+        if: "${{ always() }}"
+        shell: bash
+        env:
+          MOUNT_OUTCOME: "${{ steps.mount-data.outcome }}"
+          VALIDATION_OUTCOME: "${{ steps.trusted-validation.outcome }}"
+        run: |
+          set -u
+          integrity_ok=true
+          roots=("$CANDIDATE_ROOT")
+          expected=("$CANDIDATE_SHA")
+          for index in "${!roots[@]}"; do
+            root="${roots[$index]}"
+            if mountpoint -q "$root"; then
+              case ",$(findmnt --noheadings --output OPTIONS --target "$root" 2>/dev/null || true)," in
+                *,ro,*)
+                  ;;
+                *)
+                  integrity_ok=false
+                  ;;
+              esac
+              if [ "$VALIDATION_OUTCOME" = success ]; then
+                observed="$(
+                  git -C "$root" rev-parse HEAD 2>/dev/null || true
+                )"
+                dirty="$(
+                  GIT_OPTIONAL_LOCKS=0 git -C "$root" status \
+                    --porcelain=v1 --untracked-files=all \
+                    --ignored=matching 2>/dev/null || printf invalid
+                )"
+                if [ "$observed" != "${expected[$index]}" ] || [ -n "$dirty" ]; then
+                  integrity_ok=false
+                fi
+              fi
+              sudo umount "$root" || integrity_ok=false
+            elif [ "$MOUNT_OUTCOME" = success ]; then
+              integrity_ok=false
+            fi
+          done
+          if [ "$integrity_ok" != true ]; then
+            echo "Read-only data mount integrity or cleanup failed." >&2
+            exit 1
+          fi
+      -
+        name: Publish gate evidence
+        if: "${{ always() }}"
+        shell: bash
+        env:
+          PREFLIGHT_OUTCOME: "${{ steps.preflight.outcome }}"
+          RUNTIME_AUTHORITY_OUTCOME: "${{ steps.verify-runtime-authority.outcome }}"
+          RUNTIME_DEPENDENCIES_OUTCOME: "${{ steps.runtime-dependencies.outcome }}"
+          RUNTIME_PREPARE_OUTCOME: "${{ steps.prepare-runtime-execution.outcome }}"
+          RUNTIME_TESTS_OUTCOME: "${{ steps.runtime-tests.outcome }}"
+          RELEASE_OUTCOME: "${{ steps.release-data.outcome }}"
+          VALIDATION_OUTCOME: "${{ steps.trusted-validation.outcome }}"
+        run: |
+          set -euo pipefail
+          role=unavailable
+          if [ "$VALIDATION_OUTCOME" = success ]; then
+            role="$(jq -er '.role' "$RESULT_PATH")"
+          fi
+          # Markdown code spans are intentionally literal.
+          # shellcheck disable=SC2016
+          {
+            printf '### Trusted history gate\n\n'
+            printf -- '- Event model: `%s`\n' "$EVENT_KIND"
+            printf -- '- Validated role: `%s`\n' "$role"
+            printf -- '- Candidate base B0: `%s`\n' "$B0_SHA"
+            printf -- '- Candidate H: `%s`\n' "$CANDIDATE_SHA"
+            printf '%s\n' \
+              '- This baseline-owned B0/H result is candidate feedback only.'
+            printf '%s\n' \
+              '- Exact H passed credential-free, nonprivileged compile and tests from a sealed execution tree.'
+            if [ "$role" = publication ]; then
+              printf '%s\n' \
+                '- Publication identity is retained by the cryptographically validated bundle attestation, not by the S Git signature.'
+            elif [ "$role" = admin ]; then
+              printf '%s\n' \
+                '- Candidate feedback proves only the signed B0/H admin plan/tree.'
+            fi
+            printf '%s\n' \
+              '- This workflow cannot authorize formal-history mutation; external admission and the history authority CAS remain mandatory.'
+            printf '%s\n' \
+              '- The default audit detects an invalid S after mutation and does not confer write authority.'
+          } >>"$GITHUB_STEP_SUMMARY"
+          [ "$PREFLIGHT_OUTCOME" = success ]
+          [ "$RUNTIME_PREPARE_OUTCOME" = success ]
+          [ "$RUNTIME_DEPENDENCIES_OUTCOME" = success ]
+          [ "$RUNTIME_TESTS_OUTCOME" = success ]
+          [ "$RUNTIME_AUTHORITY_OUTCOME" = success ]
+          [ "$VALIDATION_OUTCOME" = success ]
+          [ "$RELEASE_OUTCOME" = success ]
+
+  trusted_default_audit:
+    name: Post-merge default audit
+    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    env:
+      ADMITTED_CANDIDATE_ROOT: "${{ github.workspace }}/admitted-candidate"
+      DEFAULT_AUTHORITY_ROOT: "${{ github.workspace }}/candidate-default"
+      EVENT_BEFORE_SHA: "${{ github.event.before }}"
+      EVENT_CREATED: "${{ github.event.created }}"
+      EVENT_DELETED: "${{ github.event.deleted }}"
+      EVENT_FORCED: "${{ github.event.forced }}"
+      EVENT_REPOSITORY_ID: "${{ github.repository_id }}"
+      TRUSTED_BASELINE_ROOT: "${{ github.workspace }}/trusted-default"
+    steps:
+      -
+        name: Reject unsupported default event shapes
+        shell: bash
+        run: |
+          set -euo pipefail
+          validate_nonzero_sha() {
+            case "$1" in
+              ""|*[!0-9a-f]*|0000000000000000000000000000000000000000|0000000000000000000000000000000000000000000000000000000000000000)
+                return 1
+                ;;
+            esac
+            [ "${#1}" -eq 40 ] || [ "${#1}" -eq 64 ]
+          }
+          validate_nonzero_sha "$EVENT_BEFORE_SHA"
+          validate_nonzero_sha "$GITHUB_SHA"
+          if [ "$EVENT_CREATED" != false ] || [ "$EVENT_DELETED" != false ] || \
+             [ "$EVENT_FORCED" != false ] || \
+             [ "$GITHUB_WORKFLOW_SHA" != "$GITHUB_SHA" ]; then
+            echo "Default event is not one ordinary linear update." >&2
+            exit 1
+          fi
+      -
+        name: Checkout exact default S
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: "${{ github.repository }}"
+          ref: "${{ github.sha }}"
+          path: candidate-default
+          fetch-depth: 65
+          clean: true
+          lfs: false
+          submodules: false
+          set-safe-directory: false
+          persist-credentials: false
+      -
+        name: Checkout exact trusted B0
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: "${{ github.repository }}"
+          ref: "${{ github.event.before }}"
+          path: trusted-default
+          fetch-depth: 1
+          clean: true
+          lfs: false
+          submodules: false
+          set-safe-directory: false
+          persist-credentials: false
+      -
+        name: Set up trusted Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13.12"
+          cache: false
+      -
+        name: Bind trusted control Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          control_python="$(command -v python)"
+          case "$control_python" in
+            /*) ;;
+            *)
+              echo "Trusted control Python is not absolute." >&2
+              exit 1
+              ;;
+          esac
+          [ -x "$control_python" ]
+          control_version="$("$control_python" -I -B --version 2>&1)"
+          if [ "$control_version" != "Python 3.13.12" ]; then
+            echo "Trusted control Python version is invalid." >&2
+            exit 1
+          fi
+          control_home="$RUNNER_TEMP/default-history-ci/control-home"
+          install -d -m 700 "$control_home"
+          {
+            printf 'CONTROL_HOME=%s\n' "$control_home"
+            printf 'CONTROL_PYTHON=%s\n' "$control_python"
+          } >>"$GITHUB_ENV"
+      -
+        name: Resolve exact admitted candidate H
+        id: resolve-admitted-candidate
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -f 8192
+          ulimit -n 256
+          initial_evidence="$RUNNER_TEMP/default-history-ci/initial-candidate-evidence.json"
+          candidate_sha="$(
+            timeout --signal=TERM --kill-after=5s 120s \
+              /usr/bin/env -i HOME="$CONTROL_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+                PATH="$PATH" GH_TOKEN="$GH_TOKEN" \
+                GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+                GIT_OPTIONAL_LOCKS=0 PYTHONDONTWRITEBYTECODE=1 \
+                PYTHONHASHSEED=0 \
+                "$CONTROL_PYTHON" -I -B \
+                  "$TRUSTED_BASELINE_ROOT/scripts/trusted_history_ci.py" \
+                  resolve-default-admitted-candidate \
+                  --repository "$GITHUB_REPOSITORY" \
+                  --repository-id "$EVENT_REPOSITORY_ID" \
+                  --trusted-base-root "$TRUSTED_BASELINE_ROOT" \
+                  --base-sha "$EVENT_BEFORE_SHA" \
+                  --head-sha "$GITHUB_SHA" \
+                  --output "$initial_evidence"
+          )"
+          validate_nonzero_sha() {
+            case "$1" in
+              ""|*[!0-9a-f]*|0000000000000000000000000000000000000000|0000000000000000000000000000000000000000000000000000000000000000)
+                return 1
+                ;;
+            esac
+            [ "${#1}" -eq 40 ] || [ "${#1}" -eq 64 ]
+          }
+          validate_nonzero_sha "$candidate_sha"
+          {
+            printf 'INITIAL_CANDIDATE_EVIDENCE=%s\n' "$initial_evidence"
+            printf 'ADMITTED_CANDIDATE_SHA=%s\n' "$candidate_sha"
+          } >>"$GITHUB_ENV"
+          printf 'candidate-sha=%s\n' "$candidate_sha" >>"$GITHUB_OUTPUT"
+      -
+        name: Checkout exact admitted candidate H
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: "${{ github.repository }}"
+          ref: "${{ steps.resolve-admitted-candidate.outputs.candidate-sha }}"
+          path: admitted-candidate
+          fetch-depth: 65
+          clean: true
+          lfs: false
+          submodules: false
+          set-safe-directory: false
+          persist-credentials: false
+      -
+        name: Verify exact GitHub squash commit
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -f 8192
+          ulimit -n 256
+          github_commit_receipt="$RUNNER_TEMP/default-history-ci/github-commit-receipt.json"
+          if ! timeout --signal=TERM --kill-after=5s 120s \
+              /usr/bin/env -i HOME="$CONTROL_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+                PATH="$PATH" GH_TOKEN="$GH_TOKEN" \
+                GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+                GIT_OPTIONAL_LOCKS=0 PYTHONDONTWRITEBYTECODE=1 \
+                PYTHONHASHSEED=0 \
+                "$CONTROL_PYTHON" -I -B \
+                  "$TRUSTED_BASELINE_ROOT/scripts/trusted_history_ci.py" \
+                  verify-default-github-commit \
+                  --repository "$GITHUB_REPOSITORY" \
+                  --repository-id "$EVENT_REPOSITORY_ID" \
+                  --git-dir "$DEFAULT_AUTHORITY_ROOT/.git" \
+                  --trusted-base-root "$TRUSTED_BASELINE_ROOT" \
+                  --base-sha "$EVENT_BEFORE_SHA" \
+                  --head-sha "$GITHUB_SHA" \
+                  --initial-candidate-evidence "$INITIAL_CANDIDATE_EVIDENCE" \
+                  --output "$github_commit_receipt"; then
+            echo "Exact GitHub squash verification failed closed." >&2
+            exit 1
+          fi
+          printf 'GITHUB_COMMIT_RECEIPT=%s\n' "$github_commit_receipt" >>"$GITHUB_ENV"
+      -
+        name: Import default public signing keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          trusted_gnupg="$RUNNER_TEMP/default-history-ci/gnupg"
+          install -d -m 700 "$trusted_gnupg"
+          key_files=(
+            "$TRUSTED_BASELINE_ROOT/retrospective-history-v2-admin-public.asc"
+            "$TRUSTED_BASELINE_ROOT/retrospective-history-v2-publisher.asc"
+          )
+          for key_file in "${key_files[@]}"; do
+            records="$(
+              GNUPGHOME="$trusted_gnupg" \
+                gpg --quiet --no-options --no-autostart --batch \
+                  --with-colons --import-options show-only --dry-run \
+                  --import "$key_file"
+            )"
+            if ! printf '%s\n' "$records" |
+                awk -F: '$1 == "pub" { found = 1 } END { exit !found }'; then
+              echo "Trusted export has no public primary key." >&2
+              exit 1
+            fi
+            if printf '%s\n' "$records" |
+                awk -F: '$1 == "sec" || $1 == "ssb" { found = 1 } END { exit !found }'; then
+              echo "Trusted public export contains secret key packets." >&2
+              exit 1
+            fi
+          done
+          GNUPGHOME="$trusted_gnupg" \
+            gpg --quiet --no-options --no-autostart --batch --import \
+              "${key_files[@]}" >/dev/null 2>&1
+          printf 'TRUSTED_GNUPGHOME=%s\n' "$trusted_gnupg" >>"$GITHUB_ENV"
+      -
+        name: Detect invalid S tree or transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 8192
+          ulimit -n 256
+          ulimit -t 300
+          output="$RUNNER_TEMP/default-history-ci/validation.log"
+          if ! timeout --signal=TERM --kill-after=5s 600s \
+              env -i HOME="$CONTROL_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+                PATH="$PATH" GNUPGHOME="$TRUSTED_GNUPGHOME" \
+                GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+                GIT_OPTIONAL_LOCKS=0 PYTHONDONTWRITEBYTECODE=1 \
+                PYTHONHASHSEED=0 \
+                "$CONTROL_PYTHON" -I -B \
+                  "$TRUSTED_BASELINE_ROOT/scripts/validate_retained_history.py" \
+                  --mode history-v2-actual-default-squash \
+                  --root "$DEFAULT_AUTHORITY_ROOT" \
+                  --base-root "$TRUSTED_BASELINE_ROOT" \
+                  --candidate-root "$ADMITTED_CANDIDATE_ROOT" \
+                  --base-rev "$EVENT_BEFORE_SHA" \
+                  --head-rev "$GITHUB_SHA" \
+                  --repository "$GITHUB_REPOSITORY" \
+                  --repository-id "$EVENT_REPOSITORY_ID" \
+                  --github-commit-receipt "$GITHUB_COMMIT_RECEIPT" \
+                  --event-created "$EVENT_CREATED" \
+                  --event-deleted "$EVENT_DELETED" \
+                  --event-forced "$EVENT_FORCED" \
+                  >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+      -
+        name: Remove temporary provider receipt
+        if: "${{ always() }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipts=(
+            "$RUNNER_TEMP/default-history-ci/github-commit-receipt.json"
+            "$RUNNER_TEMP/default-history-ci/initial-candidate-evidence.json"
+          )
+          for receipt in "${receipts[@]}"; do
+            if [ -e "$receipt" ] || [ -L "$receipt" ]; then
+              rm -f -- "$receipt"
+            fi
+            if [ -e "$receipt" ] || [ -L "$receipt" ]; then
+              echo "Temporary provider receipt cleanup failed." >&2
+              exit 1
+            fi
+          done
+      -
+        name: Prepare disposable default test tree
+        id: prepare-default-execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          authority_receipt="$RUNNER_TEMP/default-history-ci/authority-receipt.json"
+          execution_root="$RUNNER_TEMP/default-history-ci/execution"
+          pycache_root="$RUNNER_TEMP/default-history-ci/pycache"
+          test_home="$RUNNER_TEMP/default-history-ci/test-home"
+          install -d -m 700 "$pycache_root" "$test_home"
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_BASELINE_ROOT/scripts/trusted_history_ci.py" \
+            prepare-default-execution \
+            --authority-root "$DEFAULT_AUTHORITY_ROOT" \
+            --execution-root "$execution_root" \
+            --expected-head "$GITHUB_SHA" \
+            --output "$authority_receipt"
+          {
+            printf 'AUTHORITY_RECEIPT=%s\n' "$authority_receipt"
+            printf 'DEFAULT_EXECUTION_ROOT=%s\n' "$execution_root"
+            printf 'DEFAULT_PYCACHE_ROOT=%s\n' "$pycache_root"
+            printf 'DEFAULT_TEST_HOME=%s\n' "$test_home"
+          } >>"$GITHUB_ENV"
+      -
+        name: Install validated default test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 8192
+          ulimit -n 256
+          test_venv="$RUNNER_TEMP/default-history-ci/test-venv"
+          "$CONTROL_PYTHON" -I -B -m venv "$test_venv"
+          output="$RUNNER_TEMP/default-history-ci/pip.log"
+          if ! timeout --signal=TERM --kill-after=5s 180s \
+              env -u GH_TOKEN -u GITHUB_TOKEN -u PYTHONHOME -u PYTHONPATH \
+                HOME="$DEFAULT_TEST_HOME" \
+                PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1 \
+                "$test_venv/bin/python" -I -m pip install \
+                  --isolated --no-cache-dir --no-input --only-binary=:all: \
+                  --require-hashes \
+                  --requirement "$DEFAULT_EXECUTION_ROOT/requirements-v2.txt" \
+                  --quiet >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+          printf 'TEST_PYTHON=%s\n' "$test_venv/bin/python" >>"$GITHUB_ENV"
+      -
+        name: Transfer disposable default test tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_uid="$(id -u nobody)"
+          test_gid="$(id -g nobody)"
+          sudo chown -R "$test_uid:$test_gid" \
+            "$DEFAULT_EXECUTION_ROOT" "$DEFAULT_PYCACHE_ROOT" \
+            "$DEFAULT_TEST_HOME"
+      -
+        name: Run tests after dropping UID and cwd
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -f 16384
+          ulimit -n 256
+          ulimit -t 600
+          output="$RUNNER_TEMP/default-history-ci/tests.log"
+          if ! timeout --signal=TERM --kill-after=5s 900s \
+              sudo -u nobody -- \
+                /usr/bin/env -i -C "$DEFAULT_EXECUTION_ROOT" \
+                  HOME="$DEFAULT_TEST_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+                  PATH="$PATH" GIT_CONFIG_GLOBAL=/dev/null \
+                  GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
+                  PYTHONDONTWRITEBYTECODE=1 PYTHONHASHSEED=0 \
+                  PYTHONPYCACHEPREFIX="$DEFAULT_PYCACHE_ROOT" \
+                  "$TEST_PYTHON" -I -B -m compileall -q -f scripts tests \
+                  >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+          if ! timeout --signal=TERM --kill-after=5s 900s \
+              sudo -u nobody -- \
+                /usr/bin/env -i -C "$DEFAULT_EXECUTION_ROOT" \
+                  HOME="$DEFAULT_TEST_HOME" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+                  PATH="$PATH" GIT_CONFIG_GLOBAL=/dev/null \
+                  GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
+                  PYTHONDONTWRITEBYTECODE=1 PYTHONHASHSEED=0 \
+                  PYTHONPYCACHEPREFIX="$DEFAULT_PYCACHE_ROOT" \
+                  "$TEST_PYTHON" -I -B -m unittest discover -s tests \
+                  >"$output" 2>&1; then
+            /usr/bin/tail -c 65536 -- "$output" |
+              /usr/bin/base64 -w 76 |
+              /usr/bin/sed 's/^/diagnostic-base64: /' >&2
+            exit 1
+          fi
+      -
+        name: Verify default authority remains pristine
+        if: "${{ always() && steps.prepare-default-execution.outcome == 'success' }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$CONTROL_PYTHON" -I -B \
+            "$TRUSTED_BASELINE_ROOT/scripts/trusted_history_ci.py" \
+            verify-default-authority \
+            --authority-root "$DEFAULT_AUTHORITY_ROOT" \
+            --expected-head "$GITHUB_SHA" \
+            --receipt "$AUTHORITY_RECEIPT"
+      -
+        name: Document detector scope
+        if: "${{ always() }}"
+        shell: bash
+        run: |
+          {
+            printf '### Post-merge default audit\n\n'
+            printf '%s\n' \
+              'This job detects an invalid S after GitHub writes master; it does not prevent that write.'
+            printf '%s\n' \
+              'This audit is evidence for the external controller; a same-name check never authorizes mutation.'
+            printf '%s\n' \
+              'Detection is conditional on GitHub executing the default-branch workflow and preserving check/run metadata; it is not independent of that provider TCB.'
+            printf '%s\n' \
+              'S is GitHub squash output and is not expected to equal H or retain H Git signatures.'
+            printf '%s\n' \
+              'Publication identity remains in the cryptographically validated retained bundle attestation.'
+          } >>"$GITHUB_STEP_SUMMARY"
