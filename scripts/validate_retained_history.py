@@ -533,74 +533,74 @@ BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     ),
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x0B,
-            0x6B,
-            0x32,
-            0xE3,
-            0x11,
-            0xC9,
-            0x0D,
-            0xD7,
-            0x73,
-            0x95,
-            0xA9,
-            0xBB,
-            0xA8,
-            0x1F,
-            0x7D,
-            0x68,
-            0x53,
-            0xBE,
-            0xE9,
-            0x22,
-            0x3E,
-            0x17,
-            0x3C,
             0x91,
-            0xD6,
-            0x2B,
+            0x4B,
+            0x36,
+            0x45,
+            0x43,
+            0x9C,
+            0x38,
+            0xAB,
+            0x09,
+            0x8E,
+            0x4F,
+            0x66,
+            0x1B,
+            0xE0,
+            0xFD,
+            0xFA,
+            0x74,
             0x6C,
-            0xD5,
-            0x55,
-            0x59,
-            0xC8,
-            0x0C,
+            0x22,
+            0x51,
+            0x37,
+            0x1D,
+            0xE9,
+            0x95,
+            0x37,
+            0xE3,
+            0x6D,
+            0xB7,
+            0x7F,
+            0x91,
+            0x26,
+            0xEF,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x84,
-            0x73,
-            0x1F,
-            0x49,
-            0x1C,
-            0x8D,
-            0x03,
-            0xBA,
-            0x09,
-            0xA5,
-            0x2C,
-            0x75,
-            0x59,
-            0x82,
-            0x70,
-            0x2E,
             0x5F,
-            0x93,
+            0xD6,
+            0x29,
+            0xB7,
+            0x02,
+            0x92,
+            0xCB,
+            0xD4,
+            0x60,
+            0x21,
+            0x4A,
+            0x76,
+            0x72,
+            0x9E,
+            0x14,
+            0xAD,
+            0x4F,
+            0x63,
+            0x2A,
+            0x1A,
+            0x16,
+            0xC4,
+            0xCC,
             0x5C,
-            0x9D,
-            0x47,
-            0x8C,
-            0x50,
-            0xE8,
-            0x41,
-            0x3B,
-            0xDE,
-            0x1B,
-            0x8A,
-            0x53,
-            0x4E,
-            0xEE,
+            0xBF,
+            0x17,
+            0x6F,
+            0xC9,
+            0x09,
+            0x9E,
+            0x82,
+            0xBE,
         )
     ),
 }
@@ -15217,23 +15217,38 @@ def validate_history_v2_commit_signature(
         label="history-v2 commit signature hashed area",
         critical_type_bit=True,
     )
+    hashed_by_type: dict[int, bytes] = {}
+    for subpacket_type, critical, subpacket_body in hashed:
+        if (
+            critical
+            or subpacket_type not in {2, 33}
+            or subpacket_type in hashed_by_type
+        ):
+            raise ValueError(
+                "history-v2 commit signature hashed subpackets are outside policy"
+            )
+        hashed_by_type[subpacket_type] = subpacket_body
+    creation_time = hashed_by_type.get(2)
+    issuer_fingerprint = hashed_by_type.get(33)
     if (
-        len(hashed) != 2
-        or hashed[0][0:2] != (2, False)
-        or len(hashed[0][2]) != 4
-        or hashed[1][0:2] != (33, False)
-        or len(hashed[1][2]) != 21
-        or hashed[1][2][0] != 4
+        len(hashed_by_type) != 2
+        or creation_time is None
+        or len(creation_time) != 4
+        or issuer_fingerprint is None
+        or len(issuer_fingerprint) != 21
+        or issuer_fingerprint[0] != 4
     ):
         raise ValueError(
             "history-v2 commit signature hashed subpackets are outside policy"
         )
-    created_at = int.from_bytes(hashed[0][2], "big")
+    created_at = int.from_bytes(creation_time, "big")
     if created_at != committer_timestamp:
         raise ValueError(
             "history-v2 commit signature time differs from canonical commit time"
         )
-    signer_fingerprint = binascii.hexlify(hashed[1][2][1:]).decode("ascii").upper()
+    signer_fingerprint = (
+        binascii.hexlify(issuer_fingerprint[1:]).decode("ascii").upper()
+    )
 
     unhashed_length = int.from_bytes(body[hashed_end : hashed_end + 2], "big")
     unhashed_start = hashed_end + 2

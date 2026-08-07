@@ -43,6 +43,33 @@ TRUSTED_CI_HELPER = (
 FIXTURE_TIMESTAMP = 1_784_073_600
 FIXTURE_SIGNER_FINGERPRINT = "0123456789ABCDEF0123456789ABCDEF01234567"
 FIXTURE_REPOSITORY_ID = 1_246_526_548
+REAL_GNUPG_SIGNATURE_ARMOR = bytes.fromhex(
+    (
+        "2d2d2d2d2d424547494e20504750205349474e41545552452d2d2d2d2d0a0a694855454142594b414230574951"
+        "547675386b54394a706662677277306b6a33416b595550634b504d675543616e58644441414b43524433416b59"
+        "5550634b500a4d6f6f494151444a6b33504e532f7250586e732b377a46503455785732356e37496644442f5857"
+        "593961426f4d3275546a774541774a5343314c5a4c755049300a33503662424e35353931474f44473665765377"
+        "6e7341624b6247444e4a516f3d0a3d614533670a2d2d2d2d2d454e4420504750205349474e41545552452d2d"
+        "2d2d2d0a"
+    )
+)
+REAL_GNUPG_SIGNATURE_TIMESTAMP = 1_786_109_196
+REAL_GNUPG_SIGNED_PAYLOAD = bytes.fromhex(
+    (
+        "747265652036363531663035366434363230333338636630646334353239636431666130633130666162363164"
+        "0a706172656e742063333539373965313130333338633337363765643438396163306431326334653733343931"
+        "6534640a617574686f72204a6f65792054656e67203c6a6f65792e74656e672e64657640676d61696c2e636f"
+        "6d3e2031373836313039313936202b303130300a636f6d6d6974746572204a6f65792054656e67203c6a6f65"
+        "792e74656e672e64657640676d61696c2e636f6d3e2031373836313039313936202b303130300a0a52657374"
+        "7269637420686973746f72792061646d696e207369676e696e6720617574686f726974790a0a4578706f7274"
+        "206f6e6c7920746865204a6f65792061646d696e207072696d617279206b65792c2062696e64206576657279"
+        "20726f6c6520746f20616e206578616374207072696d61727920616e64207375626b657920746f706f6c6f67"
+        "792c20616e642072656a656374206d756c74692d7072696d617279206b65792061727469666163747320616e"
+        "64206d69736d6174636865642056414c4944534947207072696d617279206964656e7469746965732e0a0a43"
+        "6f2d617574686f7265642d62793a20436f6465782028746f6f6c3d436f64657820434c493b206d6f64656c"
+        "3d4750542d3529203c636f646578406f70656e61692e636f6d3e0a"
+    )
+)
 SCHEMA = (
     Path(__file__).resolve().parents[1]
     / "schemas"
@@ -305,11 +332,11 @@ def fixture_signature_armor(
         hashed_subpackets
         if hashed_subpackets is not None
         else (
-            creation_length
+            b"\x16\x21\x04"
+            + fingerprint
+            + creation_length
             + b"\x02"
             + timestamp.to_bytes(4, "big")
-            + b"\x16\x21\x04"
-            + fingerprint
         )
     ) + extra_hashed_subpackets
     unhashed = (
@@ -349,6 +376,14 @@ def fixture_signature_headers(armor: bytes) -> tuple[bytes, ...]:
     return (
         b"gpgsig " + lines[0],
         *(b" " + line for line in lines[1:]),
+    )
+
+
+def real_gnupg_signature_fixture() -> tuple[bytes, bytes, int]:
+    return (
+        REAL_GNUPG_SIGNATURE_ARMOR,
+        REAL_GNUPG_SIGNED_PAYLOAD,
+        REAL_GNUPG_SIGNATURE_TIMESTAMP,
     )
 
 
@@ -7848,6 +7883,104 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         "armor contains prohibited control bytes",
                     ):
                         parse_fixture_commit(root, commit_oid)
+
+    def test_history_v2_commit_signature_accepts_both_closed_subpacket_orders(
+        self,
+    ) -> None:
+        fingerprint = bytes.fromhex(FIXTURE_SIGNER_FINGERPRINT)
+        creation_time = synthetic_openpgp_subpacket(
+            2,
+            FIXTURE_TIMESTAMP.to_bytes(4, "big"),
+        )
+        issuer_fingerprint = synthetic_openpgp_subpacket(
+            33,
+            b"\x04" + fingerprint,
+        )
+        for label, hashed_subpackets in (
+            ("GnuPG", issuer_fingerprint + creation_time),
+            ("creation-first", creation_time + issuer_fingerprint),
+        ):
+            with self.subTest(label=label):
+                signature = MODULE.validate_history_v2_commit_signature(
+                    fixture_signature_armor(
+                        hashed_subpackets=hashed_subpackets,
+                    ),
+                    signed_payload=b"synthetic signed payload",
+                    committer_timestamp=FIXTURE_TIMESTAMP,
+                )
+                self.assertEqual(signature.created_at, FIXTURE_TIMESTAMP)
+                self.assertEqual(
+                    signature.signer_fingerprint,
+                    FIXTURE_SIGNER_FINGERPRINT,
+                )
+
+    def test_history_v2_commit_signature_rejects_ambiguous_subpacket_sets(
+        self,
+    ) -> None:
+        fingerprint = bytes.fromhex(FIXTURE_SIGNER_FINGERPRINT)
+        creation_time = synthetic_openpgp_subpacket(
+            2,
+            FIXTURE_TIMESTAMP.to_bytes(4, "big"),
+        )
+        issuer_fingerprint = synthetic_openpgp_subpacket(
+            33,
+            b"\x04" + fingerprint,
+        )
+        cases = (
+            (
+                "duplicate creation time",
+                issuer_fingerprint + creation_time + creation_time,
+            ),
+            (
+                "duplicate issuer fingerprint",
+                issuer_fingerprint + creation_time + issuer_fingerprint,
+            ),
+            (
+                "unknown type",
+                issuer_fingerprint
+                + creation_time
+                + synthetic_openpgp_subpacket(11, bytes((0,))),
+            ),
+        )
+        for label, hashed_subpackets in cases:
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "hashed subpackets are outside policy",
+                ),
+            ):
+                MODULE.validate_history_v2_commit_signature(
+                    fixture_signature_armor(
+                        hashed_subpackets=hashed_subpackets,
+                    ),
+                    signed_payload=b"synthetic signed payload",
+                    committer_timestamp=FIXTURE_TIMESTAMP,
+                )
+
+    def test_real_gnupg_commit_signature_verifies_end_to_end(self) -> None:
+        root = SCRIPT.parents[1]
+        relative = MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS["bootstrap-v2"]
+        armor, signed_payload, timestamp = real_gnupg_signature_fixture()
+        signature = MODULE.validate_history_v2_commit_signature(
+            armor,
+            signed_payload=signed_payload,
+            committer_timestamp=timestamp,
+        )
+        expected_fingerprint = MODULE.HISTORY_V2_SIGNATURE_PRIMARY_FINGERPRINTS[
+            "bootstrap-v2"
+        ]
+        self.assertEqual(signature.created_at, timestamp)
+        self.assertEqual(signature.signer_fingerprint, expected_fingerprint)
+        with MODULE.HistoryV2SignatureVerifier(
+            (root / relative).read_bytes(),
+            relative=relative,
+        ) as verifier:
+            verifier.verify(signature)
+            self.assertEqual(
+                verifier.verified_signer_fingerprints,
+                {expected_fingerprint},
+            )
 
     def test_fixed_history_v2_public_keys_initialize_signature_verifier(self) -> None:
         root = SCRIPT.parents[1]
