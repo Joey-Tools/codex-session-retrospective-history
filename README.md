@@ -112,7 +112,9 @@ unset during bootstrap development, so `history-v2-admission` fails closed
 until the dedicated App exists and its real ID is reviewed and committed. The
 one-time `bootstrap-v2-migration` authority does not use that App, but it is
 valid only for the designated bootstrap candidate ref and only while the exact
-predecessor marker set is present.
+predecessor marker set is present. Bootstrap cutover also requires both trusted
+implementations to hold the same positive non-GitHub-Actions App ID and the
+same fixed slug before any marker-removing transaction can be accepted.
 
 The post-merge audit emits a schema-v3 provider receipt. It records a canonical
 candidate-evidence object rather than a precomputed validation verdict. In the

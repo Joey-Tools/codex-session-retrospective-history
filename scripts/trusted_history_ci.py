@@ -635,6 +635,7 @@ def trusted_validator_module(*, contract: str = "bootstrap") -> Any:
         required = (
             "parse_history_v2_commit_object",
             "HistoryV2SignatureVerifier",
+            "history_v2_bootstrap_admission_app_id",
             "history_v2_bootstrap_markers",
             "validate_bootstrap_v2_candidate",
             "validate_history_v2_tree",
@@ -2703,6 +2704,28 @@ def canonical_admission_app_id(value: Any) -> int:
     return app_id
 
 
+def bootstrap_admission_app_id(validator: Any) -> int:
+    try:
+        app_id = canonical_admission_app_id(ADMISSION_RECORD_APP_ID)
+    except GateError as exc:
+        raise GateError(
+            "bootstrap migration requires a configured admission App ID"
+        ) from exc
+    try:
+        validator_app_id = validator.history_v2_bootstrap_admission_app_id()
+    except Exception as exc:
+        raise GateError(
+            "trusted validator admission App identity could not be read"
+        ) from exc
+    if (
+        validator_app_id != app_id
+        or getattr(validator, "HISTORY_V2_ADMISSION_RECORD_APP_SLUG", None)
+        != ADMISSION_RECORD_APP_SLUG
+    ):
+        raise GateError("trusted bootstrap admission App identity differs")
+    return app_id
+
+
 def validate_active_branch_rules(
     payload: Any,
     *,
@@ -3232,6 +3255,8 @@ def _predecessor_authority_context(
     validator = trusted_validator_module(
         contract="bootstrap" if policy == "bootstrap-v2" else "permanent"
     )
+    if policy == "bootstrap-v2":
+        bootstrap_admission_app_id(validator)
     try:
         observed_markers = validator.history_v2_bootstrap_markers(
             trusted_base_root,

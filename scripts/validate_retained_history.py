@@ -495,38 +495,38 @@ BOOTSTRAP_V2_TRUSTED_DECODED_RISK_VALUES_SHA256 = {
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/trusted_history_ci.py"): _trusted_sha256_values_hex(
         (
-            0x85,
-            0x35,
-            0x3F,
-            0x90,
-            0x08,
-            0xEA,
-            0x9C,
-            0xC0,
-            0x31,
-            0x57,
-            0xF2,
-            0x52,
-            0x46,
-            0x4F,
-            0xC4,
-            0x77,
-            0xC3,
-            0x57,
-            0x65,
-            0x0B,
+            0x4E,
+            0xDA,
+            0xEC,
+            0x8E,
+            0x3B,
+            0x0C,
             0x15,
-            0x3C,
-            0xCC,
-            0xD6,
-            0x6E,
-            0x6A,
             0x33,
-            0x42,
-            0xB5,
-            0x65,
-            0x67,
-            0x4C,
+            0xD6,
+            0xB3,
+            0x1B,
+            0x94,
+            0x7B,
+            0x3F,
+            0xA2,
+            0x58,
+            0xD5,
+            0xE9,
+            0x97,
+            0xFA,
+            0x9D,
+            0xBC,
+            0x1B,
+            0x43,
+            0x34,
+            0x0D,
+            0xAB,
+            0x8C,
+            0xFE,
+            0x5F,
+            0xD8,
+            0xFA,
         )
     ),
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
@@ -719,6 +719,7 @@ HISTORY_V2_ADMISSION_RECORD_EXTERNAL_ID_PREFIX = "retrospective-history-v2-admis
 HISTORY_V2_ADMISSION_RECORD_OUTPUT_SUMMARY_PREFIX = "Admission record SHA-256: "
 HISTORY_V2_ADMISSION_RECORD_APP_ID: int | None = None
 HISTORY_V2_ADMISSION_RECORD_APP_SLUG = "retrospective-history-admission"
+HISTORY_V2_GITHUB_ACTIONS_APP_ID = 15368
 HISTORY_V2_REQUIRED_CHECK_CONTEXT = "Trusted history gate"
 HISTORY_V2_BOOTSTRAP_CANDIDATE_REF = "wip/session-retrospective-v2-history-bootstrap"
 HISTORY_V2_MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS = 30
@@ -18260,6 +18261,19 @@ def history_v2_blob_entry_map(
     return {entry.relative: entry for entry in entries if entry.object_type == "blob"}
 
 
+def history_v2_bootstrap_admission_app_id() -> int:
+    app_id = HISTORY_V2_ADMISSION_RECORD_APP_ID
+    if type(app_id) is not int or app_id <= 0:
+        raise ValueError(
+            "history-v2 bootstrap cutover requires a configured admission App ID"
+        )
+    if app_id == HISTORY_V2_GITHUB_ACTIONS_APP_ID:
+        raise ValueError(
+            "history-v2 bootstrap admission App must not be GitHub Actions"
+        )
+    return app_id
+
+
 def validate_history_v2_bootstrap_transaction(
     root: Path,
     *,
@@ -18273,6 +18287,7 @@ def validate_history_v2_bootstrap_transaction(
     base_root: Path | None = None,
     candidate_root: Path | None = None,
 ) -> dict[str, Any]:
+    history_v2_bootstrap_admission_app_id()
     root, base_rev, head_rev = validated_history_v2_range_checkout(
         root,
         base_rev=base_rev,

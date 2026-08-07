@@ -5183,6 +5183,35 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("requires --root", result.stderr)
 
+    def test_bootstrap_transaction_requires_configured_admission_app_id(self) -> None:
+        for app_id, expected_error in (
+            (None, "bootstrap cutover requires a configured admission App ID"),
+            (0, "bootstrap cutover requires a configured admission App ID"),
+            (
+                MODULE.HISTORY_V2_GITHUB_ACTIONS_APP_ID,
+                "bootstrap admission App must not be GitHub Actions",
+            ),
+        ):
+            with (
+                self.subTest(app_id=app_id),
+                mock.patch.object(
+                    MODULE,
+                    "HISTORY_V2_ADMISSION_RECORD_APP_ID",
+                    app_id,
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "validated_history_v2_range_checkout",
+                ) as validate_range,
+                self.assertRaisesRegex(ValueError, expected_error),
+            ):
+                MODULE.validate_history_v2_bootstrap_transaction(
+                    Path("/synthetic/repository"),
+                    base_rev="a" * 40,
+                    head_rev="b" * 40,
+                )
+            validate_range.assert_not_called()
+
     def test_candidate_authorization_barrier_precedes_all_domain_control(
         self,
     ) -> None:
@@ -6377,6 +6406,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     head_rev=rewritten,
                 )
 
+    @mock.patch.object(
+        MODULE,
+        "HISTORY_V2_ADMISSION_RECORD_APP_ID",
+        424_242,
+    )
     def test_default_transaction_explicitly_validates_bootstrap_shape(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "repo"

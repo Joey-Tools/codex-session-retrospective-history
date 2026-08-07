@@ -4383,6 +4383,12 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             policy="bootstrap-v2",
             role="admin",
         )
+        validator.history_v2_bootstrap_admission_app_id.return_value = (
+            TEST_ADMISSION_APP_ID
+        )
+        validator.HISTORY_V2_ADMISSION_RECORD_APP_SLUG = (
+            CI_MODULE.ADMISSION_RECORD_APP_SLUG
+        )
         validator.history_v2_bootstrap_markers.return_value = frozenset(
             Path(path) for path in CI_MODULE.BOOTSTRAP_TEMPORARY_PATHS
         )
@@ -4405,6 +4411,62 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertEqual(markers, tuple(sorted(CI_MODULE.BOOTSTRAP_TEMPORARY_PATHS)))
         self.assertRegex(marker_sha256, r"^[0-9a-f]{64}$")
         single_parent.assert_not_called()
+
+        for helper_app_id, validator_app_id, validator_slug, expected_error in (
+            (
+                None,
+                TEST_ADMISSION_APP_ID,
+                CI_MODULE.ADMISSION_RECORD_APP_SLUG,
+                "requires a configured admission App ID",
+            ),
+            (
+                TEST_ADMISSION_APP_ID,
+                TEST_ADMISSION_APP_ID + 1,
+                CI_MODULE.ADMISSION_RECORD_APP_SLUG,
+                "trusted bootstrap admission App identity differs",
+            ),
+            (
+                TEST_ADMISSION_APP_ID,
+                TEST_ADMISSION_APP_ID,
+                "lookalike-admission",
+                "trusted bootstrap admission App identity differs",
+            ),
+        ):
+            with (
+                self.subTest(
+                    helper_app_id=helper_app_id,
+                    validator_app_id=validator_app_id,
+                    validator_slug=validator_slug,
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "ADMISSION_RECORD_APP_ID",
+                    helper_app_id,
+                ),
+                mock.patch.object(
+                    CI_MODULE,
+                    "trusted_validator_module",
+                    return_value=validator,
+                ),
+                mock.patch.object(CI_MODULE, "_worktree_head"),
+                self.assertRaisesRegex(CI_MODULE.GateError, expected_error),
+            ):
+                validator.history_v2_bootstrap_admission_app_id.return_value = (
+                    validator_app_id
+                )
+                validator.HISTORY_V2_ADMISSION_RECORD_APP_SLUG = validator_slug
+                CI_MODULE._predecessor_authority_context(
+                    expected=bootstrap_snapshot,
+                    projection=bootstrap_projection,
+                    policy="bootstrap-v2",
+                    trusted_base_root=Path("/synthetic/trusted-base"),
+                )
+        validator.history_v2_bootstrap_admission_app_id.return_value = (
+            TEST_ADMISSION_APP_ID
+        )
+        validator.HISTORY_V2_ADMISSION_RECORD_APP_SLUG = (
+            CI_MODULE.ADMISSION_RECORD_APP_SLUG
+        )
 
         invalid_bootstrap_snapshot = type(bootstrap_snapshot)(
             **{
