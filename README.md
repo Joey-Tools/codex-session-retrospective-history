@@ -64,6 +64,31 @@ classification, and unresolved comprehensions passed to `join` fail closed.
 These controls prevent an unmodeled transform from assembling sensitive text
 out of otherwise harmless literals.
 
+## V2 Trust Seed And Cutover
+
+V2 uses an explicit two-stage rollout. The first PR is a trust seed: it keeps
+the legacy `.github/workflows/ci.yml` active and adds the base-owned bootstrap
+workflow, permanent-workflow template, trusted helper, validator, tests, and
+the two public-only signing keys. A `pull_request_target` workflow does not
+exist on the default branch until that seed merges, so it cannot validate its
+own introducing PR. The seed therefore requires the legacy CI plus independent
+exact-range review and changes no retained `data/` or `reports/` artifact.
+
+Only a later product cutover may consume the seeded workflow. That cutover is
+restricted to the designated candidate ref, deletes every temporary bootstrap
+artifact, and replaces the legacy CI file with the exact seeded permanent
+template. Its base-owned validation reads the helper, validator, and public
+keys from the merged seed, never from the candidate. The first permanent
+post-merge audit consequently checks out `github.event.before` at the seed (or
+a later trusted generation); the pre-seed revision does not contain that
+runtime and is deliberately ineligible. Missing or changed seed files and keys
+fail closed.
+
+The trust seed does not bypass the external admission boundary below. Product
+cutover remains blocked until the dedicated admission App has a reviewed,
+positive, non-GitHub-Actions App ID committed identically in both trusted
+implementations.
+
 ## V2 Admission Boundary
 
 The repository-owned `pull_request_target` workflow provides baseline-owned

@@ -533,74 +533,74 @@ BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     ),
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x6C,
-            0x8B,
-            0x02,
-            0x80,
-            0x11,
-            0x4B,
-            0x8B,
-            0x98,
-            0xC2,
-            0x6B,
-            0xFA,
-            0x87,
-            0x4A,
-            0x7C,
-            0x8A,
-            0x1D,
-            0x0F,
+            0x92,
+            0xB4,
+            0x4D,
+            0x21,
+            0xB3,
+            0x06,
+            0x26,
+            0xF5,
+            0x62,
+            0x10,
+            0x6F,
+            0x0A,
+            0xE7,
+            0xB9,
+            0xCF,
+            0x1A,
+            0x12,
+            0xE9,
             0x95,
-            0xCC,
-            0x65,
-            0xC3,
-            0xFA,
-            0xB8,
-            0x55,
-            0x36,
-            0xEB,
-            0xA1,
-            0xFD,
-            0xCE,
-            0xAE,
-            0x91,
-            0x9C,
+            0x52,
+            0x3A,
+            0x48,
+            0x2E,
+            0x45,
+            0x12,
+            0x41,
+            0x44,
+            0xF7,
+            0xC8,
+            0xB5,
+            0xBF,
+            0x26,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0xB3,
-            0xBA,
-            0xB8,
-            0xFB,
-            0x8A,
-            0x83,
-            0x2A,
-            0xBB,
-            0xBB,
-            0x43,
+            0xED,
+            0x23,
+            0x56,
+            0xE9,
+            0xDA,
+            0x54,
+            0xE9,
+            0x05,
+            0x89,
+            0x1E,
+            0xBE,
+            0xDE,
+            0x92,
+            0x5F,
+            0x6F,
+            0x8B,
+            0x89,
+            0xAF,
+            0xA7,
+            0xEE,
+            0xA3,
+            0x61,
+            0x91,
+            0x40,
             0x4A,
-            0x6B,
+            0x9B,
+            0xE9,
             0x4C,
-            0x67,
-            0xBB,
-            0x5A,
-            0x2F,
-            0x90,
-            0x9C,
-            0x2B,
-            0xA8,
-            0xD9,
-            0x27,
-            0x8C,
-            0xBB,
-            0xD3,
-            0xFA,
-            0x81,
-            0x2D,
-            0xF0,
-            0xBC,
-            0xFB,
+            0x3A,
+            0x2C,
+            0x61,
+            0x01,
         )
     ),
 }
@@ -12203,6 +12203,8 @@ def allowed_infrastructure_artifact(
     path_text = relative.as_posix()
     if path_text in ROOT_DOC_FILES:
         return True
+    if relative in BOOTSTRAP_V2_PUBLIC_KEY_FILES:
+        return True
     if history_v2 and relative in BOOTSTRAP_V2_ALLOWED_FILES:
         return True
     if relative == BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH:
@@ -12228,6 +12230,8 @@ def allowed_infrastructure_artifact(
 def content_scanned_infrastructure_artifact(
     relative: Path, *, history_v2: bool = False
 ) -> bool:
+    if relative in BOOTSTRAP_V2_PUBLIC_KEY_FILES:
+        return False
     if history_v2 and relative in BOOTSTRAP_V2_ALLOWED_FILES:
         return False
     return allowed_infrastructure_artifact(relative, history_v2=history_v2)
@@ -13292,6 +13296,7 @@ def bootstrap_v2_signature_subpacket_text(
     value: bytes,
     *,
     nesting_depth: int,
+    allow_trusted_gnupg_aead_type_34: bool,
 ) -> list[str]:
     if subpacket_type == 28:
         try:
@@ -13318,7 +13323,9 @@ def bootstrap_v2_signature_subpacket_text(
                 "embedded signature subpacket nesting exceeds the trusted limit"
             )
         return validate_bootstrap_v2_signature_packet_body(
-            value, nesting_depth=nesting_depth + 1
+            value,
+            nesting_depth=nesting_depth + 1,
+            allow_trusted_gnupg_aead_type_34=allow_trusted_gnupg_aead_type_34,
         )
     return bootstrap_v2_printable_packet_text(value)
 
@@ -13414,7 +13421,10 @@ def validate_bootstrap_v2_key_packet_body(value: bytes, *, label: str) -> None:
 
 
 def validate_bootstrap_v2_signature_packet_body(
-    value: bytes, *, nesting_depth: int = 0
+    value: bytes,
+    *,
+    nesting_depth: int = 0,
+    allow_trusted_gnupg_aead_type_34: bool = False,
 ) -> list[str]:
     if len(value) < 10 or value[0] != 4:
         raise ValueError("signature packet must contain a version 4 signature body")
@@ -13456,23 +13466,34 @@ def validate_bootstrap_v2_signature_packet_body(
     if offset != len(value):
         raise ValueError("signature packet contains trailing material")
     human_values: list[str] = []
-    for subpacket_type, _critical, body in (
+    for subpacket_type, critical, body in (
         *hashed_subpackets,
         *unhashed_subpackets,
     ):
         if subpacket_type in BOOTSTRAP_V2_RESERVED_SIGNATURE_SUBPACKET_TYPES:
-            raise ValueError("signature subpacket type is reserved")
+            if not (
+                allow_trusted_gnupg_aead_type_34
+                and subpacket_type == 34
+                and not critical
+                and body == b"\x02"
+            ):
+                raise ValueError("signature subpacket type is reserved")
         human_values.extend(
             bootstrap_v2_signature_subpacket_text(
                 subpacket_type,
                 body,
                 nesting_depth=nesting_depth,
+                allow_trusted_gnupg_aead_type_34=(allow_trusted_gnupg_aead_type_34),
             )
         )
     return human_values
 
 
-def validate_bootstrap_v2_public_key_grammar(packets: list[tuple[int, bytes]]) -> None:
+def validate_bootstrap_v2_public_key_grammar(
+    packets: list[tuple[int, bytes]],
+    *,
+    allow_trusted_gnupg_aead_type_34: bool = False,
+) -> None:
     index = 0
     key_count = 0
     while index < len(packets):
@@ -13488,7 +13509,10 @@ def validate_bootstrap_v2_public_key_grammar(packets: list[tuple[int, bytes]]) -
         while index < len(packets) and packets[index][0] != 6:
             tag, body = packets[index]
             if tag == 2:
-                validate_bootstrap_v2_signature_packet_body(body)
+                validate_bootstrap_v2_signature_packet_body(
+                    body,
+                    allow_trusted_gnupg_aead_type_34=(allow_trusted_gnupg_aead_type_34),
+                )
                 index += 1
                 continue
             if tag in {13, 17}:
@@ -13506,7 +13530,10 @@ def validate_bootstrap_v2_public_key_grammar(packets: list[tuple[int, bytes]]) -
             index += 1
             signature_count = 0
             while index < len(packets) and packets[index][0] == 2:
-                validate_bootstrap_v2_signature_packet_body(packets[index][1])
+                validate_bootstrap_v2_signature_packet_body(
+                    packets[index][1],
+                    allow_trusted_gnupg_aead_type_34=(allow_trusted_gnupg_aead_type_34),
+                )
                 signature_count += 1
                 index += 1
             if signature_count == 0:
@@ -13523,6 +13550,8 @@ def validate_bootstrap_v2_public_key_grammar(packets: list[tuple[int, bytes]]) -
 
 def bootstrap_v2_human_readable_packet_text(
     packets: list[tuple[int, bytes]],
+    *,
+    allow_trusted_gnupg_aead_type_34: bool = False,
 ) -> list[str]:
     values: list[str] = []
     for tag, body in packets:
@@ -13539,7 +13568,12 @@ def bootstrap_v2_human_readable_packet_text(
             values.extend(validate_bootstrap_v2_user_attribute_packet_body(body))
             continue
         if tag == 2:
-            values.extend(validate_bootstrap_v2_signature_packet_body(body))
+            values.extend(
+                validate_bootstrap_v2_signature_packet_body(
+                    body,
+                    allow_trusted_gnupg_aead_type_34=(allow_trusted_gnupg_aead_type_34),
+                )
+            )
             continue
         values.extend(
             match.decode("ascii") for match in re.findall(rb"[\x20-\x7e]{8,}", body)
@@ -13547,13 +13581,24 @@ def bootstrap_v2_human_readable_packet_text(
     return values
 
 
-def validate_bootstrap_v2_public_key(value: bytes, *, relative: Path) -> list[str]:
+def validate_bootstrap_v2_public_key(
+    value: bytes,
+    *,
+    relative: Path,
+    allow_trusted_gnupg_aead_type_34: bool = False,
+) -> list[str]:
     issues: list[str] = []
     try:
         decoded = decode_bootstrap_v2_public_key_armor(value)
         packets = parse_bootstrap_v2_public_key_packets(decoded)
-        validate_bootstrap_v2_public_key_grammar(packets)
-        human_values = bootstrap_v2_human_readable_packet_text(packets)
+        validate_bootstrap_v2_public_key_grammar(
+            packets,
+            allow_trusted_gnupg_aead_type_34=allow_trusted_gnupg_aead_type_34,
+        )
+        human_values = bootstrap_v2_human_readable_packet_text(
+            packets,
+            allow_trusted_gnupg_aead_type_34=allow_trusted_gnupg_aead_type_34,
+        )
         for human_text in human_values:
             if contains_bootstrap_v2_nonpublic_key_marker(human_text):
                 issues.append(
@@ -13580,6 +13625,36 @@ def validate_bootstrap_v2_public_key(value: bytes, *, relative: Path) -> list[st
                 )
     except ValueError as exc:
         issues.append(safe_exception_message(exc))
+    return issues
+
+
+def validate_bootstrap_v2_public_key_artifact(
+    value: bytes, *, relative: Path
+) -> list[str]:
+    if len(value) > BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES:
+        return ["public key artifact exceeds the trusted size limit"]
+
+    issues: list[str] = []
+    try:
+        text = value.decode("ascii")
+    except UnicodeDecodeError:
+        text = ""
+    expected_digest = BOOTSTRAP_V2_PUBLIC_KEY_SHA256[relative]
+    digest_matches = hashlib.sha256(value).hexdigest() == expected_digest
+    if not digest_matches:
+        issues.append("public key artifact digest does not match trusted policy")
+    if text and contains_bootstrap_v2_privacy_risk_text(
+        bootstrap_v2_public_key_visible_text(text),
+        relative=relative,
+    ):
+        issues.append("infrastructure text contains raw/sensitive evidence")
+    issues.extend(
+        validate_bootstrap_v2_public_key(
+            value,
+            relative=relative,
+            allow_trusted_gnupg_aead_type_34=digest_matches,
+        )
+    )
     return issues
 
 
@@ -13851,30 +13926,9 @@ def validate_bootstrap_v2_candidate(
                         f"{display_relative}: candidate worktree content does not match candidate index"
                     )
             if relative in BOOTSTRAP_V2_PUBLIC_KEY_FILES:
-                if size > BOOTSTRAP_V2_MAX_PUBLIC_KEY_BYTES:
-                    issues.append(
-                        f"{display_relative}: public key artifact exceeds the trusted size limit"
-                    )
-                    continue
-                try:
-                    text = value.decode("ascii")
-                except UnicodeDecodeError:
-                    text = ""
-                expected_digest = BOOTSTRAP_V2_PUBLIC_KEY_SHA256[relative]
-                if hashlib.sha256(value).hexdigest() != expected_digest:
-                    issues.append(
-                        f"{display_relative}: public key artifact digest does not match trusted policy"
-                    )
-                if text and contains_bootstrap_v2_privacy_risk_text(
-                    bootstrap_v2_public_key_visible_text(text),
-                    relative=relative,
-                ):
-                    issues.append(
-                        f"{display_relative}: infrastructure text contains raw/sensitive evidence"
-                    )
                 issues.extend(
                     f"{display_relative}: {issue}"
-                    for issue in validate_bootstrap_v2_public_key(
+                    for issue in validate_bootstrap_v2_public_key_artifact(
                         value, relative=relative
                     )
                 )
@@ -19457,6 +19511,14 @@ def validate_root(
             history_v2 and relative in BOOTSTRAP_V2_ALLOWED_FILES
         ):
             issues.append(f"{display_relative}: forbidden raw/transient artifact")
+            continue
+        if relative in BOOTSTRAP_V2_PUBLIC_KEY_FILES:
+            issues.extend(
+                f"{display_relative}: {issue}"
+                for issue in validate_bootstrap_v2_public_key_artifact(
+                    value, relative=relative
+                )
+            )
             continue
         suffix = relative.suffix.lower()
         try:

@@ -5357,6 +5357,79 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             template_blob, VALIDATOR_MODULE.BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID
         )
 
+    def test_trust_seed_precedes_the_first_base_owned_cutover_and_audit(
+        self,
+    ) -> None:
+        seeded_paths = (
+            ".github/workflows/session-retrospective-v2-bootstrap.yml",
+            ".github/bootstrap/session-retrospective-v2-permanent-ci.yml",
+            "scripts/trusted_history_ci.py",
+            "retrospective-history-v2-admin-public.asc",
+            "retrospective-history-v2-publisher.asc",
+        )
+        for relative in seeded_paths:
+            with self.subTest(relative=relative):
+                before = subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(ROOT),
+                        "cat-file",
+                        "-e",
+                        f"{ACTUAL_BASE_SHA}:{relative}",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                if before.returncode not in {0, 1, 128}:
+                    self.fail(f"unexpected git cat-file status: {before.returncode}")
+                self.assertNotEqual(0, before.returncode)
+                self.assertTrue((ROOT / relative).is_file())
+
+        self.assertEqual(
+            (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"),
+            LEGACY_CI,
+        )
+        self.assertEqual(
+            CI_MODULE.BOOTSTRAP_CANDIDATE_REF,
+            "wip/session-retrospective-v2-history-bootstrap",
+        )
+        permanent = load_workflow(PERMANENT_CI)
+        audit = permanent["jobs"]["trusted_default_audit"]
+        baseline_checkout = steps_by_name(audit)["Checkout exact trusted B0"]
+        self.assertEqual(
+            baseline_checkout["with"]["ref"],
+            "${{ github.event.before }}",
+        )
+        self.assertEqual(
+            set(VALIDATOR_MODULE.BOOTSTRAP_V2_PUBLIC_KEY_SHA256),
+            {
+                Path("retrospective-history-v2-admin-public.asc"),
+                Path("retrospective-history-v2-publisher.asc"),
+            },
+        )
+
+    def test_trust_seed_does_not_change_retained_history_artifacts(self) -> None:
+        changed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "diff",
+                "--name-only",
+                "-z",
+                ACTUAL_BASE_SHA,
+                "--",
+                "data",
+                "reports",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        ).stdout
+        self.assertEqual(changed, b"")
+
     def test_bootstrap_preflight_rejects_raw_commit_metadata_attacks(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             graph = BootstrapGraph(Path(raw) / "repo")

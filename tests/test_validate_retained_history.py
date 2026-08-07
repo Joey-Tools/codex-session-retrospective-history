@@ -57,6 +57,38 @@ assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+
+def linux_process_state(pid: int) -> str:
+    raw = Path(f"/proc/{pid}/stat").read_bytes()
+    try:
+        value = raw.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise AssertionError("Linux process state is not ASCII") from exc
+    command_end = value.rfind(") ")
+    if command_end < 0 or len(value) <= command_end + 2:
+        raise AssertionError("Linux process state is malformed")
+    state = value[command_end + 2 : command_end + 3]
+    if len(state) != 1 or not state.isalpha():
+        raise AssertionError("Linux process state is malformed")
+    return state
+
+
+def process_is_executing_for_test(pid: int) -> bool:
+    if sys.platform.startswith("linux"):
+        try:
+            state = linux_process_state(pid)
+        except FileNotFoundError:
+            return False
+        return state not in {"X", "Z", "x"}
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 EXPECTED_BOOTSTRAP_V2_FILES = frozenset(
     Path(path)
     for path in (
@@ -3356,6 +3388,25 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             issues = "\n".join(MODULE.validate_root(root))
 
         self.assertIn("unexpected retained artifact location", issues)
+
+    def test_ordinary_mode_validates_seed_public_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            for relative in MODULE.BOOTSTRAP_V2_PUBLIC_KEY_FILES:
+                (root / relative).write_bytes(
+                    (SCRIPT.parents[1] / relative).read_bytes()
+                )
+
+            self.assertEqual(MODULE.validate_root(root), [])
+
+            relative = Path("retrospective-history-v2-admin-public.asc")
+            path = root / relative
+            path.write_bytes(path.read_bytes() + b"\n")
+            issues = "\n".join(MODULE.validate_root(root))
+
+        self.assertIn(
+            "public key artifact digest does not match trusted policy", issues
+        )
 
     def test_post_migration_tree_and_cli_merge_plan_are_fully_validated(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -7815,13 +7866,63 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             child_pid = int(child_pid_path.read_text(encoding="ascii"))
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
-                try:
-                    os.kill(child_pid, 0)
-                except ProcessLookupError:
+                if not process_is_executing_for_test(child_pid):
                     break
                 time.sleep(0.02)
             else:
                 self.fail("bounded process descendant remained alive")
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux") and hasattr(os, "fork"),
+        "Linux /proc process-state contract is unavailable",
+    )
+    def test_linux_process_liveness_treats_zombie_as_terminal(self) -> None:
+        child_pid = os.fork()
+        if child_pid == 0:
+            os._exit(0)
+        try:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if linux_process_state(child_pid) == "Z":
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("child did not enter the Linux zombie state")
+            self.assertFalse(process_is_executing_for_test(child_pid))
+        finally:
+            os.waitpid(child_pid, 0)
+
+    def test_linux_process_state_contract_distinguishes_terminal_state(self) -> None:
+        with (
+            mock.patch.object(sys, "platform", "linux"),
+            mock.patch.object(
+                Path,
+                "read_bytes",
+                return_value=b"123 (worker) name) Z 1 2 3\n",
+            ),
+        ):
+            self.assertEqual(linux_process_state(123), "Z")
+            self.assertFalse(process_is_executing_for_test(123))
+
+        with (
+            mock.patch.object(sys, "platform", "linux"),
+            mock.patch.object(
+                Path,
+                "read_bytes",
+                return_value=b"123 (worker) name) S 1 2 3\n",
+            ),
+        ):
+            self.assertTrue(process_is_executing_for_test(123))
+
+        with (
+            mock.patch.object(sys, "platform", "linux"),
+            mock.patch.object(Path, "read_bytes", side_effect=FileNotFoundError),
+        ):
+            self.assertFalse(process_is_executing_for_test(123))
+
+        with mock.patch.object(Path, "read_bytes", return_value=b"malformed\n"):
+            with self.assertRaisesRegex(AssertionError, "malformed"):
+                linux_process_state(123)
 
     def test_history_v2_duplicate_blob_paths_hit_path_budget_and_cache_reads(
         self,
@@ -9835,6 +9936,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             1,
             bytes((32, 0, 1, 1)) + bytes(12) + b"x",
         )
+        with self.assertRaisesRegex(ValueError, "signature subpacket type is reserved"):
+            MODULE.validate_bootstrap_v2_signature_packet_body(
+                synthetic_bootstrap_v2_signature_body(
+                    hashed_subpackets=synthetic_openpgp_subpacket(34, b"\x02"),
+                )
+            )
         cases = (
             (
                 "hashed body boundary",
