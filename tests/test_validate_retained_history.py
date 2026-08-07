@@ -6618,6 +6618,31 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 expected_oid=numbered,
             )
             self.assertEqual(parsed_numbered.pull_request_number, 4)
+            for author in (
+                "Synthetic Maintainer <maintainer" + "@" + "example.com>",
+                "Synthetic Maintainer <123456+synthetic-maintainer"
+                + "@"
+                + "users.noreply.github.com>",
+            ):
+                provider_identity = fixture_raw_commit(
+                    root,
+                    tree_oid=tree_oid,
+                    parents=(base,),
+                    message="Publish retained history",
+                    author=author,
+                    committer="GitHub <noreply@github.com>",
+                    author_timezone="+0100",
+                    committer_timezone="+0100",
+                    message_trailing_newline=False,
+                )
+                with self.subTest(provider_author=author):
+                    parsed_provider_identity = (
+                        MODULE.parse_history_v2_github_squash_commit(
+                            fixture_commit_bytes(root, provider_identity),
+                            expected_oid=provider_identity,
+                        )
+                    )
+                    self.assertEqual(parsed_provider_identity.tree_oid, tree_oid)
             noncanonical_numbered = fixture_raw_commit(
                 root,
                 tree_oid=tree_oid,
@@ -6680,10 +6705,12 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     base_root=root,
                     candidate_root=root,
                 )
-            for author in (
-                f"Retrospective History <{risky_email()}>",
-                "Synthetic Maintainer "
-                "<retrospective-history-v2@users.noreply.github.com>",
+            for author, expected_error in (
+                (
+                    f"Raw User Prompt <{risky_email()}>",
+                    "author identity is outside privacy policy",
+                ),
+                ("Joey Teng <not-an-email>", "author identity is outside policy"),
             ):
                 noncanonical_identity = fixture_raw_commit(
                     root,
@@ -6700,7 +6727,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     self.subTest(author=author),
                     self.assertRaisesRegex(
                         ValueError,
-                        "author identity is outside privacy policy",
+                        expected_error,
                     ),
                 ):
                     MODULE.parse_history_v2_github_squash_commit(
@@ -10636,9 +10663,18 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 self.assertIn(expected, issues)
 
     def test_bootstrap_v2_json_depth_overflow_is_a_structured_failure(self) -> None:
-        safe_depth = min(64, max(sys.getrecursionlimit() // 4, 1))
+        safe_depth = MODULE.STRICT_JSON_MAX_NESTING_DEPTH
         safe_json = "[" * safe_depth + "0" + "]" * safe_depth
         self.assertIsInstance(MODULE.parse_strict_json(safe_json), list)
+        string_value = {"text": '[{"still-a-string":true}]'}
+        self.assertEqual(
+            string_value,
+            MODULE.parse_strict_json(json.dumps(string_value)),
+        )
+        with self.assertRaisesRegex(ValueError, MODULE.JSON_NESTING_ERROR):
+            MODULE.parse_strict_json(
+                "[" * (safe_depth + 1) + "0" + "]" * (safe_depth + 1)
+            )
 
         parser_overflow_depth = sys.getrecursionlimit() * 10
         parser_overflow_json = (

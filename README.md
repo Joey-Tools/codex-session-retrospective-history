@@ -194,8 +194,11 @@ The post-merge default audit also binds the exact local squash object to
 GitHub's read-only commit and pull-request APIs. Before any candidate dependency
 or Python entry point runs, the audit uses the exact `before` revision's helper,
 validator, and public keys to require a valid provider signature, exact payload
-and signature equality, the `web-flow` committer, and one uniquely associated
-merged same-repository pull request whose base and merge commit match the push.
+and signature equality, the provider-associated canonical author identity, the
+fixed `web-flow` committer, and one uniquely associated merged same-repository
+pull request whose base and merge commit match the push. The author may use any
+GitHub-verified or GitHub privacy address selected for the merging account; the
+temporary receipt retains only its exact identity digest.
 The repository must use `PR_TITLE` for squash commit titles and `BLANK` for
 squash commit messages. The resulting commit message is one line and must equal
 the exact pull-request title, optionally followed by GitHub's canonical `(#n)`

@@ -1017,10 +1017,6 @@ jobs:
             --execution-root "$execution_root" \
             --expected-head "$GITHUB_SHA" \
             --output "$authority_receipt"
-          test_uid="$(id -u nobody)"
-          test_gid="$(id -g nobody)"
-          sudo chown -R "$test_uid:$test_gid" \
-            "$execution_root" "$pycache_root" "$test_home"
           {
             printf 'AUTHORITY_RECEIPT=%s\n' "$authority_receipt"
             printf 'DEFAULT_EXECUTION_ROOT=%s\n' "$execution_root"
@@ -1052,6 +1048,16 @@ jobs:
             exit 1
           fi
           printf 'TEST_PYTHON=%s\n' "$test_venv/bin/python" >>"$GITHUB_ENV"
+      -
+        name: Transfer disposable default test tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_uid="$(id -u nobody)"
+          test_gid="$(id -g nobody)"
+          sudo chown -R "$test_uid:$test_gid" \
+            "$DEFAULT_EXECUTION_ROOT" "$DEFAULT_PYCACHE_ROOT" \
+            "$DEFAULT_TEST_HOME"
       -
         name: Run tests after dropping UID and cwd
         shell: bash

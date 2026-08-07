@@ -1552,6 +1552,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
             "Remove temporary provider receipt",
             "Prepare disposable default test tree",
             "Install validated default test dependencies",
+            "Transfer disposable default test tree",
             "Run tests after dropping UID and cwd",
         )
         offsets = [step_names.index(name) for name in ordered]
@@ -1661,6 +1662,22 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         )
         self.assertNotIn("GH_TOKEN=", dependency_step)
         self.assertIn("-u GH_TOKEN -u GITHUB_TOKEN", dependency_step)
+        prepare_execution = audit_steps["Prepare disposable default test tree"]["run"]
+        transfer_execution = audit_steps["Transfer disposable default test tree"]["run"]
+        self.assertNotIn("chown -R", prepare_execution)
+        self.assertNotIn("chown -R", dependency_step)
+        self.assertIn("sudo chown -R", transfer_execution)
+        self.assertIn('"$DEFAULT_EXECUTION_ROOT"', transfer_execution)
+        self.assertIn('"$DEFAULT_PYCACHE_ROOT"', transfer_execution)
+        self.assertIn('"$DEFAULT_TEST_HOME"', transfer_execution)
+        self.assertLess(
+            step_names.index("Install validated default test dependencies"),
+            step_names.index("Transfer disposable default test tree"),
+        )
+        self.assertLess(
+            step_names.index("Transfer disposable default test tree"),
+            step_names.index("Run tests after dropping UID and cwd"),
+        )
         for step in audit["steps"][
             : step_names.index("Detect invalid S tree or transaction")
         ]:

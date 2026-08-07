@@ -97,7 +97,7 @@ BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH = Path(
     ".github/bootstrap/session-retrospective-v2-permanent-ci.yml"
 )
 BOOTSTRAP_V2_LEGACY_CI_BLOB_OID = "145e8de8a055794b85af6461a69e50715913ea6f"
-BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID = "ad0c20778d6e9c66e8537e5412554a1ff26b663c"
+BOOTSTRAP_V2_PERMANENT_CI_BLOB_OID = "5f0c10bf100989c44e7eba3fce9fd6982c923083"
 BOOTSTRAP_SECURITY_WORKFLOW_PATHS = frozenset(
     {BOOTSTRAP_WORKFLOW_PATH, BOOTSTRAP_V2_PERMANENT_CI_TEMPLATE_PATH}
 )
@@ -231,38 +231,38 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("scripts/validate_retained_history.py"): bytes(
         (
-            0x99,
-            0x9A,
-            0xD7,
-            0xAB,
-            0xFF,
-            0x15,
-            0x44,
-            0xD9,
-            0x07,
-            0x03,
-            0xE7,
-            0x95,
-            0xB6,
-            0x66,
-            0x2E,
-            0xA4,
-            0xB3,
-            0x7D,
-            0x34,
-            0x8D,
+            0xA6,
+            0x5B,
+            0xAC,
+            0xA6,
+            0x19,
             0x8B,
-            0x5C,
-            0xFB,
-            0xDB,
-            0x55,
-            0x67,
-            0x37,
-            0x0E,
-            0xFA,
             0x8A,
-            0xF1,
-            0xC8,
+            0x87,
+            0xE0,
+            0xC9,
+            0x93,
+            0xC7,
+            0x95,
+            0x4D,
+            0xE2,
+            0xE3,
+            0x34,
+            0x22,
+            0xB4,
+            0xF9,
+            0x7B,
+            0xD9,
+            0x2F,
+            0xBD,
+            0x65,
+            0x7A,
+            0x81,
+            0x9B,
+            0xD3,
+            0xF0,
+            0x6D,
+            0x4E,
         )
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
@@ -303,38 +303,38 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
         (
-            0xEA,
-            0x65,
-            0xCE,
-            0x56,
-            0x19,
-            0xA4,
-            0x43,
-            0xCE,
-            0x78,
-            0xFF,
-            0x5E,
-            0x72,
-            0x36,
-            0xBE,
-            0x58,
-            0x0C,
-            0xE8,
-            0x98,
-            0xB1,
-            0x9F,
-            0xE4,
-            0x5E,
-            0x3C,
-            0x3B,
-            0xCD,
-            0xD4,
-            0x9B,
-            0x5E,
-            0x8B,
-            0xA7,
-            0x26,
+            0x99,
+            0xDF,
+            0x57,
+            0xC1,
+            0x2D,
+            0xC3,
+            0x41,
+            0x57,
+            0xE5,
+            0x53,
             0xBB,
+            0x80,
+            0x38,
+            0xCF,
+            0x08,
+            0xE8,
+            0x1B,
+            0xB3,
+            0xA5,
+            0x1E,
+            0x60,
+            0x08,
+            0x83,
+            0xA1,
+            0xC4,
+            0x01,
+            0xFE,
+            0x51,
+            0xA1,
+            0xD4,
+            0xC4,
+            0x6F,
         )
     ).hex(),
 }
@@ -459,38 +459,38 @@ BOOTSTRAP_V2_TRUSTED_RISK_LINES_SHA256 = {
     ),
     Path("tests/test_validate_retained_history.py"): bytes(
         (
-            0xAA,
-            0x94,
-            0x46,
-            0xB0,
-            0xEC,
-            0x98,
-            0x15,
-            0xCA,
-            0xF8,
-            0x59,
-            0x2E,
-            0xB7,
-            0x58,
-            0x20,
-            0xEB,
-            0xAC,
-            0xD4,
-            0x39,
-            0xED,
-            0xAC,
             0x8B,
-            0x5D,
-            0x66,
-            0xB4,
-            0xC9,
-            0x06,
-            0xDF,
-            0x05,
-            0xE2,
-            0xD8,
-            0xB5,
-            0xE1,
+            0xD4,
+            0x3C,
+            0xE0,
+            0x9C,
+            0x7F,
+            0x76,
+            0x0E,
+            0xF1,
+            0xB3,
+            0x2F,
+            0x40,
+            0xA8,
+            0x98,
+            0x3F,
+            0x57,
+            0xEF,
+            0x70,
+            0x78,
+            0xEF,
+            0x0C,
+            0x48,
+            0x77,
+            0x6D,
+            0xB1,
+            0x91,
+            0xC4,
+            0xA7,
+            0xC7,
+            0x85,
+            0x82,
+            0x0A,
         )
     ).hex(),
 }
@@ -503,110 +503,110 @@ BOOTSTRAP_V2_UNMODELED_STATIC_TEXT_CALL_RISK = "python_unmodeled_static_text_cal
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/trusted_history_ci.py"): _trusted_sha256_values_hex(
         (
-            0x7F,
-            0x1C,
-            0x5B,
-            0xBD,
-            0x81,
-            0x93,
-            0xB6,
-            0x86,
-            0xF2,
-            0xE3,
-            0x60,
-            0x03,
-            0xF4,
-            0x75,
-            0x55,
-            0x1C,
-            0xB6,
-            0x4D,
-            0x7B,
-            0x0C,
-            0xAC,
-            0xED,
-            0x57,
+            0xBF,
+            0x8E,
+            0x20,
+            0x52,
+            0x44,
+            0x70,
+            0x56,
+            0x74,
+            0x43,
+            0x3E,
             0x13,
-            0xB1,
-            0x09,
-            0x0C,
-            0x47,
-            0x81,
-            0x55,
-            0xA0,
-            0xDE,
+            0x75,
+            0x4B,
+            0x2B,
+            0xC7,
+            0x5A,
+            0x79,
+            0x5B,
+            0x77,
+            0xCB,
+            0x2E,
+            0xFA,
+            0x75,
+            0x26,
+            0x7A,
+            0xB8,
+            0x15,
+            0x76,
+            0xB5,
+            0xBB,
+            0xC9,
+            0xDB,
         )
     ),
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0xD7,
-            0x6C,
-            0x03,
-            0x6D,
-            0xC1,
-            0x41,
-            0x80,
-            0xD3,
-            0x4F,
-            0x07,
-            0x47,
-            0x48,
-            0xDC,
-            0x4C,
-            0x75,
-            0xE1,
-            0x6E,
             0x40,
-            0x8A,
-            0xBF,
-            0x0D,
-            0x8E,
-            0x12,
-            0xBE,
-            0x13,
-            0x0B,
-            0xDA,
-            0x16,
+            0x42,
             0xD8,
-            0x02,
-            0x7B,
-            0xAF,
+            0x82,
+            0x97,
+            0xEE,
+            0x3F,
+            0x3B,
+            0x20,
+            0x40,
+            0x9C,
+            0xF8,
+            0xE9,
+            0xF4,
+            0x99,
+            0x31,
+            0x3A,
+            0xC5,
+            0xE6,
+            0x4A,
+            0xD3,
+            0xA4,
+            0xD6,
+            0x2A,
+            0xF8,
+            0xD7,
+            0x2E,
+            0x9F,
+            0x2F,
+            0xD1,
+            0x4F,
+            0x08,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x2F,
-            0x30,
-            0x05,
-            0x7C,
-            0x8A,
-            0xA3,
-            0x39,
-            0xF0,
-            0xBC,
-            0xDE,
-            0x6C,
-            0x67,
-            0xA3,
-            0x22,
-            0xA1,
-            0xAA,
-            0x83,
-            0x81,
-            0x6B,
-            0x72,
-            0xD1,
-            0xC3,
-            0xE7,
+            0xD3,
+            0xE8,
+            0x9A,
+            0x69,
+            0x62,
+            0xD7,
+            0x09,
+            0x00,
+            0x5A,
+            0xEF,
             0x4B,
-            0x40,
-            0xBB,
-            0x1F,
-            0xB8,
-            0x11,
-            0xB1,
-            0xAA,
-            0x72,
+            0xA8,
+            0xFF,
+            0x66,
+            0x67,
+            0x85,
+            0x3D,
+            0x76,
+            0x17,
+            0x29,
+            0xAD,
+            0x8D,
+            0x7B,
+            0xBA,
+            0x5E,
+            0x3A,
+            0x57,
+            0xFE,
+            0x29,
+            0xFC,
+            0xEC,
+            0xFF,
         )
     ),
 }
@@ -2464,9 +2464,34 @@ STRICT_JSON_NUMBER_CANDIDATE_RE = re.compile(
     r"[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?"
 )
 JSON_NESTING_ERROR = "JSON nesting exceeds the trusted depth limit"
+STRICT_JSON_MAX_NESTING_DEPTH = 64
+
+
+def require_json_nesting_within_limit(value: str) -> None:
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in value:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > STRICT_JSON_MAX_NESTING_DEPTH:
+                raise ValueError(JSON_NESTING_ERROR)
+        elif character in "]}":
+            depth = max(depth - 1, 0)
 
 
 def parse_strict_json(value: str) -> Any:
+    require_json_nesting_within_limit(value)
     try:
         return json.loads(
             value,
@@ -15781,18 +15806,20 @@ def validate_history_v2_github_squash_identity(
         raise ValueError(
             f"history-v2 GitHub squash {label} identity is not canonical"
         ) from exc
-    if label == "author":
-        expected_name = b"Retrospective History"
-        expected_email = b"retrospective-history-v2@users.noreply.github.com"
-    elif label == "committer":
+    if label == "committer":
         expected_name = b"GitHub"
         expected_email = b"noreply@github.com"
-    else:
+        if (
+            match.group("name") != expected_name
+            or match.group("email") != expected_email
+        ):
+            raise ValueError(
+                "history-v2 GitHub squash committer identity is outside privacy policy"
+            )
+    elif label != "author":
         raise ValueError("history-v2 GitHub squash identity role is outside policy")
     if (
-        match.group("name") != expected_name
-        or match.group("email") != expected_email
-        or name != name.strip(" \t")
+        name != name.strip(" \t")
         or unicodedata.normalize("NFC", name) != name
         or any(not character.isprintable() for character in name)
         or HISTORY_V2_RAW_CONVERSATION_EVIDENCE_RE.search(name)
