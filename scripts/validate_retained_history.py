@@ -231,38 +231,38 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("scripts/validate_retained_history.py"): bytes(
         (
-            0x6F,
-            0x05,
-            0x84,
-            0x1D,
-            0x58,
-            0x0E,
-            0x14,
-            0xA5,
-            0xA8,
-            0xF2,
-            0x47,
+            0x99,
+            0x9A,
+            0xD7,
+            0xAB,
+            0xFF,
+            0x15,
+            0x44,
+            0xD9,
+            0x07,
+            0x03,
+            0xE7,
+            0x95,
+            0xB6,
+            0x66,
             0x2E,
-            0xDC,
-            0xAA,
-            0xD0,
-            0xD0,
-            0xA9,
-            0x35,
-            0x24,
-            0x61,
-            0xC2,
-            0x3A,
-            0xB7,
-            0x19,
-            0x86,
-            0xA1,
-            0x32,
-            0x70,
-            0x38,
-            0x31,
-            0xE9,
-            0x11,
+            0xA4,
+            0xB3,
+            0x7D,
+            0x34,
+            0x8D,
+            0x8B,
+            0x5C,
+            0xFB,
+            0xDB,
+            0x55,
+            0x67,
+            0x37,
+            0x0E,
+            0xFA,
+            0x8A,
+            0xF1,
+            0xC8,
         )
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
@@ -303,38 +303,38 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
         (
-            0x03,
-            0xDD,
-            0x69,
-            0x38,
-            0xE9,
-            0xC9,
-            0xDB,
-            0x38,
-            0x8F,
-            0xF0,
-            0x1D,
-            0xA3,
-            0xD5,
-            0x8A,
-            0x4D,
-            0x33,
-            0x00,
+            0xEA,
+            0x65,
+            0xCE,
+            0x56,
+            0x19,
+            0xA4,
+            0x43,
+            0xCE,
+            0x78,
+            0xFF,
+            0x5E,
+            0x72,
+            0x36,
+            0xBE,
+            0x58,
+            0x0C,
+            0xE8,
+            0x98,
+            0xB1,
+            0x9F,
+            0xE4,
+            0x5E,
+            0x3C,
+            0x3B,
+            0xCD,
+            0xD4,
+            0x9B,
+            0x5E,
+            0x8B,
             0xA7,
-            0x49,
-            0x2B,
-            0x9E,
-            0x2E,
-            0xC1,
-            0xB0,
-            0x50,
-            0x8E,
-            0x75,
-            0xAA,
-            0x52,
-            0x66,
-            0xC0,
-            0x37,
+            0x26,
+            0xBB,
         )
     ).hex(),
 }
@@ -394,7 +394,7 @@ BOOTSTRAP_V2_PUBLIC_KEY_FILES = frozenset(
 )
 BOOTSTRAP_V2_PUBLIC_KEY_SHA256 = {
     Path("retrospective-history-v2-admin-public.asc"): (
-        "35a01ede099cb17aaf11ef0174dad9519fb54ce7870bdcd9dfc4b87e071e50c7"
+        "a049c0be9565775eb0e84676775743bd0b364c5f6f7664763347fe1527ea5874"
     ),
     Path("retrospective-history-v2-publisher.asc"): (
         "77e33dafc60ea63b23fafa90fdc03aae333cd226e25321aa2e6a77acac06d884"
@@ -533,80 +533,80 @@ BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     ),
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x6A,
-            0xA8,
-            0x09,
-            0x82,
-            0xD5,
-            0xB5,
-            0x1E,
-            0xF9,
-            0x4B,
-            0xF9,
-            0x6C,
-            0x3F,
-            0xF7,
-            0xA2,
-            0x59,
-            0xE8,
-            0x52,
-            0x7F,
-            0x2F,
-            0x91,
-            0x9A,
-            0x2C,
-            0x31,
-            0x28,
-            0xB7,
-            0x97,
-            0xF3,
-            0xCB,
-            0x21,
-            0x0D,
-            0xD1,
+            0x0B,
             0x6B,
+            0x32,
+            0xE3,
+            0x11,
+            0xC9,
+            0x0D,
+            0xD7,
+            0x73,
+            0x95,
+            0xA9,
+            0xBB,
+            0xA8,
+            0x1F,
+            0x7D,
+            0x68,
+            0x53,
+            0xBE,
+            0xE9,
+            0x22,
+            0x3E,
+            0x17,
+            0x3C,
+            0x91,
+            0xD6,
+            0x2B,
+            0x6C,
+            0xD5,
+            0x55,
+            0x59,
+            0xC8,
+            0x0C,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x91,
-            0x0E,
-            0xAC,
-            0xF7,
-            0x9B,
-            0x62,
-            0x6E,
-            0x95,
+            0x84,
+            0x73,
+            0x1F,
+            0x49,
+            0x1C,
+            0x8D,
+            0x03,
+            0xBA,
+            0x09,
+            0xA5,
+            0x2C,
+            0x75,
+            0x59,
+            0x82,
+            0x70,
+            0x2E,
+            0x5F,
+            0x93,
+            0x5C,
+            0x9D,
+            0x47,
             0x8C,
-            0xFB,
-            0x45,
-            0x35,
-            0xCF,
+            0x50,
+            0xE8,
+            0x41,
+            0x3B,
+            0xDE,
+            0x1B,
+            0x8A,
+            0x53,
+            0x4E,
             0xEE,
-            0xED,
-            0x97,
-            0x86,
-            0x80,
-            0xA4,
-            0x6F,
-            0x43,
-            0xE4,
-            0xEC,
-            0x0B,
-            0x32,
-            0xB9,
-            0x3C,
-            0x9E,
-            0x16,
-            0x74,
-            0x92,
-            0x11,
         )
     ),
 }
 BOOTSTRAP_V2_TRUSTED_OPENPGP_RISK_VALUES_SHA256 = {
     Path("retrospective-history-v2-admin-public.asc"): (
-        "223884eca8b1e2734ae319ef40223f00d6e59734c78ed42169aabe3db6ec0669"
+        "20eefd460def726218bd08cffc484abc53d7eb97fe95ca8ae293b84088abd7c4"
     ),
     Path("retrospective-history-v2-publisher.asc"): (
         "4b64cfc23fe562248eacb12019e11754979160d52c60e0b121a643aa70e93688"
@@ -769,6 +769,18 @@ HISTORY_V2_CANONICAL_IDENTITY = (
 HISTORY_V2_SIGNATURE_KEY_PATHS = {
     "bootstrap-v2": Path("retrospective-history-v2-admin-public.asc"),
     "history-v2": Path("retrospective-history-v2-publisher.asc"),
+}
+HISTORY_V2_SIGNATURE_PRIMARY_FINGERPRINTS = {
+    "bootstrap-v2": "EFBBC913F49A5F6E0AF0D248F70246143DC28F32",
+    "history-v2": "40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52",
+}
+HISTORY_V2_SIGNATURE_SUBKEY_FINGERPRINTS = {
+    "bootstrap-v2": frozenset({"ED0358A951DE27A4BEFB6DDEBC0CF90B32EFF466"}),
+    "history-v2": frozenset(),
+}
+HISTORY_V2_SIGNATURE_SIGNER_FINGERPRINTS = {
+    "bootstrap-v2": frozenset({"EFBBC913F49A5F6E0AF0D248F70246143DC28F32"}),
+    "history-v2": frozenset({"40FA5D05AC7A3D5C180B037FF6DCF7A06FFC9C52"}),
 }
 HISTORY_V2_SIGNATURE_PUBLIC_KEY_ALGORITHMS = frozenset({1, 22})
 HISTORY_V2_SIGNATURE_HASH_ALGORITHM = 10
@@ -13544,8 +13556,10 @@ def validate_bootstrap_v2_public_key_grammar(
             raise ValueError(
                 "transferable public key must contain a signed identity packet"
             )
-    if key_count == 0:
-        raise ValueError("public key artifact contains no transferable public keys")
+    if key_count != 1:
+        raise ValueError(
+            "public key artifact must contain exactly one transferable public key"
+        )
 
 
 def bootstrap_v2_human_readable_packet_text(
@@ -15789,22 +15803,42 @@ def parse_history_v2_commit_object(
     return HistoryV2CommitObject(tree, parents, signature)
 
 
-def parse_history_v2_key_fingerprints(value: bytes) -> frozenset[str]:
+def parse_history_v2_key_fingerprints(
+    value: bytes,
+) -> tuple[str, frozenset[str]]:
     try:
         text = value.decode("ascii")
     except UnicodeDecodeError as exc:
         raise ValueError("history-v2 signing key metadata is not ASCII") from exc
-    fingerprints: set[str] = set()
+    primary_fingerprints: list[str] = []
+    subkey_fingerprints: set[str] = set()
+    pending_record: str | None = None
     for line in text.splitlines():
         fields = line.split(":")
-        if fields[0] != "fpr":
+        record = fields[0]
+        if record in {"pub", "sub"}:
+            if pending_record is not None:
+                raise ValueError("history-v2 signing key fingerprint is missing")
+            pending_record = record
             continue
-        if len(fields) < 10 or re.fullmatch(r"[0-9A-F]{40}", fields[9]) is None:
+        if record != "fpr":
+            continue
+        if (
+            pending_record is None
+            or len(fields) < 10
+            or re.fullmatch(r"[0-9A-F]{40}", fields[9]) is None
+        ):
             raise ValueError("history-v2 signing key fingerprint is malformed")
-        fingerprints.add(fields[9])
-    if not fingerprints:
-        raise ValueError("history-v2 signing key has no accepted fingerprint")
-    return frozenset(fingerprints)
+        if pending_record == "pub":
+            primary_fingerprints.append(fields[9])
+        else:
+            subkey_fingerprints.add(fields[9])
+        pending_record = None
+    if pending_record is not None:
+        raise ValueError("history-v2 signing key fingerprint is missing")
+    if len(primary_fingerprints) != 1:
+        raise ValueError("history-v2 signing key must have exactly one primary key")
+    return primary_fingerprints[0], frozenset(subkey_fingerprints)
 
 
 def validate_history_v2_gpg_status(
@@ -15812,6 +15846,7 @@ def validate_history_v2_gpg_status(
     *,
     signature: HistoryV2CommitSignature,
     allowed_fingerprints: frozenset[str],
+    expected_primary_fingerprint: str,
 ) -> None:
     try:
         lines = value.decode("ascii").splitlines()
@@ -15849,7 +15884,7 @@ def validate_history_v2_gpg_status(
         or fields[6] != str(signature.public_key_algorithm)
         or fields[7] != str(signature.hash_algorithm)
         or fields[8] != "00"
-        or fields[9] not in allowed_fingerprints
+        or fields[9] != expected_primary_fingerprint
     ):
         raise ValueError(
             "history-v2 commit signature differs from the trusted signer profile"
@@ -15864,6 +15899,7 @@ class HistoryV2SignatureVerifier:
         self.home: Path | None = None
         self.environment: dict[str, str] | None = None
         self.allowed_fingerprints = frozenset[str]()
+        self.primary_fingerprint: str | None = None
         self.verified_signer_fingerprints = set[str]()
 
     def __enter__(self) -> HistoryV2SignatureVerifier:
@@ -15923,7 +15959,30 @@ class HistoryV2SignatureVerifier:
                 timeout_seconds=HISTORY_V2_GIT_TIMEOUT_SECONDS,
                 environment=self.environment,
             )
-            self.allowed_fingerprints = parse_history_v2_key_fingerprints(fingerprints)
+            signature_policy = next(
+                (
+                    policy
+                    for policy, relative in HISTORY_V2_SIGNATURE_KEY_PATHS.items()
+                    if relative == self.relative
+                ),
+                None,
+            )
+            if signature_policy is None:
+                raise ValueError("history-v2 signing key role is outside policy")
+            primary_fingerprint, subkey_fingerprints = (
+                parse_history_v2_key_fingerprints(fingerprints)
+            )
+            if (
+                primary_fingerprint
+                != HISTORY_V2_SIGNATURE_PRIMARY_FINGERPRINTS[signature_policy]
+                or subkey_fingerprints
+                != HISTORY_V2_SIGNATURE_SUBKEY_FINGERPRINTS[signature_policy]
+            ):
+                raise ValueError("history-v2 signing key topology differs from policy")
+            self.primary_fingerprint = primary_fingerprint
+            self.allowed_fingerprints = HISTORY_V2_SIGNATURE_SIGNER_FINGERPRINTS[
+                signature_policy
+            ]
         except (BoundedProcessError, OSError, ValueError) as exc:
             self.__exit__(type(exc), exc, exc.__traceback__)
             raise ValueError(
@@ -15942,6 +16001,7 @@ class HistoryV2SignatureVerifier:
         self.home = None
         self.environment = None
         self.allowed_fingerprints = frozenset()
+        self.primary_fingerprint = None
         self.verified_signer_fingerprints.clear()
         if temporary is None:
             return
@@ -15956,7 +16016,11 @@ class HistoryV2SignatureVerifier:
             )
 
     def verify(self, signature: HistoryV2CommitSignature) -> None:
-        if self.home is None or self.environment is None:
+        if (
+            self.home is None
+            or self.environment is None
+            or self.primary_fingerprint is None
+        ):
             raise ValueError("history-v2 signature verifier is not active")
         signature_path = self.home / "commit-signature.asc"
         descriptor = -1
@@ -16003,6 +16067,7 @@ class HistoryV2SignatureVerifier:
             status,
             signature=signature,
             allowed_fingerprints=self.allowed_fingerprints,
+            expected_primary_fingerprint=self.primary_fingerprint,
         )
         self.verified_signer_fingerprints.add(signature.signer_fingerprint)
 

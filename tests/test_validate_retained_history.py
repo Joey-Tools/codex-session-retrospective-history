@@ -7854,12 +7854,54 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         for policy, relative in MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS.items():
             with self.subTest(policy=policy):
                 public_key = (root / relative).read_bytes()
+                if policy == "bootstrap-v2":
+                    packets = MODULE.parse_bootstrap_v2_public_key_packets(
+                        MODULE.decode_bootstrap_v2_public_key_armor(public_key)
+                    )
+                    self.assertNotIn(
+                        "GitHub <noreply@github.com>",
+                        MODULE.bootstrap_v2_human_readable_packet_text(
+                            packets,
+                            allow_trusted_gnupg_aead_type_34=True,
+                        ),
+                    )
                 with MODULE.HistoryV2SignatureVerifier(
                     public_key,
                     relative=relative,
                 ) as verifier:
-                    self.assertTrue(verifier.allowed_fingerprints)
+                    self.assertEqual(
+                        verifier.primary_fingerprint,
+                        MODULE.HISTORY_V2_SIGNATURE_PRIMARY_FINGERPRINTS[policy],
+                    )
+                    self.assertEqual(
+                        verifier.allowed_fingerprints,
+                        MODULE.HISTORY_V2_SIGNATURE_SIGNER_FINGERPRINTS[policy],
+                    )
                     self.assertEqual(verifier.verified_signer_fingerprints, set())
+
+    def test_history_v2_key_metadata_rejects_second_primary_key(self) -> None:
+        primary = MODULE.HISTORY_V2_SIGNATURE_PRIMARY_FINGERPRINTS["bootstrap-v2"]
+        subkey = next(
+            iter(MODULE.HISTORY_V2_SIGNATURE_SUBKEY_FINGERPRINTS["bootstrap-v2"])
+        )
+        metadata = (
+            "pub:::::::::\n"
+            f"fpr:::::::::{primary}:\n"
+            "uid:::::::::\n"
+            "sub:::::::::\n"
+            f"fpr:::::::::{subkey}:\n"
+        ).encode("ascii")
+        self.assertEqual(
+            MODULE.parse_history_v2_key_fingerprints(metadata),
+            (primary, frozenset({subkey})),
+        )
+        github_primary = "968479A1AFF927E37D1A566BB5690EEEBB952194"
+        with self.assertRaisesRegex(ValueError, "exactly one primary key"):
+            MODULE.parse_history_v2_key_fingerprints(
+                metadata
+                + "pub:::::::::\n".encode("ascii")
+                + f"fpr:::::::::{github_primary}:\n".encode("ascii")
+            )
 
     def test_history_v2_signature_verifier_cleans_early_enter_failure(self) -> None:
         root = SCRIPT.parents[1]
@@ -7892,6 +7934,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIsNone(verifier.home)
         self.assertIsNone(verifier.environment)
         self.assertEqual(verifier.allowed_fingerprints, frozenset())
+        self.assertIsNone(verifier.primary_fingerprint)
         self.assertEqual(verifier.verified_signer_fingerprints, set())
 
     def test_history_v2_signature_verifier_invalidates_before_cleanup_error(
@@ -7910,6 +7953,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         verifier.home = Path("/synthetic/signature-home")
         verifier.environment = {"LC_ALL": "C"}
         verifier.allowed_fingerprints = frozenset({FIXTURE_SIGNER_FINGERPRINT})
+        verifier.primary_fingerprint = FIXTURE_SIGNER_FINGERPRINT
         verifier.verified_signer_fingerprints.add(FIXTURE_SIGNER_FINGERPRINT)
         with self.assertRaisesRegex(OSError, "synthetic cleanup failure"):
             verifier.__exit__(None, None, None)
@@ -7917,6 +7961,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         self.assertIsNone(verifier.home)
         self.assertIsNone(verifier.environment)
         self.assertEqual(verifier.allowed_fingerprints, frozenset())
+        self.assertIsNone(verifier.primary_fingerprint)
         self.assertEqual(verifier.verified_signer_fingerprints, set())
         with self.assertRaisesRegex(ValueError, "verifier is not active"):
             verifier.verify(mock.sentinel.signature)
@@ -7925,6 +7970,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         verifier._temporary = FailingTemporaryDirectory()
         verifier.home = Path("/synthetic/signature-home")
         verifier.environment = {"LC_ALL": "C"}
+        verifier.primary_fingerprint = FIXTURE_SIGNER_FINGERPRINT
         verifier.__exit__(ValueError, primary, None)
         self.assertIn(
             "temporary cleanup failed: OSError",
@@ -7952,10 +7998,17 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 f"2026-07-15 {FIXTURE_TIMESTAMP} 0 4 0 22 10 00 "
                 f"{FIXTURE_SIGNER_FINGERPRINT}\n"
             ).encode("ascii")
+            wrong_primary_status = (
+                "[GNUPG:] NEWSIG\n"
+                f"[GNUPG:] VALIDSIG {FIXTURE_SIGNER_FINGERPRINT} "
+                f"2026-07-15 {FIXTURE_TIMESTAMP} 0 4 0 22 10 00 "
+                f"{'F' * 40}\n"
+            ).encode("ascii")
             MODULE.validate_history_v2_gpg_status(
                 valid_status,
                 signature=signature,
                 allowed_fingerprints=frozenset({FIXTURE_SIGNER_FINGERPRINT}),
+                expected_primary_fingerprint=FIXTURE_SIGNER_FINGERPRINT,
             )
             with tempfile.TemporaryDirectory() as verifier_raw:
                 verifier = MODULE.HistoryV2SignatureVerifier(
@@ -7965,6 +8018,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 verifier.home = Path(verifier_raw)
                 verifier.environment = {"LC_ALL": "C"}
                 verifier.allowed_fingerprints = frozenset({FIXTURE_SIGNER_FINGERPRINT})
+                verifier.primary_fingerprint = FIXTURE_SIGNER_FINGERPRINT
                 with mock.patch.object(
                     MODULE,
                     "bounded_process_output",
@@ -7999,6 +8053,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     valid_status + valid_status,
                     frozenset({FIXTURE_SIGNER_FINGERPRINT}),
                 ),
+                (
+                    "wrong primary key",
+                    wrong_primary_status,
+                    frozenset({FIXTURE_SIGNER_FINGERPRINT}),
+                ),
             ):
                 with self.subTest(label=label):
                     with self.assertRaises(ValueError):
@@ -8006,6 +8065,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                             status,
                             signature=signature,
                             allowed_fingerprints=allowed,
+                            expected_primary_fingerprint=(FIXTURE_SIGNER_FINGERPRINT),
                         )
             self.assertEqual(
                 MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS,
@@ -9762,6 +9822,20 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     )
                 ),
                 "version 4 public key body",
+            ),
+            (
+                "multiple transferable public keys",
+                synthetic_bootstrap_v2_public_key(
+                    packets=(
+                        (6, synthetic_bootstrap_v2_key_body()),
+                        (13, b"Synthetic Bootstrap One"),
+                        (2, synthetic_bootstrap_v2_signature_body()),
+                        (6, synthetic_bootstrap_v2_key_body()),
+                        (13, b"Synthetic Bootstrap Two"),
+                        (2, synthetic_bootstrap_v2_signature_body()),
+                    )
+                ),
+                "exactly one transferable public key",
             ),
             (
                 "empty curve point",
