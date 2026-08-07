@@ -163,12 +163,18 @@ candidate-evidence object rather than a precomputed validation verdict. In the
 bootstrap authority mode, the offline validator independently reopens clean
 fixed snapshots for `B` and signed candidate `H`, verifies the bootstrap
 signature role and single parent, and proves that `tree(H) == tree(S)` for the
-provider squash `S`. In permanent history-v2 mode, the evidence binds the same
-canonical admission JSON digest to both the candidate-`H` admission check and
-the queue-`Q` gate check from the pinned App. The offline validator then reruns
-the B1 candidate plan against `H` exactly once per default audit, carries the
-validated squash coordinates into transaction validation under the same work
-budget, recomputes the predecessor trust generation, and revalidates the exact
+provider squash `S`. It then reads the two pin blobs directly from `B` and `S`,
+reproves the exact `None`-to-one-ID transform, authorizes only those two blob
+changes, and records that App ID in the default-transaction evidence. The
+permanent validator reverses only those exact configured pin lines when
+comparing privacy fingerprints with the seed; transaction policy continues to
+protect the real configured bytes. In permanent history-v2 mode, the evidence
+binds the same canonical admission JSON digest to both the candidate-`H`
+admission check and the queue-`Q` gate check from the pinned App. The offline
+validator then reruns the B1 candidate plan against `H` exactly once per default
+audit, carries the validated squash coordinates into transaction validation
+under the same work budget, recomputes the predecessor trust generation, and
+revalidates the exact
 authorized `HEAD`, tree, and pristine checkout before and after retained-tree
 validation. During validation, the frozen file snapshot and Git index must equal
 the authorized tree's exact blob and mode inventory, while root object identity

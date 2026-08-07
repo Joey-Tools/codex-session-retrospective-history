@@ -3491,6 +3491,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             workspace = Path(raw)
             root = workspace / "post-migration"
             write_bootstrap_v2_candidate(root)
+            validator = root / "scripts" / "validate_retained_history.py"
+            validator.write_bytes(SCRIPT.read_bytes())
+            run_fixture_git(root, "add", validator.relative_to(root).as_posix())
+            configure_bootstrap_admission_app_pins(root, 424_242)
             fixture_commit_all(root, "post migration base")
             base = run_fixture_git(root, "rev-parse", "HEAD").stdout.strip()
 
@@ -3507,7 +3511,18 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "unexpected retained artifact location",
                 "\n".join(MODULE.validate_root(root)),
             )
-            self.assertEqual(validate_synthetic_history_v2_tree(root), [])
+            admission_app_patch = mock.patch.object(
+                MODULE,
+                "HISTORY_V2_ADMISSION_RECORD_APP_ID",
+                424_242,
+            )
+            admission_app_patch.start()
+            self.addCleanup(admission_app_patch.stop)
+            post_migration_issues = validate_synthetic_history_v2_tree(root)
+            self.assertFalse(
+                post_migration_issues,
+                "\n".join(post_migration_issues),
+            )
             plan = validate_synthetic_history_v2_merge_range(
                 root,
                 base_rev=base,
@@ -5800,9 +5815,10 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             self.assertTrue(replacement.is_dir())
             self.assertFalse(held_authorized.exists())
 
-    def test_bootstrap_transaction_requires_configured_admission_app_id(self) -> None:
+    def test_bootstrap_transaction_rejects_invalid_configured_admission_app_id(
+        self,
+    ) -> None:
         for app_id, expected_error in (
-            (None, "bootstrap cutover requires a configured admission App ID"),
             (0, "bootstrap cutover requires a configured admission App ID"),
             (
                 MODULE.HISTORY_V2_GITHUB_ACTIONS_APP_ID,
@@ -5828,6 +5844,26 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     head_rev="b" * 40,
                 )
             validate_range.assert_not_called()
+
+        with (
+            mock.patch.object(
+                MODULE,
+                "HISTORY_V2_ADMISSION_RECORD_APP_ID",
+                None,
+            ),
+            mock.patch.object(
+                MODULE,
+                "validated_history_v2_range_checkout",
+                side_effect=ValueError("synthetic range reached"),
+            ) as validate_range,
+            self.assertRaisesRegex(ValueError, "synthetic range reached"),
+        ):
+            MODULE.validate_history_v2_bootstrap_transaction(
+                Path("/synthetic/repository"),
+                base_rev="a" * 40,
+                head_rev="b" * 40,
+            )
+        validate_range.assert_called_once()
 
     def test_bootstrap_transaction_rejects_multiple_commits_before_reproof(
         self,
@@ -7072,16 +7108,14 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     head_rev=rewritten,
                 )
 
-    @mock.patch.object(
-        MODULE,
-        "HISTORY_V2_ADMISSION_RECORD_APP_ID",
-        424_242,
-    )
     def test_default_transaction_explicitly_validates_bootstrap_shape(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "repo"
             write_bootstrap_v2_candidate(root)
             write_bootstrap_v2_base(root)
+            validator = root / "scripts" / "validate_retained_history.py"
+            validator.write_bytes(SCRIPT.read_bytes())
+            run_fixture_git(root, "add", validator.relative_to(root).as_posix())
             fixture_commit_all(root, "bootstrap base")
             base = run_fixture_git(root, "rev-parse", "HEAD").stdout.strip()
             base_root = Path(raw) / "base"
@@ -7095,6 +7129,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 for relative in MODULE.BOOTSTRAP_V2_TEMPORARY_PATHS:
                     (checkout / relative).unlink()
                 run_fixture_git(checkout, "add", "--all")
+                configure_bootstrap_admission_app_pins(checkout, 424_242)
             candidate = fixture_commit_all(
                 candidate_root,
                 "Publish retained history",
@@ -7130,7 +7165,16 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 candidate_sha=candidate,
             )
 
-            self.assertEqual(validate_synthetic_history_v2_tree(root), [])
+            with mock.patch.object(
+                MODULE,
+                "HISTORY_V2_ADMISSION_RECORD_APP_ID",
+                424_242,
+            ):
+                post_migration_issues = validate_synthetic_history_v2_tree(root)
+                self.assertFalse(
+                    post_migration_issues,
+                    "\n".join(post_migration_issues),
+                )
             transaction = validate_synthetic_history_v2_default_transaction(
                 root,
                 before_rev=base,
@@ -7141,6 +7185,7 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             )
             self.assertEqual(transaction["transaction_kind"], "bootstrap-v2")
             self.assertEqual(transaction["commit_count"], 1)
+            self.assertEqual(transaction["admission_app_id"], 424_242)
 
             readme = candidate_root / "README.md"
             readme.write_text(
@@ -9745,6 +9790,42 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         base_root,
                         candidate_root,
                     )
+
+    def test_bootstrap_v2_configured_app_pin_scan_rejects_a_mismatched_pair(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_bootstrap_v2_candidate(root)
+            for relative, source in (
+                (Path("scripts/trusted_history_ci.py"), TRUSTED_CI_HELPER),
+                (Path("scripts/validate_retained_history.py"), SCRIPT),
+            ):
+                path = root / relative
+                path.write_bytes(source.read_bytes())
+                run_fixture_git(root, "add", relative.as_posix())
+            configure_bootstrap_admission_app_pins(root, 424_242)
+            validator = root / "scripts" / "validate_retained_history.py"
+            validator.write_bytes(
+                validator.read_bytes().replace(b"424242\n", b"424243\n", 1)
+            )
+            run_fixture_git(root, "add", validator.relative_to(root).as_posix())
+
+            with mock.patch.object(
+                MODULE,
+                "HISTORY_V2_ADMISSION_RECORD_APP_ID",
+                424_242,
+            ):
+                issues = MODULE.validate_bootstrap_v2_candidate(
+                    root,
+                    root,
+                    post_migration=True,
+                )
+
+        self.assertIn(
+            "configured admission App pin source does not match the trusted App ID",
+            issues,
+        )
 
     def test_bootstrap_v2_append_only_rejects_rewrite_delete_and_mode_change(
         self,

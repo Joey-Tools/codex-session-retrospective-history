@@ -575,38 +575,38 @@ BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x16,
-            0x01,
-            0x5B,
-            0x4F,
-            0x51,
-            0x9B,
-            0xD1,
-            0xF9,
-            0xC0,
-            0x0C,
-            0x8E,
-            0xF2,
-            0xB2,
-            0x75,
-            0x1D,
-            0x96,
-            0xE1,
-            0x16,
-            0xA2,
-            0xA9,
-            0x37,
-            0x10,
-            0xF3,
-            0xD0,
-            0x7D,
-            0x1F,
+            0x2F,
+            0x30,
+            0x05,
+            0x7C,
+            0x8A,
+            0xA3,
+            0x39,
+            0xF0,
+            0xBC,
+            0xDE,
+            0x6C,
+            0x67,
+            0xA3,
+            0x22,
+            0xA1,
+            0xAA,
+            0x83,
+            0x81,
+            0x6B,
             0x72,
-            0xB6,
-            0x0E,
-            0x75,
-            0xF1,
-            0x9F,
+            0xD1,
+            0xC3,
+            0xE7,
+            0x4B,
+            0x40,
+            0xBB,
+            0x1F,
+            0xB8,
+            0x11,
+            0xB1,
+            0xAA,
+            0x72,
         )
     ),
 }
@@ -13727,6 +13727,92 @@ def validate_history_v2_ci_tree(
     return []
 
 
+def _bootstrap_v2_admission_app_id_from_values(
+    base_values: dict[Path, bytes],
+    candidate_values: dict[Path, bytes],
+) -> int:
+    observed_ids: list[int] = []
+    for relative, prefix in BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES.items():
+        base_value = base_values.get(relative)
+        candidate_value = candidate_values.get(relative)
+        if not isinstance(base_value, bytes) or not isinstance(candidate_value, bytes):
+            raise ValueError(
+                "bootstrap admission App pin source is not an exact regular file"
+            )
+        base_line = prefix + b"None\n"
+        if base_value.count(base_line) != 1:
+            raise ValueError(
+                "trusted bootstrap admission App pin source is not unconfigured"
+            )
+        pattern = re.compile(
+            rb"(?m)^" + re.escape(prefix) + rb"(?P<app_id>[1-9][0-9]{0,18})$"
+        )
+        matches = tuple(pattern.finditer(candidate_value))
+        if len(matches) != 1:
+            raise ValueError(
+                "bootstrap candidate admission App pin is not one canonical integer"
+            )
+        raw_app_id = matches[0].group("app_id")
+        expected = base_value.replace(
+            base_line,
+            prefix + raw_app_id + b"\n",
+            1,
+        )
+        if candidate_value != expected:
+            raise ValueError(
+                "bootstrap candidate admission App pin changes another protected byte"
+            )
+        app_id = int(raw_app_id)
+        if app_id > 9_223_372_036_854_775_807:
+            raise ValueError("bootstrap candidate admission App ID is out of range")
+        observed_ids.append(app_id)
+    if len(set(observed_ids)) != 1:
+        raise ValueError("bootstrap candidate admission App pins differ")
+    app_id = observed_ids[0]
+    if app_id == HISTORY_V2_GITHUB_ACTIONS_APP_ID:
+        raise ValueError("bootstrap admission App must not be GitHub Actions")
+    return app_id
+
+
+def _bootstrap_v2_unconfigured_admission_pin_scan_values(
+    candidate_snapshots: tuple[HistoryV2FileSnapshot, ...],
+    *,
+    app_id: int,
+) -> dict[Path, bytes]:
+    candidate_by_relative = {
+        snapshot.relative: snapshot for snapshot in candidate_snapshots
+    }
+    normalized: dict[Path, bytes] = {}
+    raw_app_id = str(app_id).encode("ascii")
+    for relative, prefix in BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES.items():
+        candidate = candidate_by_relative.get(relative)
+        if (
+            candidate is None
+            or not candidate.is_regular
+            or candidate.is_symlink
+            or candidate.value is None
+            or len(candidate.value) != candidate.size
+        ):
+            raise ValueError(
+                "configured admission App pin source is not an exact regular file"
+            )
+        configured_line = prefix + raw_app_id + b"\n"
+        unconfigured_line = prefix + b"None\n"
+        if (
+            candidate.value.count(configured_line) != 1
+            or unconfigured_line in candidate.value
+        ):
+            raise ValueError(
+                "configured admission App pin source does not match the trusted App ID"
+            )
+        normalized[relative] = candidate.value.replace(
+            configured_line,
+            unconfigured_line,
+            1,
+        )
+    return normalized
+
+
 def _bootstrap_v2_admission_app_id_from_snapshots(
     base_snapshots: tuple[HistoryV2FileSnapshot, ...],
     candidate_snapshots: tuple[HistoryV2FileSnapshot, ...],
@@ -13738,8 +13824,9 @@ def _bootstrap_v2_admission_app_id_from_snapshots(
     candidate_by_relative = {
         snapshot.relative: snapshot for snapshot in candidate_snapshots
     }
-    observed_ids: list[int] = []
-    for relative, prefix in BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES.items():
+    base_values: dict[Path, bytes] = {}
+    candidate_values: dict[Path, bytes] = {}
+    for relative in BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES:
         base = base_by_relative.get(relative)
         candidate = candidate_by_relative.get(relative)
         if (
@@ -13774,39 +13861,12 @@ def _bootstrap_v2_admission_app_id_from_snapshots(
                 raise ValueError(
                     f"{label} admission App pin source does not match its Git index"
                 )
-        base_line = prefix + b"None\n"
-        if base.value.count(base_line) != 1:
-            raise ValueError(
-                "trusted bootstrap admission App pin source is not unconfigured"
-            )
-        pattern = re.compile(
-            rb"(?m)^" + re.escape(prefix) + rb"(?P<app_id>[1-9][0-9]{0,18})$"
-        )
-        matches = tuple(pattern.finditer(candidate.value))
-        if len(matches) != 1:
-            raise ValueError(
-                "bootstrap candidate admission App pin is not one canonical integer"
-            )
-        raw_app_id = matches[0].group("app_id")
-        expected = base.value.replace(
-            base_line,
-            prefix + raw_app_id + b"\n",
-            1,
-        )
-        if candidate.value != expected:
-            raise ValueError(
-                "bootstrap candidate admission App pin changes another protected byte"
-            )
-        app_id = int(raw_app_id)
-        if app_id > 9_223_372_036_854_775_807:
-            raise ValueError("bootstrap candidate admission App ID is out of range")
-        observed_ids.append(app_id)
-    if len(set(observed_ids)) != 1:
-        raise ValueError("bootstrap candidate admission App pins differ")
-    app_id = observed_ids[0]
-    if app_id == HISTORY_V2_GITHUB_ACTIONS_APP_ID:
-        raise ValueError("bootstrap admission App must not be GitHub Actions")
-    return app_id
+        base_values[relative] = base.value
+        candidate_values[relative] = candidate.value
+    return _bootstrap_v2_admission_app_id_from_values(
+        base_values,
+        candidate_values,
+    )
 
 
 def history_v2_bootstrap_candidate_admission_app_id(
@@ -13978,6 +14038,16 @@ def validate_bootstrap_v2_candidate(
         return issues
     authorized_admission_pin_changes: frozenset[Path] = frozenset()
     authorized_admission_pin_scan_values: dict[Path, bytes] = {}
+    if post_migration and HISTORY_V2_ADMISSION_RECORD_APP_ID is not None:
+        try:
+            authorized_admission_pin_scan_values = (
+                _bootstrap_v2_unconfigured_admission_pin_scan_values(
+                    candidate_snapshots,
+                    app_id=history_v2_bootstrap_admission_app_id(),
+                )
+            )
+        except ValueError as exc:
+            issues.append(safe_exception_message(exc))
     if admission_pin_changes:
         if admission_pin_changes != admission_pin_paths:
             issues.append("bootstrap admission App pins must be configured together")
@@ -17439,6 +17509,7 @@ def validate_history_v2_candidate_reproof(
     ) or validate_fixed_head_snapshot(
         candidate_root,
         candidate_sha,
+        validate_tree=authority_mode != "bootstrap-v2-migration",
         work_budget=budget,
     ):
         raise ValueError("history-v2 candidate reproof snapshot is invalid")
@@ -19146,6 +19217,43 @@ def history_v2_bootstrap_admission_app_id() -> int:
     return app_id
 
 
+def history_v2_bootstrap_tree_admission_app_id(
+    root: Path,
+    *,
+    base_entries: dict[Path, HistoryV2TreeEntry],
+    head_entries: dict[Path, HistoryV2TreeEntry],
+    work_budget: HistoryV2WorkBudget,
+) -> int:
+    base_values: dict[Path, bytes] = {}
+    head_values: dict[Path, bytes] = {}
+    for relative in BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES:
+        base_entry = base_entries.get(relative)
+        head_entry = head_entries.get(relative)
+        if (
+            base_entry is None
+            or head_entry is None
+            or base_entry.mode != "100644"
+            or head_entry.mode != "100644"
+        ):
+            raise ValueError(
+                "bootstrap admission App pin source is not an exact regular file"
+            )
+        base_values[relative] = history_v2_read_blob(
+            root,
+            base_entry,
+            work_budget=work_budget,
+        )
+        head_values[relative] = history_v2_read_blob(
+            root,
+            head_entry,
+            work_budget=work_budget,
+        )
+    return _bootstrap_v2_admission_app_id_from_values(
+        base_values,
+        head_values,
+    )
+
+
 def _validate_history_v2_bootstrap_transaction_coordinates(
     root: Path,
     *,
@@ -19216,8 +19324,21 @@ def _validate_history_v2_bootstrap_transaction_coordinates(
     ):
         raise ValueError("history-v2 bootstrap CI transition is not authorized")
 
+    configured_app_id = HISTORY_V2_ADMISSION_RECORD_APP_ID
+    if configured_app_id is None:
+        admission_app_id = history_v2_bootstrap_tree_admission_app_id(
+            root,
+            base_entries=base_entries,
+            head_entries=head_entries,
+            work_budget=budget,
+        )
+        authorized_pin_changes = frozenset(BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES)
+    else:
+        admission_app_id = history_v2_bootstrap_admission_app_id()
+        authorized_pin_changes = frozenset()
+
     protected = set(base_entries) - BOOTSTRAP_V2_TEMPORARY_PATHS
-    for relative in protected - {BOOTSTRAP_V2_CI_PATH}:
+    for relative in protected - {BOOTSTRAP_V2_CI_PATH} - authorized_pin_changes:
         if head_entries.get(relative) != base_entries[relative]:
             raise ValueError(
                 "history-v2 bootstrap rewrites or deletes a protected base artifact"
@@ -19243,6 +19364,7 @@ def _validate_history_v2_bootstrap_transaction_coordinates(
         "head_tree_sha": head_tree_oid,
         "commit_count": 1,
         "candidate_signature_retained": verify_candidate_signature,
+        "admission_app_id": admission_app_id,
     }
 
 
@@ -19259,7 +19381,8 @@ def validate_history_v2_bootstrap_transaction(
     base_root: Path | None = None,
     candidate_root: Path | None = None,
 ) -> dict[str, Any]:
-    history_v2_bootstrap_admission_app_id()
+    if HISTORY_V2_ADMISSION_RECORD_APP_ID is not None:
+        history_v2_bootstrap_admission_app_id()
     root, base_rev, head_rev = validated_history_v2_range_checkout(
         root,
         base_rev=base_rev,
@@ -19654,7 +19777,6 @@ def validate_history_v2_default_transaction(
     if markers:
         if markers != BOOTSTRAP_V2_TEMPORARY_PATHS:
             raise ValueError("history-v2 bootstrap base marker set is incomplete")
-        history_v2_bootstrap_admission_app_id()
         if not isinstance(github_commit_receipt, dict):
             raise ValueError(
                 "history-v2 bootstrap squash lacks candidate reproof evidence"
@@ -19830,6 +19952,17 @@ def validate_root(
                     snapshot_issue or "retained history inventory could not be frozen"
                 ]
     frozen_snapshots = tuple(file_snapshots)
+    configured_admission_pin_scan_values: dict[Path, bytes] = {}
+    if history_v2 and HISTORY_V2_ADMISSION_RECORD_APP_ID is not None:
+        try:
+            configured_admission_pin_scan_values = (
+                _bootstrap_v2_unconfigured_admission_pin_scan_values(
+                    frozen_snapshots,
+                    app_id=history_v2_bootstrap_admission_app_id(),
+                )
+            )
+        except ValueError as exc:
+            return [safe_exception_message(exc)]
     retained_export_files: dict[tuple[str, str], set[str]] = {}
     retained_export_modes: dict[tuple[str, str], dict[str, str]] = {}
     retained_export_windows: dict[
@@ -19866,6 +19999,10 @@ def validate_root(
             issues.append(f"{display_relative}: artifact is not a regular file")
             continue
         value = snapshot.value
+        infrastructure_scan_value = configured_admission_pin_scan_values.get(
+            relative,
+            value,
+        )
         if forbidden_path(relative) and not (
             history_v2 and relative in BOOTSTRAP_V2_ALLOWED_FILES
         ):
@@ -19885,7 +20022,7 @@ def validate_root(
                 relative,
                 history_v2=history_v2,
             ):
-                infrastructure_text = value.decode("utf-8")
+                infrastructure_text = infrastructure_scan_value.decode("utf-8")
                 if contains_infrastructure_risk_text(
                     infrastructure_text, relative=relative
                 ):
