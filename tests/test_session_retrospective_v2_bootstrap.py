@@ -3431,6 +3431,9 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         self.assertIn("an external admission service must be installed", readme)
         self.assertIn("merge-group-snapshot --repository-id", readme)
         self.assertIn("--admission-app-id", readme)
+        self.assertIn("--policy bootstrap-v2", readme)
+        self.assertIn("--trusted-base-root", readme)
+        self.assertIn("The same App ID is required by", readme)
         self.assertIn("`admit-merge-group`", readme)
         self.assertIn("`--expected-python-sha256`", readme)
         self.assertIn("parent-owned runtime receipt", readme)
@@ -4238,6 +4241,72 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                     token="read-only",
                 )
 
+    def test_bootstrap_snapshot_binds_unpinned_seed_to_external_app_id(self) -> None:
+        base = "b" * 40
+        queue = "c" * 40
+        candidate = "a" * 40
+        validator = mock.Mock()
+        validator.HISTORY_V2_ADMISSION_RECORD_APP_ID = None
+        validator.HISTORY_V2_ADMISSION_RECORD_APP_SLUG = (
+            CI_MODULE.ADMISSION_RECORD_APP_SLUG
+        )
+        validator.history_v2_bootstrap_markers.return_value = frozenset(
+            Path(value) for value in CI_MODULE.BOOTSTRAP_TEMPORARY_PATHS
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            event_path = Path(raw) / "event.json"
+            event_path.write_text(
+                json.dumps(merge_group_event_payload(base_sha=base, queue_sha=queue)),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(CI_MODULE, "ADMISSION_RECORD_APP_ID", None),
+                mock.patch.object(
+                    CI_MODULE,
+                    "trusted_validator_module",
+                    return_value=validator,
+                ),
+                mock.patch.object(CI_MODULE, "_worktree_head") as worktree_head,
+                mock.patch.object(
+                    CI_MODULE,
+                    "github_json",
+                    side_effect=[
+                        merge_group_pull_payload(
+                            base_sha=base,
+                            head_sha=candidate,
+                            title="Bootstrap history v2",
+                        ),
+                        live_merge_group_ref_payload(queue_sha=queue),
+                        repository_configuration_payload(),
+                        active_branch_rules_payload(),
+                        branch_protection_payload(),
+                        [],
+                    ],
+                ),
+            ):
+                observed = CI_MODULE.read_live_merge_group_snapshot(
+                    repository=TEST_REPOSITORY,
+                    repository_id=TEST_REPOSITORY_ID,
+                    event_path=event_path,
+                    event_ref=merge_group_ref(),
+                    event_sha=queue,
+                    workflow_sha=queue,
+                    admission_app_id=TEST_ADMISSION_APP_ID,
+                    token="read-only",
+                    policy="bootstrap-v2",
+                    trusted_base_root=Path("/synthetic/trusted-base"),
+                )
+        self.assertEqual(observed.candidate_ref, CI_MODULE.BOOTSTRAP_CANDIDATE_REF)
+        worktree_head.assert_called_once_with(
+            Path("/synthetic/trusted-base"),
+            base,
+            "trusted B1",
+        )
+        validator.history_v2_bootstrap_markers.assert_called_once_with(
+            Path("/synthetic/trusted-base"),
+            base,
+        )
+
     def test_external_admission_revalidates_live_authority_after_runtime(
         self,
     ) -> None:
@@ -4485,8 +4554,12 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
         validator.history_v2_bootstrap_admission_app_id.return_value = (
             TEST_ADMISSION_APP_ID
         )
+        validator.HISTORY_V2_ADMISSION_RECORD_APP_ID = TEST_ADMISSION_APP_ID
         validator.HISTORY_V2_ADMISSION_RECORD_APP_SLUG = (
             CI_MODULE.ADMISSION_RECORD_APP_SLUG
+        )
+        validator.history_v2_bootstrap_candidate_admission_app_id.return_value = (
+            TEST_ADMISSION_APP_ID
         )
         validator.history_v2_bootstrap_markers.return_value = frozenset(
             Path(path) for path in CI_MODULE.BOOTSTRAP_TEMPORARY_PATHS
@@ -4505,6 +4578,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 projection=bootstrap_projection,
                 policy="bootstrap-v2",
                 trusted_base_root=Path("/synthetic/trusted-base"),
+                candidate_root=Path("/synthetic/candidate"),
+                admission_app_id=TEST_ADMISSION_APP_ID,
             )
         self.assertIsNone(parent)
         self.assertEqual(markers, tuple(sorted(CI_MODULE.BOOTSTRAP_TEMPORARY_PATHS)))
@@ -4516,7 +4591,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 None,
                 TEST_ADMISSION_APP_ID,
                 CI_MODULE.ADMISSION_RECORD_APP_SLUG,
-                "requires a configured admission App ID",
+                "trusted bootstrap admission App identity differs",
             ),
             (
                 TEST_ADMISSION_APP_ID,
@@ -4553,16 +4628,65 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 validator.history_v2_bootstrap_admission_app_id.return_value = (
                     validator_app_id
                 )
+                validator.HISTORY_V2_ADMISSION_RECORD_APP_ID = validator_app_id
                 validator.HISTORY_V2_ADMISSION_RECORD_APP_SLUG = validator_slug
                 CI_MODULE._predecessor_authority_context(
                     expected=bootstrap_snapshot,
                     projection=bootstrap_projection,
                     policy="bootstrap-v2",
                     trusted_base_root=Path("/synthetic/trusted-base"),
+                    candidate_root=Path("/synthetic/candidate"),
+                    admission_app_id=TEST_ADMISSION_APP_ID,
                 )
+        validator.HISTORY_V2_ADMISSION_RECORD_APP_ID = None
+        validator.HISTORY_V2_ADMISSION_RECORD_APP_SLUG = (
+            CI_MODULE.ADMISSION_RECORD_APP_SLUG
+        )
+        validator.history_v2_bootstrap_candidate_admission_app_id.return_value = (
+            TEST_ADMISSION_APP_ID
+        )
+        with (
+            mock.patch.object(CI_MODULE, "ADMISSION_RECORD_APP_ID", None),
+            mock.patch.object(
+                CI_MODULE,
+                "trusted_validator_module",
+                return_value=validator,
+            ),
+            mock.patch.object(CI_MODULE, "_worktree_head"),
+        ):
+            parent, markers, _marker_sha256 = CI_MODULE._predecessor_authority_context(
+                expected=bootstrap_snapshot,
+                projection=bootstrap_projection,
+                policy="bootstrap-v2",
+                trusted_base_root=Path("/synthetic/trusted-base"),
+                candidate_root=Path("/synthetic/candidate"),
+                admission_app_id=TEST_ADMISSION_APP_ID,
+            )
+        self.assertIsNone(parent)
+        self.assertEqual(markers, tuple(sorted(CI_MODULE.BOOTSTRAP_TEMPORARY_PATHS)))
+        validator.history_v2_bootstrap_candidate_admission_app_id.return_value = (
+            TEST_ADMISSION_APP_ID + 1
+        )
+        with (
+            mock.patch.object(CI_MODULE, "ADMISSION_RECORD_APP_ID", None),
+            self.assertRaisesRegex(
+                CI_MODULE.GateError,
+                "bootstrap candidate admission App identity differs",
+            ),
+        ):
+            CI_MODULE.bootstrap_admission_app_id(
+                validator,
+                trusted_base_root=Path("/synthetic/trusted-base"),
+                candidate_root=Path("/synthetic/candidate"),
+                admission_app_id=TEST_ADMISSION_APP_ID,
+            )
+        validator.history_v2_bootstrap_candidate_admission_app_id.return_value = (
+            TEST_ADMISSION_APP_ID
+        )
         validator.history_v2_bootstrap_admission_app_id.return_value = (
             TEST_ADMISSION_APP_ID
         )
+        validator.HISTORY_V2_ADMISSION_RECORD_APP_ID = TEST_ADMISSION_APP_ID
         validator.HISTORY_V2_ADMISSION_RECORD_APP_SLUG = (
             CI_MODULE.ADMISSION_RECORD_APP_SLUG
         )
@@ -4590,6 +4714,8 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 projection=bootstrap_projection,
                 policy="bootstrap-v2",
                 trusted_base_root=Path("/synthetic/trusted-base"),
+                candidate_root=Path("/synthetic/candidate"),
+                admission_app_id=TEST_ADMISSION_APP_ID,
             )
 
     def test_external_admission_revalidates_live_authority_after_runtime_order(
@@ -5461,6 +5587,10 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                 key_paths = VALIDATOR_MODULE.HISTORY_V2_SIGNATURE_KEY_PATHS
 
                 class Validator:
+                    HISTORY_V2_ADMISSION_RECORD_APP_ID = TEST_ADMISSION_APP_ID
+                    HISTORY_V2_ADMISSION_RECORD_APP_SLUG = (
+                        CI_MODULE.ADMISSION_RECORD_APP_SLUG
+                    )
                     HISTORY_V2_SIGNATURE_KEY_PATHS = key_paths
                     BOOTSTRAP_V2_PUBLIC_KEY_SHA256 = {
                         relative: hashlib.sha256(
@@ -5482,6 +5612,17 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         _candidate_root: Path,
                     ) -> list[str]:
                         return []
+
+                    @staticmethod
+                    def history_v2_bootstrap_admission_app_id() -> int:
+                        return TEST_ADMISSION_APP_ID
+
+                    @staticmethod
+                    def history_v2_bootstrap_candidate_admission_app_id(
+                        _trusted_root: Path,
+                        _candidate_root: Path,
+                    ) -> int:
+                        return TEST_ADMISSION_APP_ID
 
                 context = (
                     self.assertRaisesRegex(
@@ -5506,6 +5647,7 @@ class SessionRetrospectiveV2BootstrapTests(unittest.TestCase):
                         queue_root=queue_root,
                         policy="bootstrap-v2",
                         trusted_base_root=trusted_base_root,
+                        admission_app_id=TEST_ADMISSION_APP_ID,
                     )
                 if not should_reject:
                     admin_key = key_paths["bootstrap-v2"]

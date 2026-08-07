@@ -195,38 +195,38 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("scripts/trusted_history_ci.py"): bytes(
         (
-            0xED,
-            0xA4,
-            0x62,
-            0x67,
-            0x82,
-            0x08,
-            0x33,
-            0x89,
+            0x63,
+            0xC3,
+            0x93,
+            0x9F,
+            0xE9,
             0xDF,
-            0xB3,
-            0x94,
-            0xBB,
-            0x5E,
-            0xEB,
-            0xB9,
-            0xA2,
-            0x6E,
-            0x2B,
-            0xFB,
-            0xF4,
+            0x63,
+            0x60,
+            0x42,
+            0x3D,
+            0xD5,
+            0x1A,
+            0xAB,
+            0xB7,
+            0x34,
+            0x31,
+            0xBD,
+            0x36,
+            0xDA,
+            0x36,
             0x6F,
-            0x5D,
-            0x98,
-            0x53,
-            0x43,
-            0x1C,
-            0x8A,
-            0x6B,
-            0xB6,
-            0xCA,
-            0x81,
-            0x5B,
+            0x24,
+            0x90,
+            0xFF,
+            0x11,
+            0x26,
+            0xD2,
+            0x1A,
+            0x97,
+            0x6D,
+            0x31,
+            0xBA,
         )
     ).hex(),
     Path("scripts/validate_retained_history.py"): bytes(
@@ -267,38 +267,38 @@ INFRASTRUCTURE_TRUSTED_RISK_LINES_SHA256 = {
     ).hex(),
     Path("tests/test_session_retrospective_v2_bootstrap.py"): bytes(
         (
-            0xD1,
-            0x3B,
-            0x96,
-            0x58,
-            0x48,
-            0x10,
+            0x5F,
+            0xAF,
+            0xE1,
+            0xEB,
+            0x2E,
+            0xE9,
             0x68,
-            0x36,
-            0x7C,
-            0xA6,
+            0x41,
+            0xF4,
+            0x1E,
+            0x51,
+            0xDF,
+            0x1A,
+            0x6C,
+            0x7D,
+            0x61,
+            0x29,
+            0x78,
+            0x0D,
+            0x2A,
             0xA0,
             0xB0,
-            0x7B,
-            0x16,
-            0x7E,
-            0x36,
-            0x0F,
-            0xAE,
-            0xD9,
-            0x91,
-            0xF3,
-            0xF3,
+            0x5A,
+            0xC2,
             0x8B,
-            0x5B,
-            0x83,
-            0xEC,
-            0x21,
-            0x1C,
-            0xA1,
-            0x50,
-            0x13,
+            0xA9,
+            0x8B,
+            0x4B,
+            0x0F,
+            0x33,
             0xDF,
+            0x08,
         )
     ).hex(),
     Path("tests/test_validate_retained_history.py"): bytes(
@@ -382,6 +382,12 @@ BOOTSTRAP_V2_TEMPORARY_PATHS = frozenset(
         Path("tests/test_session_retrospective_v2_bootstrap.py"),
     }
 )
+BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES = {
+    Path("scripts/trusted_history_ci.py"): (b"ADMISSION_RECORD_APP_ID: int | None = "),
+    Path("scripts/validate_retained_history.py"): (
+        b"HISTORY_V2_ADMISSION_RECORD_APP_ID: int | None = "
+    ),
+}
 BOOTSTRAP_V2_SCHEMA_FILES = frozenset(
     Path(path)
     for path in "schemas/retained-manifest-v2.schema.json "
@@ -497,110 +503,110 @@ BOOTSTRAP_V2_UNMODELED_STATIC_TEXT_CALL_RISK = "python_unmodeled_static_text_cal
 BOOTSTRAP_V2_TRUSTED_PYTHON_RISK_VALUES_SHA256 = {
     Path("scripts/trusted_history_ci.py"): _trusted_sha256_values_hex(
         (
-            0x19,
-            0x5E,
-            0x31,
-            0x3C,
-            0x0F,
-            0x2B,
-            0x0B,
-            0xB3,
-            0x42,
-            0xDA,
-            0x40,
-            0x40,
-            0xB8,
-            0x72,
-            0x4C,
-            0xF6,
-            0x2E,
-            0x26,
+            0x7F,
+            0x1C,
+            0x5B,
+            0xBD,
+            0x81,
+            0x93,
+            0xB6,
+            0x86,
+            0xF2,
+            0xE3,
+            0x60,
+            0x03,
+            0xF4,
+            0x75,
+            0x55,
+            0x1C,
+            0xB6,
+            0x4D,
+            0x7B,
+            0x0C,
             0xAC,
-            0xAD,
-            0x56,
-            0x4A,
-            0x2E,
-            0x56,
-            0xC9,
-            0x66,
-            0x63,
-            0xE1,
-            0x8B,
-            0xF9,
-            0xA3,
-            0x65,
+            0xED,
+            0x57,
+            0x13,
+            0xB1,
+            0x09,
+            0x0C,
+            0x47,
+            0x81,
+            0x55,
+            0xA0,
+            0xDE,
         )
     ),
     Path("scripts/validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x91,
-            0x4B,
-            0x36,
-            0x45,
-            0x43,
-            0x9C,
-            0x38,
-            0xAB,
-            0x09,
-            0x8E,
-            0x4F,
-            0x66,
-            0x1B,
-            0xE0,
-            0xFD,
-            0xFA,
-            0x74,
+            0xD7,
             0x6C,
-            0x22,
-            0x51,
-            0x37,
-            0x1D,
-            0xE9,
-            0x95,
-            0x37,
-            0xE3,
+            0x03,
             0x6D,
-            0xB7,
-            0x7F,
-            0x91,
-            0x26,
-            0xEF,
+            0xC1,
+            0x41,
+            0x80,
+            0xD3,
+            0x4F,
+            0x07,
+            0x47,
+            0x48,
+            0xDC,
+            0x4C,
+            0x75,
+            0xE1,
+            0x6E,
+            0x40,
+            0x8A,
+            0xBF,
+            0x0D,
+            0x8E,
+            0x12,
+            0xBE,
+            0x13,
+            0x0B,
+            0xDA,
+            0x16,
+            0xD8,
+            0x02,
+            0x7B,
+            0xAF,
         )
     ),
     Path("tests/test_validate_retained_history.py"): _trusted_sha256_values_hex(
         (
-            0x5F,
-            0xD6,
-            0x29,
-            0xB7,
-            0x02,
-            0x92,
-            0xCB,
-            0xD4,
-            0x60,
-            0x21,
-            0x4A,
-            0x76,
-            0x72,
-            0x9E,
-            0x14,
-            0xAD,
-            0x4F,
-            0x63,
-            0x2A,
-            0x1A,
             0x16,
-            0xC4,
-            0xCC,
-            0x5C,
-            0xBF,
-            0x17,
-            0x6F,
-            0xC9,
-            0x09,
-            0x9E,
-            0x82,
-            0xBE,
+            0x01,
+            0x5B,
+            0x4F,
+            0x51,
+            0x9B,
+            0xD1,
+            0xF9,
+            0xC0,
+            0x0C,
+            0x8E,
+            0xF2,
+            0xB2,
+            0x75,
+            0x1D,
+            0x96,
+            0xE1,
+            0x16,
+            0xA2,
+            0xA9,
+            0x37,
+            0x10,
+            0xF3,
+            0xD0,
+            0x7D,
+            0x1F,
+            0x72,
+            0xB6,
+            0x0E,
+            0x75,
+            0xF1,
+            0x9F,
         )
     ),
 }
@@ -13721,6 +13727,135 @@ def validate_history_v2_ci_tree(
     return []
 
 
+def _bootstrap_v2_admission_app_id_from_snapshots(
+    base_snapshots: tuple[HistoryV2FileSnapshot, ...],
+    candidate_snapshots: tuple[HistoryV2FileSnapshot, ...],
+    *,
+    base_entries: dict[Path, GitIndexEntry],
+    candidate_entries: dict[Path, GitIndexEntry],
+) -> int:
+    base_by_relative = {snapshot.relative: snapshot for snapshot in base_snapshots}
+    candidate_by_relative = {
+        snapshot.relative: snapshot for snapshot in candidate_snapshots
+    }
+    observed_ids: list[int] = []
+    for relative, prefix in BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES.items():
+        base = base_by_relative.get(relative)
+        candidate = candidate_by_relative.get(relative)
+        if (
+            base is None
+            or candidate is None
+            or not base.is_regular
+            or not candidate.is_regular
+            or base.is_symlink
+            or candidate.is_symlink
+            or base.value is None
+            or candidate.value is None
+            or len(base.value) != base.size
+            or len(candidate.value) != candidate.size
+        ):
+            raise ValueError(
+                "bootstrap admission App pin source is not an exact regular file"
+            )
+        for label, snapshot, entry in (
+            ("trusted bootstrap", base, base_entries.get(relative)),
+            ("bootstrap candidate", candidate, candidate_entries.get(relative)),
+        ):
+            if entry is None or entry.mode != "100644":
+                raise ValueError(
+                    f"{label} admission App pin source is not an exact indexed file"
+                )
+            worktree_mode = "100755" if snapshot.mode & 0o111 else "100644"
+            observed_object_id = git_blob_bytes_object_id(
+                snapshot.value,
+                expected_length=len(entry.object_id),
+            )
+            if worktree_mode != entry.mode or observed_object_id != entry.object_id:
+                raise ValueError(
+                    f"{label} admission App pin source does not match its Git index"
+                )
+        base_line = prefix + b"None\n"
+        if base.value.count(base_line) != 1:
+            raise ValueError(
+                "trusted bootstrap admission App pin source is not unconfigured"
+            )
+        pattern = re.compile(
+            rb"(?m)^" + re.escape(prefix) + rb"(?P<app_id>[1-9][0-9]{0,18})$"
+        )
+        matches = tuple(pattern.finditer(candidate.value))
+        if len(matches) != 1:
+            raise ValueError(
+                "bootstrap candidate admission App pin is not one canonical integer"
+            )
+        raw_app_id = matches[0].group("app_id")
+        expected = base.value.replace(
+            base_line,
+            prefix + raw_app_id + b"\n",
+            1,
+        )
+        if candidate.value != expected:
+            raise ValueError(
+                "bootstrap candidate admission App pin changes another protected byte"
+            )
+        app_id = int(raw_app_id)
+        if app_id > 9_223_372_036_854_775_807:
+            raise ValueError("bootstrap candidate admission App ID is out of range")
+        observed_ids.append(app_id)
+    if len(set(observed_ids)) != 1:
+        raise ValueError("bootstrap candidate admission App pins differ")
+    app_id = observed_ids[0]
+    if app_id == HISTORY_V2_GITHUB_ACTIONS_APP_ID:
+        raise ValueError("bootstrap admission App must not be GitHub Actions")
+    return app_id
+
+
+def history_v2_bootstrap_candidate_admission_app_id(
+    base_root: Path,
+    candidate_root: Path,
+) -> int:
+    base_root = base_root.resolve()
+    candidate_root = candidate_root.resolve()
+    if base_root == candidate_root:
+        raise ValueError("bootstrap admission App transition requires distinct roots")
+    base_entries, base_index_issue = git_index_entries(
+        base_root,
+        label="trusted bootstrap",
+        max_entries=BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES,
+    )
+    if base_index_issue is not None or base_entries is None:
+        raise ValueError(
+            base_index_issue or "trusted bootstrap Git index could not be inspected"
+        )
+    candidate_entries, candidate_index_issue = git_index_entries(
+        candidate_root,
+        label="bootstrap candidate",
+        max_entries=BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES,
+    )
+    if candidate_index_issue is not None or candidate_entries is None:
+        raise ValueError(
+            candidate_index_issue
+            or "bootstrap candidate Git index could not be inspected"
+        )
+    base_snapshots, base_issue = snapshot_bootstrap_v2_files(
+        base_root,
+        max_entries=BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES,
+    )
+    if base_issue is not None or base_snapshots is None:
+        raise ValueError(base_issue or "trusted bootstrap artifact snapshot failed")
+    candidate_snapshots, candidate_issue = snapshot_bootstrap_v2_files(
+        candidate_root,
+        max_entries=BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES,
+    )
+    if candidate_issue is not None or candidate_snapshots is None:
+        raise ValueError(candidate_issue or "candidate artifact snapshot failed")
+    return _bootstrap_v2_admission_app_id_from_snapshots(
+        base_snapshots,
+        candidate_snapshots,
+        base_entries=base_entries,
+        candidate_entries=candidate_entries,
+    )
+
+
 def validate_bootstrap_v2_candidate(
     base_root: Path,
     candidate_root: Path,
@@ -13759,6 +13894,14 @@ def validate_bootstrap_v2_candidate(
     )
     if candidate_index_issue is not None or candidate_entries is None:
         return [candidate_index_issue or "candidate Git index could not be inspected"]
+    admission_pin_paths = frozenset(BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES)
+    admission_pin_changes = frozenset(
+        relative
+        for relative in admission_pin_paths
+        if relative in base_entries
+        and relative in candidate_entries
+        and base_entries[relative].object_id != candidate_entries[relative].object_id
+    )
     if post_migration:
         issues.extend(validate_history_v2_ci_tree(candidate_entries))
     else:
@@ -13788,7 +13931,10 @@ def validate_bootstrap_v2_candidate(
             append_immutable_issue(
                 relative, "existing tracked artifact mode must not change"
             )
-        if candidate_entry.object_id != base_entry.object_id:
+        if (
+            candidate_entry.object_id != base_entry.object_id
+            and relative not in admission_pin_paths
+        ):
             append_immutable_issue(
                 relative, "existing tracked artifact content must not be rewritten"
             )
@@ -13830,6 +13976,38 @@ def validate_bootstrap_v2_candidate(
     if path_issue is not None or candidate_snapshots is None:
         issues.append(path_issue or "candidate artifact enumeration failed")
         return issues
+    authorized_admission_pin_changes: frozenset[Path] = frozenset()
+    authorized_admission_pin_scan_values: dict[Path, bytes] = {}
+    if admission_pin_changes:
+        if admission_pin_changes != admission_pin_paths:
+            issues.append("bootstrap admission App pins must be configured together")
+        else:
+            base_snapshots, base_path_issue = snapshot_bootstrap_v2_files(
+                base_root,
+                max_entries=BOOTSTRAP_V2_MAX_CANDIDATE_ENTRIES,
+            )
+            if base_path_issue is not None or base_snapshots is None:
+                issues.append(
+                    base_path_issue or "trusted bootstrap artifact snapshot failed"
+                )
+            else:
+                try:
+                    _bootstrap_v2_admission_app_id_from_snapshots(
+                        base_snapshots,
+                        candidate_snapshots,
+                        base_entries=base_entries,
+                        candidate_entries=candidate_entries,
+                    )
+                except ValueError as exc:
+                    issues.append(safe_exception_message(exc))
+                else:
+                    authorized_admission_pin_changes = admission_pin_paths
+                    authorized_admission_pin_scan_values = {
+                        snapshot.relative: snapshot.value
+                        for snapshot in base_snapshots
+                        if snapshot.relative in admission_pin_paths
+                        and snapshot.value is not None
+                    }
     observed = {snapshot.relative for snapshot in candidate_snapshots}
     for relative in sorted(BOOTSTRAP_V2_TEMPORARY_PATHS & observed):
         issues.append(
@@ -13889,7 +14067,10 @@ def validate_bootstrap_v2_candidate(
             snapshot.value,
             expected_length=len(base_entry.object_id),
         )
-        if observed_object_id != base_entry.object_id:
+        if (
+            observed_object_id != base_entry.object_id
+            and relative not in authorized_admission_pin_changes
+        ):
             append_immutable_issue(
                 relative, "existing tracked artifact content must not be rewritten"
             )
@@ -13949,14 +14130,24 @@ def validate_bootstrap_v2_candidate(
                 continue
 
             text = value.decode("utf-8")
+            risk_text = authorized_admission_pin_scan_values.get(
+                relative,
+                value,
+            ).decode("utf-8")
             if NUL_TEXT in text:
                 issues.append(
                     f"{display_relative}: infrastructure text contains a NUL byte"
                 )
             source_contains_risk = (
-                contains_bootstrap_v2_privacy_risk_text(text, relative=relative)
+                contains_bootstrap_v2_privacy_risk_text(
+                    risk_text,
+                    relative=relative,
+                )
                 if relative in BOOTSTRAP_V2_ALLOWED_FILES
-                else contains_infrastructure_risk_text(text, relative=relative)
+                else contains_infrastructure_risk_text(
+                    risk_text,
+                    relative=relative,
+                )
             )
             if source_contains_risk:
                 issues.append(
@@ -13965,7 +14156,7 @@ def validate_bootstrap_v2_candidate(
             if (
                 relative.suffix.lower() == ".py"
                 and contains_bootstrap_v2_python_privacy_risk(
-                    text,
+                    risk_text,
                     relative=relative,
                 )
             ):

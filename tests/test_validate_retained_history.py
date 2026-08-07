@@ -694,6 +694,27 @@ def add_matching_bootstrap_v2_base_artifact(
     run_fixture_git(base_root, "add", relative.as_posix())
 
 
+def configure_bootstrap_admission_app_pins(
+    root: Path,
+    app_id: int,
+    *,
+    relatives: set[Path] | None = None,
+) -> None:
+    selected = relatives or set(MODULE.BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES)
+    for relative, prefix in MODULE.BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES.items():
+        if relative not in selected:
+            continue
+        path = root / relative
+        value = path.read_bytes()
+        unconfigured = prefix + b"None\n"
+        if value.count(unconfigured) != 1:
+            raise AssertionError("synthetic App pin source is not unconfigured")
+        path.write_bytes(
+            value.replace(unconfigured, prefix + str(app_id).encode("ascii") + b"\n")
+        )
+        run_fixture_git(root, "add", relative.as_posix())
+
+
 def write_tracked_append_only_artifact(root: Path, value: str) -> Path:
     relative = Path("retained/daily/2026-07-15/episodes.jsonl")
     path = root / relative
@@ -9601,13 +9622,11 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             write_tracked_append_only_artifact(base_root, retained_value)
             write_tracked_append_only_artifact(candidate_root, retained_value)
 
-            self.assertEqual(
-                validate_synthetic_bootstrap_v2_candidate(
-                    candidate_root,
-                    base_root=base_root,
-                ),
-                [],
+            issues = validate_synthetic_bootstrap_v2_candidate(
+                candidate_root,
+                base_root=base_root,
             )
+            self.assertFalse(issues, "\n".join(issues))
 
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -9616,6 +9635,116 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 MODULE.validate_bootstrap_v2_candidate(root, root),
                 ["base and candidate roots must be distinct directories"],
             )
+
+    def test_bootstrap_v2_admission_app_pin_transition_is_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            workspace = Path(raw)
+            base_root = workspace / "base"
+            candidate_root = workspace / "candidate"
+            write_bootstrap_v2_base(base_root)
+            write_bootstrap_v2_candidate(candidate_root)
+            for root in (base_root, candidate_root):
+                for relative, source in (
+                    (Path("scripts/trusted_history_ci.py"), TRUSTED_CI_HELPER),
+                    (Path("scripts/validate_retained_history.py"), SCRIPT),
+                ):
+                    path = root / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(source.read_bytes())
+                    run_fixture_git(root, "add", relative.as_posix())
+            configure_bootstrap_admission_app_pins(candidate_root, 424_242)
+
+            self.assertEqual(
+                MODULE.history_v2_bootstrap_candidate_admission_app_id(
+                    base_root,
+                    candidate_root,
+                ),
+                424_242,
+            )
+            transition_issues = validate_synthetic_bootstrap_v2_candidate(
+                candidate_root,
+                base_root=base_root,
+            )
+            self.assertFalse(transition_issues, "\n".join(transition_issues))
+
+        cases = (
+            ("one-sided", "pins must be configured together"),
+            ("different", "pins differ"),
+            ("github-actions", "must not be GitHub Actions"),
+            ("extra-byte", "changes another protected byte"),
+            ("base-index-drift", "trusted bootstrap admission App pin source"),
+            ("candidate-index-drift", "bootstrap candidate admission App pin source"),
+        )
+        for mutation, expected in cases:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as raw:
+                workspace = Path(raw)
+                base_root = workspace / "base"
+                candidate_root = workspace / "candidate"
+                write_bootstrap_v2_base(base_root)
+                write_bootstrap_v2_candidate(candidate_root)
+                for root in (base_root, candidate_root):
+                    for relative, source in (
+                        (Path("scripts/trusted_history_ci.py"), TRUSTED_CI_HELPER),
+                        (Path("scripts/validate_retained_history.py"), SCRIPT),
+                    ):
+                        path = root / relative
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(source.read_bytes())
+                        run_fixture_git(root, "add", relative.as_posix())
+                if mutation == "one-sided":
+                    configure_bootstrap_admission_app_pins(
+                        candidate_root,
+                        424_242,
+                        relatives={Path("scripts/trusted_history_ci.py")},
+                    )
+                    issues = "\n".join(
+                        validate_synthetic_bootstrap_v2_candidate(
+                            candidate_root,
+                            base_root=base_root,
+                        )
+                    )
+                    self.assertIn(expected, issues)
+                    continue
+                app_id = (
+                    MODULE.HISTORY_V2_GITHUB_ACTIONS_APP_ID
+                    if mutation == "github-actions"
+                    else 424_242
+                )
+                configure_bootstrap_admission_app_pins(candidate_root, app_id)
+                if mutation == "different":
+                    validator_path = (
+                        candidate_root / "scripts/validate_retained_history.py"
+                    )
+                    validator_path.write_bytes(
+                        validator_path.read_bytes().replace(b"424242\n", b"424243\n", 1)
+                    )
+                    run_fixture_git(
+                        candidate_root,
+                        "add",
+                        "scripts/validate_retained_history.py",
+                    )
+                elif mutation == "extra-byte":
+                    helper_path = candidate_root / "scripts/trusted_history_ci.py"
+                    helper_path.write_bytes(helper_path.read_bytes() + b"# changed\n")
+                    run_fixture_git(
+                        candidate_root,
+                        "add",
+                        "scripts/trusted_history_ci.py",
+                    )
+                elif mutation in {"base-index-drift", "candidate-index-drift"}:
+                    staged_root = (
+                        candidate_root if mutation == "base-index-drift" else base_root
+                    )
+                    for relative in MODULE.BOOTSTRAP_V2_ADMISSION_APP_PIN_LINES:
+                        for root in (base_root, candidate_root):
+                            path = root / relative
+                            path.write_bytes(path.read_bytes() + b"# drift\n")
+                        run_fixture_git(staged_root, "add", relative.as_posix())
+                with self.assertRaisesRegex(ValueError, expected):
+                    MODULE.history_v2_bootstrap_candidate_admission_app_id(
+                        base_root,
+                        candidate_root,
+                    )
 
     def test_bootstrap_v2_append_only_rejects_rewrite_delete_and_mode_change(
         self,

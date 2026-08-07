@@ -649,6 +649,7 @@ def trusted_validator_module(*, contract: str = "bootstrap") -> Any:
             "parse_history_v2_commit_object",
             "HistoryV2SignatureVerifier",
             "history_v2_bootstrap_admission_app_id",
+            "history_v2_bootstrap_candidate_admission_app_id",
             "history_v2_bootstrap_markers",
             "validate_bootstrap_v2_candidate",
             "validate_history_v2_tree",
@@ -2706,36 +2707,98 @@ def _required_check_entries(
         raise GateError("required status check is not current-Q bound")
 
 
-def canonical_admission_app_id(value: Any) -> int:
+def canonical_external_admission_app_id(value: Any) -> int:
     app_id = canonical_positive_integer(value, "external admission App ID")
-    if ADMISSION_RECORD_APP_ID is None:
-        raise GateError("external admission App identity is not pinned")
-    if app_id != ADMISSION_RECORD_APP_ID:
-        raise GateError("external admission App differs from the pinned identity")
     if app_id == GITHUB_ACTIONS_APP_ID:
         raise GateError("external admission App must not be GitHub Actions")
     return app_id
 
 
-def bootstrap_admission_app_id(validator: Any) -> int:
+def canonical_admission_app_id(value: Any) -> int:
+    app_id = canonical_external_admission_app_id(value)
+    if ADMISSION_RECORD_APP_ID is None:
+        raise GateError("external admission App identity is not pinned")
+    if app_id != ADMISSION_RECORD_APP_ID:
+        raise GateError("external admission App differs from the pinned identity")
+    return app_id
+
+
+def _trusted_bootstrap_static_app_id(validator: Any) -> int | None:
+    validator_pin = getattr(
+        validator,
+        "HISTORY_V2_ADMISSION_RECORD_APP_ID",
+        object(),
+    )
+    if validator_pin is not None and type(validator_pin) is not int:
+        raise GateError("trusted bootstrap admission App identity differs")
+    if (ADMISSION_RECORD_APP_ID is None) != (validator_pin is None):
+        raise GateError("trusted bootstrap admission App identity differs")
+    if getattr(validator, "HISTORY_V2_ADMISSION_RECORD_APP_SLUG", None) != (
+        ADMISSION_RECORD_APP_SLUG
+    ):
+        raise GateError("trusted bootstrap admission App identity differs")
+    if ADMISSION_RECORD_APP_ID is None:
+        return None
     try:
         app_id = canonical_admission_app_id(ADMISSION_RECORD_APP_ID)
-    except GateError as exc:
-        raise GateError(
-            "bootstrap migration requires a configured admission App ID"
-        ) from exc
-    try:
         validator_app_id = validator.history_v2_bootstrap_admission_app_id()
     except Exception as exc:
         raise GateError(
             "trusted validator admission App identity could not be read"
         ) from exc
-    if (
-        validator_app_id != app_id
-        or getattr(validator, "HISTORY_V2_ADMISSION_RECORD_APP_SLUG", None)
-        != ADMISSION_RECORD_APP_SLUG
-    ):
+    if validator_app_id != app_id:
         raise GateError("trusted bootstrap admission App identity differs")
+    return app_id
+
+
+def bootstrap_seed_admission_app_id(
+    validator: Any,
+    *,
+    trusted_base_root: Path,
+    base_sha: str,
+    admission_app_id: int,
+) -> int:
+    app_id = canonical_external_admission_app_id(admission_app_id)
+    static_app_id = _trusted_bootstrap_static_app_id(validator)
+    if static_app_id is not None and app_id != static_app_id:
+        raise GateError("external admission App differs from the pinned identity")
+    try:
+        observed_markers = validator.history_v2_bootstrap_markers(
+            trusted_base_root,
+            base_sha,
+        )
+    except Exception as exc:
+        raise GateError("trusted B1 bootstrap markers could not be read") from exc
+    expected_markers = frozenset(Path(value) for value in BOOTSTRAP_TEMPORARY_PATHS)
+    if observed_markers != expected_markers:
+        raise GateError("trusted B1 bootstrap markers are incomplete")
+    return app_id
+
+
+def bootstrap_admission_app_id(
+    validator: Any,
+    *,
+    trusted_base_root: Path,
+    candidate_root: Path,
+    admission_app_id: int,
+) -> int:
+    app_id = canonical_external_admission_app_id(admission_app_id)
+    static_app_id = _trusted_bootstrap_static_app_id(validator)
+    if static_app_id is not None:
+        if app_id != static_app_id:
+            raise GateError("external admission App differs from the pinned identity")
+        return app_id
+    try:
+        candidate_app_id = validator.history_v2_bootstrap_candidate_admission_app_id(
+            trusted_base_root,
+            candidate_root,
+        )
+    except Exception as exc:
+        raise GateError(
+            "bootstrap candidate admission App identity could not be proved"
+        ) from exc
+    if candidate_app_id != app_id:
+        raise GateError("bootstrap candidate admission App identity differs")
     return app_id
 
 
@@ -3043,8 +3106,13 @@ def validate_trusted_branch_configuration(
     repository: str,
     repository_id: int,
     admission_app_id: int,
+    allow_unpinned_admission_app: bool = False,
 ) -> str:
-    admission_app_id = canonical_admission_app_id(admission_app_id)
+    admission_app_id = (
+        canonical_external_admission_app_id(admission_app_id)
+        if allow_unpinned_admission_app
+        else canonical_admission_app_id(admission_app_id)
+    )
     normalized = {
         "repository": validate_repository_merge_configuration(
             repository_payload,
@@ -3077,6 +3145,8 @@ def read_live_merge_group_snapshot(
     workflow_sha: str,
     admission_app_id: int,
     token: str,
+    policy: str = "history-v2",
+    trusted_base_root: Path | None = None,
 ) -> MergeGroupSnapshot:
     repository = canonical_repository(repository)
     repository_id = canonical_positive_integer(
@@ -3096,6 +3166,22 @@ def read_live_merge_group_snapshot(
         event_sha=event_sha,
         workflow_sha=workflow_sha,
     )
+    if policy == "bootstrap-v2":
+        if trusted_base_root is None:
+            raise GateError("bootstrap trusted base root is unavailable")
+        trusted_base_root = trusted_base_root.resolve()
+        _worktree_head(trusted_base_root, base_sha, "trusted B1")
+        validator = trusted_validator_module(contract="bootstrap")
+        admission_app_id = bootstrap_seed_admission_app_id(
+            validator,
+            trusted_base_root=trusted_base_root,
+            base_sha=base_sha,
+            admission_app_id=admission_app_id,
+        )
+    elif policy == "history-v2":
+        admission_app_id = canonical_admission_app_id(admission_app_id)
+    else:
+        raise GateError("merge-group snapshot policy is invalid")
     try:
         pull_payload = github_json(
             "GET",
@@ -3112,6 +3198,8 @@ def read_live_merge_group_snapshot(
         number=number,
         base_sha=base_sha,
     )
+    if policy == "bootstrap-v2" and pull.head_ref != BOOTSTRAP_CANDIDATE_REF:
+        raise GateError("bootstrap merge-group candidate ref is invalid")
     encoded_queue_ref = parse.quote(
         event_ref.removeprefix("refs/"),
         safe="/",
@@ -3168,6 +3256,7 @@ def read_live_merge_group_snapshot(
         repository=repository,
         repository_id=repository_id,
         admission_app_id=admission_app_id,
+        allow_unpinned_admission_app=policy == "bootstrap-v2",
     )
     return MergeGroupSnapshot(
         repository=repository,
@@ -3262,6 +3351,8 @@ def _predecessor_authority_context(
     projection: MergeGroupProjection,
     policy: str,
     trusted_base_root: Path,
+    candidate_root: Path | None = None,
+    admission_app_id: int | None = None,
 ) -> tuple[str | None, tuple[str, ...], str | None]:
     trusted_base_root = trusted_base_root.resolve()
     _worktree_head(trusted_base_root, expected.base_sha, "trusted B1")
@@ -3269,7 +3360,14 @@ def _predecessor_authority_context(
         contract="bootstrap" if policy == "bootstrap-v2" else "permanent"
     )
     if policy == "bootstrap-v2":
-        bootstrap_admission_app_id(validator)
+        if candidate_root is None or admission_app_id is None:
+            raise GateError("bootstrap admission App transition is unavailable")
+        bootstrap_admission_app_id(
+            validator,
+            trusted_base_root=trusted_base_root,
+            candidate_root=candidate_root,
+            admission_app_id=admission_app_id,
+        )
     try:
         observed_markers = validator.history_v2_bootstrap_markers(
             trusted_base_root,
@@ -3322,6 +3420,7 @@ def revalidate_external_merge_group_authority(
     workflow_sha: str,
     admission_app_id: int,
     token: str,
+    candidate_root: Path | None = None,
     clock: Callable[[], dt.datetime] | None = None,
     monotonic_clock: Callable[[], float] = time.monotonic,
 ) -> MergeGroupLiveAuthorityEvidence:
@@ -3331,6 +3430,8 @@ def revalidate_external_merge_group_authority(
             projection=projection,
             policy=policy,
             trusted_base_root=trusted_base_root,
+            candidate_root=candidate_root,
+            admission_app_id=admission_app_id,
         )
     )
     live_budget = GitHubReadBudget(
@@ -3359,15 +3460,25 @@ def revalidate_external_merge_group_authority(
             seconds=MERGE_GROUP_LIVE_AUTHORITY_TTL_SECONDS
         )
         try:
+            live_snapshot_arguments: dict[str, Any] = {
+                "repository": expected.repository,
+                "repository_id": expected.repository_id,
+                "event_path": event_path,
+                "event_ref": event_ref,
+                "event_sha": event_sha,
+                "workflow_sha": workflow_sha,
+                "admission_app_id": admission_app_id,
+                "token": token,
+            }
+            if policy == "bootstrap-v2":
+                live_snapshot_arguments.update(
+                    {
+                        "policy": policy,
+                        "trusted_base_root": trusted_base_root,
+                    }
+                )
             observed = read_live_merge_group_snapshot(
-                repository=expected.repository,
-                repository_id=expected.repository_id,
-                event_path=event_path,
-                event_ref=event_ref,
-                event_sha=event_sha,
-                workflow_sha=workflow_sha,
-                admission_app_id=admission_app_id,
-                token=token,
+                **live_snapshot_arguments,
             )
         except GateError as exc:
             raise GateError(
@@ -5479,6 +5590,7 @@ def validate_merge_group_transaction(
     queue_root: Path,
     policy: str,
     trusted_base_root: Path | None = None,
+    admission_app_id: int | None = None,
 ) -> MergeGroupProjection:
     _worktree_head(candidate_root, snapshot.candidate_sha, "candidate")
     _worktree_head(queue_root, snapshot.queue_sha, "queue")
@@ -5496,6 +5608,22 @@ def validate_merge_group_transaction(
         )
         if candidate_issues or queue_issues:
             raise GateError("B1 bootstrap validator rejected H or Q")
+        if admission_app_id is None:
+            raise GateError("bootstrap admission App identity is unavailable")
+        candidate_app_id = bootstrap_admission_app_id(
+            validator,
+            trusted_base_root=trusted_base_root,
+            candidate_root=candidate_root,
+            admission_app_id=admission_app_id,
+        )
+        queue_app_id = bootstrap_admission_app_id(
+            validator,
+            trusted_base_root=trusted_base_root,
+            candidate_root=queue_root,
+            admission_app_id=admission_app_id,
+        )
+        if queue_app_id != candidate_app_id:
+            raise GateError("bootstrap H/Q admission App identities differ")
         _signed_commit, signature_binding = verify_candidate_signature_binding(
             git_dir,
             candidate_sha=snapshot.candidate_sha,
@@ -7001,6 +7129,12 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         type=int,
     )
+    merge_snapshot_parser.add_argument(
+        "--policy",
+        required=True,
+        choices=("bootstrap-v2", "history-v2"),
+    )
+    merge_snapshot_parser.add_argument("--trusted-base-root", type=Path)
     merge_snapshot_parser.add_argument("--output", required=True, type=Path)
 
     preflight_parser = subparsers.add_parser("preflight")
@@ -7121,6 +7255,11 @@ def main(argv: list[str] | None = None) -> int:
     validate_group_parser.add_argument(
         "--policy", required=True, choices=("bootstrap-v2", "history-v2")
     )
+    validate_group_parser.add_argument(
+        "--admission-app-id",
+        required=True,
+        type=int,
+    )
     validate_group_parser.add_argument("--trusted-base-root", type=Path)
     validate_group_parser.add_argument("--output", required=True, type=Path)
 
@@ -7189,6 +7328,12 @@ def main(argv: list[str] | None = None) -> int:
                 workflow_sha=args.workflow_sha,
                 admission_app_id=args.admission_app_id,
                 token=os.environ.get("GH_TOKEN", ""),
+                policy=args.policy,
+                trusted_base_root=(
+                    args.trusted_base_root.resolve()
+                    if args.trusted_base_root is not None
+                    else None
+                ),
             )
             write_json(args.output, snapshot.as_dict())
         elif args.command == "preflight":
@@ -7320,6 +7465,7 @@ def main(argv: list[str] | None = None) -> int:
                     if args.trusted_base_root is not None
                     else None
                 ),
+                admission_app_id=args.admission_app_id,
             )
             write_json(args.output, projection.as_dict())
         elif args.command == "admit-merge-group":
@@ -7335,6 +7481,7 @@ def main(argv: list[str] | None = None) -> int:
                     if args.trusted_base_root is not None
                     else None
                 ),
+                admission_app_id=args.admission_app_id,
             )
             evidence = load_merge_group_runtime_evidence(
                 args.runtime_evidence.resolve()
@@ -7357,6 +7504,7 @@ def main(argv: list[str] | None = None) -> int:
                 workflow_sha=args.workflow_sha,
                 admission_app_id=args.admission_app_id,
                 token=os.environ.get("GH_TOKEN", ""),
+                candidate_root=args.candidate_root.resolve(),
             )
             write_json(
                 args.output,

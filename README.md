@@ -84,10 +84,13 @@ a later trusted generation); the pre-seed revision does not contain that
 runtime and is deliberately ineligible. Missing or changed seed files and keys
 fail closed.
 
-The trust seed does not bypass the external admission boundary below. Product
-cutover remains blocked until the dedicated admission App has a reviewed,
-positive, non-GitHub-Actions App ID committed identically in both trusted
-implementations.
+The trust seed does not bypass the external admission boundary below. It may
+retain an unconfigured App ID, but the one designated cutover candidate may
+replace only the two exact `None` pin lines with the same reviewed positive,
+non-GitHub-Actions integer. Base-owned validation rejects a one-sided pin,
+different IDs, a noncanonical integer, or any other changed byte in either
+protected script. Product cutover remains blocked until that exact transition
+and the external admission service are both ready.
 
 ## V2 Admission Boundary
 
@@ -110,8 +113,11 @@ validates the exact queue SHA from independently trusted code, publishes the
 queue check through its bound GitHub App identity, and performs the history
 authority compare-and-swap. Its trusted configuration supplies that dedicated
 repository ID and App ID to `merge-group-snapshot --repository-id
---admission-app-id`; the GitHub Actions App is explicitly ineligible. Before
-publishing success or attempting CAS, it must
+--admission-app-id`; bootstrap additionally supplies `--policy bootstrap-v2`
+and the exact `--trusted-base-root`. The same App ID is required by
+`validate-merge-group` and `admit-merge-group`.
+GitHub Actions App is explicitly ineligible. Before publishing success or
+attempting CAS, the service must
 materialize the exact `Q` tree with `prepare-runtime-execution`, run the fixed
 CPython `3.13.12` compile and unittest commands without GitHub or CAS
 credentials as a nonprivileged UID, revalidate with
@@ -138,17 +144,19 @@ Until that external producer and receipt flow are proven, cutover is blocked
 and the existing branch rules remain unchanged.
 
 The external producer has a second, separate identity requirement. Its numeric
-GitHub App ID and the fixed `retrospective-history-admission` slug must be
-committed identically in `scripts/trusted_history_ci.py` and
-`scripts/validate_retained_history.py`; an environment or repository variable
-cannot supply or override that trust root. The tracked App ID is intentionally
-unset during bootstrap development, so `history-v2-admission` fails closed
-until the dedicated App exists and its real ID is reviewed and committed. The
-one-time `bootstrap-v2-migration` authority does not use that App, but it is
-valid only for the designated bootstrap candidate ref and only while the exact
-predecessor marker set is present. Bootstrap cutover also requires both trusted
-implementations to hold the same positive non-GitHub-Actions App ID and the
-same fixed slug before any marker-removing transaction can be accepted.
+GitHub App ID and the fixed `retrospective-history-admission` slug become
+permanent trust roots committed identically in `scripts/trusted_history_ci.py`
+and `scripts/validate_retained_history.py`; an environment or repository
+variable cannot override them after cutover. While the seed still contains two
+exact `None` pins, `history-v2-admission` fails closed. The sole
+`bootstrap-v2-migration` path may carry the external service's reviewed App ID
+only after the trusted seed proves its exact marker set and designated
+candidate ref. Before H or Q can be accepted, the base-owned validator must
+prove that both candidate scripts differ from B1 only by replacing their one
+pin line with that same ID. The live snapshot, structural validation, runtime
+admission, and branch configuration are all bound to the same value. Once the
+marker-removing transaction lands, permanent policy again requires the static
+pins and does not admit another transition.
 
 The post-merge audit emits a schema-v3 provider receipt. It records a canonical
 candidate-evidence object rather than a precomputed validation verdict. In the
