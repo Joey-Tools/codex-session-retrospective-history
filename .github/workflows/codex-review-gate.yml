@@ -2,7 +2,7 @@ name: Codex Review Gate Compatibility Status
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
   workflow_dispatch:
 
 permissions: {}
@@ -16,12 +16,15 @@ jobs:
     runs-on: ubuntu-slim
     timeout-minutes: 1
     env:
-      GH_TOKEN: ${{ github.token }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       REPOSITORY: ${{ github.repository }}
+      TARGET_BRANCH: ${{ github.event.pull_request.base.ref }}
     steps:
       - name: Emit legacy required context
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -29,12 +32,23 @@ jobs:
             echo "::error::The pull request head SHA is missing or malformed."
             exit 1
           fi
+          if [[ -z "${DEFAULT_BRANCH}" || -z "${TARGET_BRANCH}" ]]; then
+            echo "::error::The pull request target branch is missing."
+            exit 1
+          fi
+
+          status_state="failure"
+          status_description="Compatibility unavailable outside the default branch."
+          if [[ "${TARGET_BRANCH}" == "${DEFAULT_BRANCH}" ]]; then
+            status_state="success"
+            status_description="Compatibility only; no reviewer or review lane."
+          fi
 
           gh api --method POST "repos/${REPOSITORY}/statuses/${HEAD_SHA}" \
             --silent \
-            -f state=success \
+            -f state="${status_state}" \
             -f context=codex/review-gate \
-            -f description="Compatibility only; no reviewer or review lane."
+            -f description="${status_description}"
 
   backfill-open-pull-requests:
     if: github.event_name == 'workflow_dispatch'
@@ -46,11 +60,12 @@ jobs:
     timeout-minutes: 5
     env:
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      GH_TOKEN: ${{ github.token }}
       REPOSITORY: ${{ github.repository }}
     steps:
       - name: Backfill exact current pull request heads
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -79,11 +94,18 @@ jobs:
                       and (.state == "open" or .state == "closed")
                       and (.number | type == "number" and . > 0 and floor == .)
                       and (.head.sha | type == "string" and test("^[0-9a-f]{40}$"))
+                      and (.base.ref
+                        | type == "string"
+                        and length > 0
+                        and (contains("\t") | not)
+                        and (contains("\r") | not)
+                        and (contains("\n") | not)
+                      )
                     )
                   then
                     ([.[][]] | sort_by(.number)) as $pulls
                     | if ($pulls | map(.number) | unique | length) == ($pulls | length)
-                      then ["API_EVIDENCE"] + ($pulls | map(select(.state == "open") | "\(.number)\t\(.head.sha)")) | .[]
+                      then ["API_EVIDENCE"] + ($pulls | map(select(.state == "open") | "\(.number)\t\(.head.sha)\t\(.base.ref)")) | .[]
                       else "RETRY_PAGINATION"
                       end
                   else
@@ -110,22 +132,34 @@ jobs:
             fi
 
             validated_head_shas=()
+            validated_status_states=()
             for target in "${targets[@]:1}"; do
-              IFS=$'\t' read -r pull_number head_sha extra <<<"${target}"
-              if [[ ! "${pull_number}" =~ ^[1-9][0-9]*$ || ! "${head_sha}" =~ ^[0-9a-f]{40}$ || -n "${extra}" ]]; then
+              IFS=$'\t' read -r pull_number head_sha base_ref extra <<<"${target}"
+              if [[ ! "${pull_number}" =~ ^[1-9][0-9]*$ || ! "${head_sha}" =~ ^[0-9a-f]{40}$ || -z "${base_ref}" || -n "${extra}" ]]; then
                 echo "::error::A pull request target derived from authenticated API evidence is malformed."
                 exit 1
               fi
               validated_head_shas+=("${head_sha}")
+              if [[ "${base_ref}" == "${DEFAULT_BRANCH}" ]]; then
+                validated_status_states+=("success")
+              else
+                validated_status_states+=("failure")
+              fi
             done
 
             if [[ "${have_previous}" == "true" && "${current_snapshot}" == "${previous_snapshot}" ]]; then
-              for head_sha in "${validated_head_shas[@]}"; do
+              for index in "${!validated_head_shas[@]}"; do
+                head_sha="${validated_head_shas[${index}]}"
+                status_state="${validated_status_states[${index}]}"
+                status_description="Compatibility unavailable outside the default branch."
+                if [[ "${status_state}" == "success" ]]; then
+                  status_description="Compatibility only; no reviewer or review lane."
+                fi
                 gh api --method POST "repos/${REPOSITORY}/statuses/${head_sha}" \
                   --silent \
-                  -f state=success \
+                  -f state="${status_state}" \
                   -f context=codex/review-gate \
-                  -f description="Compatibility only; no reviewer or review lane."
+                  -f description="${status_description}"
               done
               echo "::notice::Authenticated open pull request snapshots stabilized after ${pass} passes."
               exit 0

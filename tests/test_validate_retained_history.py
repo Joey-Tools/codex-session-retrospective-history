@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -1887,30 +1888,62 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
                     self.assertIn("infrastructure text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
 
-    def test_review_gate_allows_only_exact_github_context_line(self) -> None:
+    def test_review_gate_allows_only_exact_approved_workflow(self) -> None:
+        workflow_path = SCRIPT.parents[1] / MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH
+        workflow = workflow_path.read_text(encoding="utf-8")
+        expected_digest = (
+            "8cfa575da7c17c72db5f8b82ac66301"
+            "0ba3b10820de3406bee86185e93d72985"
+        )
+        self.assertEqual(MODULE.CODEX_REVIEW_GATE_WORKFLOW_SHA256, expected_digest)
+        self.assertEqual(hashlib.sha256(workflow.encode()).hexdigest(), expected_digest)
         safe_line = MODULE.CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE
-        cases = (
-            (MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH, safe_line, False),
-            (Path(".github/workflows/other.yml"), safe_line, True),
-            (MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH, "  " + safe_line, True),
+        self.assertEqual(workflow.count(safe_line), 2)
+
+        mutations = (
+            (MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH, workflow, False),
+            (Path(".github/workflows/other.yml"), workflow, True),
             (
                 MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
-                safe_line.replace("github.", "secrets.GITHUB_"),
+                workflow.replace(
+                    safe_line,
+                    "      " + safe_line.lstrip(),
+                    1,
+                ),
                 True,
             ),
             (
                 MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
-                safe_line.split(":", 1)[0] + ": untrusted-value",
+                workflow + "\n      - uses: untrusted/example-action@0123456789abcdef\n",
+                True,
+            ),
+            (
+                MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
+                workflow.replace(
+                    safe_line,
+                    safe_line + "\n" + safe_line,
+                    1,
+                ),
+                True,
+            ),
+            (
+                MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
+                workflow.replace("github." + "token", "secrets.GITHUB_" + "TOKEN", 1),
+                True,
+            ),
+            (
+                MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
+                workflow.replace(", edited]", "]", 1),
                 True,
             ),
         )
-        for relative, line, should_reject in cases:
-            with self.subTest(relative=relative, line=line):
+        for relative, content, should_reject in mutations:
+            with self.subTest(relative=relative, should_reject=should_reject):
                 with tempfile.TemporaryDirectory() as raw:
                     root = Path(raw)
                     path = root / relative
                     path.parent.mkdir(parents=True)
-                    path.write_text(line + "\n", encoding="utf-8")
+                    path.write_text(content, encoding="utf-8")
 
                     issues = "\n".join(MODULE.validate_root(root))
                     self.assertEqual(
@@ -1918,6 +1951,29 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                         in issues,
                         should_reject,
                     )
+
+    def test_review_gate_binds_default_target_branch_membership(self) -> None:
+        workflow = (SCRIPT.parents[1] / MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH).read_text(encoding="utf-8")
+
+        for required in (
+            "types: [opened, reopened, synchronize, ready_for_review, edited]",
+            "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
+            "TARGET_BRANCH: ${{ github.event.pull_request.base.ref }}",
+            'if [[ "${TARGET_BRANCH}" == "${DEFAULT_BRANCH}" ]]; then',
+            'status_state="failure"',
+            'status_state="success"',
+            "and (.base.ref",
+            '"\\(.number)\\t\\(.head.sha)\\t\\(.base.ref)"',
+            "read -r pull_number head_sha base_ref extra",
+            'if [[ "${base_ref}" == "${DEFAULT_BRANCH}" ]]; then',
+            'validated_status_states+=("success")',
+            'validated_status_states+=("failure")',
+        ):
+            self.assertIn(required, workflow)
+        workflow_lines = workflow.splitlines()
+        safe_line = MODULE.CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE
+        self.assertNotIn("      " + safe_line.lstrip(), workflow_lines)
+        self.assertEqual(workflow_lines.count(safe_line), 2)
 
     def test_retained_text_rejects_bare_private_ip_addresses(self) -> None:
         for report_sample, row_sample in (
