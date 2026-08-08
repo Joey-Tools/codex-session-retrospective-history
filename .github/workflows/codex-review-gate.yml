@@ -37,18 +37,16 @@ jobs:
             exit 1
           fi
 
-          status_state="failure"
-          status_description="Compatibility unavailable outside the default branch."
-          if [[ "${TARGET_BRANCH}" == "${DEFAULT_BRANCH}" ]]; then
-            status_state="success"
-            status_description="Compatibility only; no reviewer or review lane."
+          if [[ "${TARGET_BRANCH}" != "${DEFAULT_BRANCH}" ]]; then
+            echo "::notice::Compatibility status is emitted only for the repository default branch."
+            exit 0
           fi
 
           gh api --method POST "repos/${REPOSITORY}/statuses/${HEAD_SHA}" \
             --silent \
-            -f state="${status_state}" \
+            -f state=success \
             -f context=codex/review-gate \
-            -f description="${status_description}"
+            -f description="Compatibility only; no reviewer or review lane."
 
   backfill-open-pull-requests:
     if: github.event_name == 'workflow_dispatch'
@@ -132,34 +130,27 @@ jobs:
             fi
 
             validated_head_shas=()
-            validated_status_states=()
+            declare -A seen_default_head_shas=()
             for target in "${targets[@]:1}"; do
               IFS=$'\t' read -r pull_number head_sha base_ref extra <<<"${target}"
               if [[ ! "${pull_number}" =~ ^[1-9][0-9]*$ || ! "${head_sha}" =~ ^[0-9a-f]{40}$ || -z "${base_ref}" || -n "${extra}" ]]; then
                 echo "::error::A pull request target derived from authenticated API evidence is malformed."
                 exit 1
               fi
-              validated_head_shas+=("${head_sha}")
-              if [[ "${base_ref}" == "${DEFAULT_BRANCH}" ]]; then
-                validated_status_states+=("success")
-              else
-                validated_status_states+=("failure")
+              if [[ "${base_ref}" != "${DEFAULT_BRANCH}" || -n "${seen_default_head_shas[${head_sha}]:-}" ]]; then
+                continue
               fi
+              seen_default_head_shas["${head_sha}"]=1
+              validated_head_shas+=("${head_sha}")
             done
 
             if [[ "${have_previous}" == "true" && "${current_snapshot}" == "${previous_snapshot}" ]]; then
-              for index in "${!validated_head_shas[@]}"; do
-                head_sha="${validated_head_shas[${index}]}"
-                status_state="${validated_status_states[${index}]}"
-                status_description="Compatibility unavailable outside the default branch."
-                if [[ "${status_state}" == "success" ]]; then
-                  status_description="Compatibility only; no reviewer or review lane."
-                fi
+              for head_sha in "${validated_head_shas[@]}"; do
                 gh api --method POST "repos/${REPOSITORY}/statuses/${head_sha}" \
                   --silent \
-                  -f state="${status_state}" \
+                  -f state=success \
                   -f context=codex/review-gate \
-                  -f description="${status_description}"
+                  -f description="Compatibility only; no reviewer or review lane."
               done
               echo "::notice::Authenticated open pull request snapshots stabilized after ${pass} passes."
               exit 0

@@ -85,8 +85,8 @@ ROOT_DOC_FILES = frozenset({".gitignore", "AGENTS.md", "README.md", "data/README
 WORKFLOW_SUFFIXES = frozenset({".yaml", ".yml"})
 CODEX_REVIEW_GATE_WORKFLOW_PATH = Path(".github/workflows/codex-review-gate.yml")
 CODEX_REVIEW_GATE_WORKFLOW_SHA256 = (
-    "8cfa575da7c17c72db5f8b82ac66301"
-    "0ba3b10820de3406bee86185e93d72985"
+    "cd5c426562b203ba452e6e16e6ca09f5"
+    "7b4b1f672207a01924a43a0df9300cbe"
 )
 CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE = "".join(
     ("          GH_", "TOKEN", ": ${{ github.", "token", " }}")

@@ -1892,8 +1892,8 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
         workflow_path = SCRIPT.parents[1] / MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH
         workflow = workflow_path.read_text(encoding="utf-8")
         expected_digest = (
-            "8cfa575da7c17c72db5f8b82ac66301"
-            "0ba3b10820de3406bee86185e93d72985"
+            "cd5c426562b203ba452e6e16e6ca09f5"
+            "7b4b1f672207a01924a43a0df9300cbe"
         )
         self.assertEqual(MODULE.CODEX_REVIEW_GATE_WORKFLOW_SHA256, expected_digest)
         self.assertEqual(hashlib.sha256(workflow.encode()).hexdigest(), expected_digest)
@@ -1959,17 +1959,19 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
             "types: [opened, reopened, synchronize, ready_for_review, edited]",
             "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
             "TARGET_BRANCH: ${{ github.event.pull_request.base.ref }}",
-            'if [[ "${TARGET_BRANCH}" == "${DEFAULT_BRANCH}" ]]; then',
-            'status_state="failure"',
-            'status_state="success"',
+            'if [[ "${TARGET_BRANCH}" != "${DEFAULT_BRANCH}" ]]; then',
+            "Compatibility status is emitted only for the repository default branch.",
             "and (.base.ref",
             '"\\(.number)\\t\\(.head.sha)\\t\\(.base.ref)"',
             "read -r pull_number head_sha base_ref extra",
-            'if [[ "${base_ref}" == "${DEFAULT_BRANCH}" ]]; then',
-            'validated_status_states+=("success")',
-            'validated_status_states+=("failure")',
+            "declare -A seen_default_head_shas=()",
+            'if [[ "${base_ref}" != "${DEFAULT_BRANCH}" || -n "${seen_default_head_shas[${head_sha}]:-}" ]]; then',
+            'seen_default_head_shas["${head_sha}"]=1',
+            'for head_sha in "${validated_head_shas[@]}"; do',
         ):
             self.assertIn(required, workflow)
+        self.assertNotIn('status_state="failure"', workflow)
+        self.assertNotIn('state="${status_state}"', workflow)
         workflow_lines = workflow.splitlines()
         safe_line = MODULE.CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE
         self.assertNotIn("      " + safe_line.lstrip(), workflow_lines)
