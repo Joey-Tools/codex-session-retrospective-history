@@ -1887,6 +1887,38 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
                     self.assertIn("infrastructure text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
 
+    def test_review_gate_allows_only_exact_github_context_line(self) -> None:
+        safe_line = MODULE.CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE
+        cases = (
+            (MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH, safe_line, False),
+            (Path(".github/workflows/other.yml"), safe_line, True),
+            (MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH, "  " + safe_line, True),
+            (
+                MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
+                safe_line.replace("github.", "secrets.GITHUB_"),
+                True,
+            ),
+            (
+                MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
+                safe_line.split(":", 1)[0] + ": untrusted-value",
+                True,
+            ),
+        )
+        for relative, line, should_reject in cases:
+            with self.subTest(relative=relative, line=line):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    path = root / relative
+                    path.parent.mkdir(parents=True)
+                    path.write_text(line + "\n", encoding="utf-8")
+
+                    issues = "\n".join(MODULE.validate_root(root))
+                    self.assertEqual(
+                        "infrastructure text contains raw/sensitive evidence"
+                        in issues,
+                        should_reject,
+                    )
+
     def test_retained_text_rejects_bare_private_ip_addresses(self) -> None:
         for report_sample, row_sample in (
             (risky_bare_private_ip(), risky_bare_private_lan_ip()),
