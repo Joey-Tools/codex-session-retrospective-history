@@ -1901,10 +1901,25 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
     def test_review_gate_is_pr_scoped_and_has_no_status_publisher(self) -> None:
         workflow = (SCRIPT.parents[1] / ".github/workflows/codex-review-gate.yml").read_text(encoding="utf-8")
+        workflow_lines = workflow.splitlines(keepends=True)
+        trigger_roots = [
+            index for index, line in enumerate(workflow_lines) if line == "on:\n"
+        ]
+        self.assertEqual(1, len(trigger_roots))
+        trigger_block: list[str] = []
+        for line in workflow_lines[trigger_roots[0] + 1 :]:
+            if line.strip() and not line.startswith((" ", "\t")):
+                break
+            trigger_block.append(line)
 
+        self.assertEqual(
+            [
+                "  pull_request:\n"
+                "    types: [opened, reopened, synchronize, ready_for_review, edited]\n\n"
+            ],
+            ["".join(trigger_block)],
+        )
         for required in (
-            "types: [opened, reopened, synchronize, ready_for_review, edited]",
-            "  pull_request:",
             "    name: codex/review-gate",
             "permissions: {}",
             "Compatibility only; no reviewer or review lane.",
