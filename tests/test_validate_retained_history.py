@@ -1887,6 +1887,44 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
                     self.assertIn("infrastructure text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
 
+    def test_review_gate_needs_no_sensitive_infrastructure_exception(self) -> None:
+        workflow_path = SCRIPT.parents[1] / ".github/workflows/codex-review-gate.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+        self.assertFalse(
+            MODULE.contains_infrastructure_risk_text(
+                workflow,
+                relative=Path(".github/workflows/codex-review-gate.yml"),
+            )
+        )
+        self.assertFalse(hasattr(MODULE, "CODEX_REVIEW_GATE_WORKFLOW_SHA256"))
+        self.assertFalse(hasattr(MODULE, "CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE"))
+
+    def test_review_gate_is_pr_scoped_and_has_no_status_publisher(self) -> None:
+        workflow = (SCRIPT.parents[1] / ".github/workflows/codex-review-gate.yml").read_text(encoding="utf-8")
+        self.assertEqual(
+            """name: Codex Review Gate Compatibility Check
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+permissions: {}
+
+jobs:
+  compatibility-check:
+    name: codex/review-gate
+    runs-on: ubuntu-slim
+    timeout-minutes: 1
+    steps:
+      - name: Explain compatibility scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\\n' 'Compatibility only; no reviewer or review lane.'
+""",
+            workflow,
+        )
+
     def test_retained_text_rejects_bare_private_ip_addresses(self) -> None:
         for report_sample, row_sample in (
             (risky_bare_private_ip(), risky_bare_private_lan_ip()),

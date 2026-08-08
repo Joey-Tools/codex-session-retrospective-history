@@ -1,0 +1,19 @@
+name: Codex Review Gate Compatibility Check
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+permissions: {}
+
+jobs:
+  compatibility-check:
+    name: codex/review-gate
+    runs-on: ubuntu-slim
+    timeout-minutes: 1
+    steps:
+      - name: Explain compatibility scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'Compatibility only; no reviewer or review lane.'

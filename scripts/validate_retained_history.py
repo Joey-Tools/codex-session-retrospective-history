@@ -445,7 +445,7 @@ def contains_risky_text(value: Any, *, include_safety_markers: bool = True) -> b
     return False
 
 
-def contains_infrastructure_risk_text(value: str) -> bool:
+def contains_infrastructure_risk_text(value: str, *, relative: Path | None = None) -> bool:
     for line in value.splitlines():
         normalized_line = line.strip().rstrip(",").strip("\"'")
         if normalized_line in SAFE_INFRASTRUCTURE_LINES:
@@ -1258,7 +1258,9 @@ def validate_root(root: Path) -> list[str]:
         suffix = relative.suffix.lower()
         try:
             if content_scanned_infrastructure_artifact(relative):
-                if contains_infrastructure_risk_text(path.read_text(encoding="utf-8")):
+                if contains_infrastructure_risk_text(
+                    path.read_text(encoding="utf-8"), relative=relative
+                ):
                     issues.append(f"{display_relative}: infrastructure text contains raw/sensitive evidence")
             if suffix == ".json":
                 data = parse_json(path)
