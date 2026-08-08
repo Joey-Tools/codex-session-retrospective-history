@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import os
@@ -1888,94 +1887,39 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
                     self.assertIn("infrastructure text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
 
-    def test_review_gate_allows_only_exact_approved_workflow(self) -> None:
-        workflow_path = SCRIPT.parents[1] / MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH
+    def test_review_gate_needs_no_sensitive_infrastructure_exception(self) -> None:
+        workflow_path = SCRIPT.parents[1] / ".github/workflows/codex-review-gate.yml"
         workflow = workflow_path.read_text(encoding="utf-8")
-        expected_digest = (
-            "cd5c426562b203ba452e6e16e6ca09f5"
-            "7b4b1f672207a01924a43a0df9300cbe"
+        self.assertFalse(
+            MODULE.contains_infrastructure_risk_text(
+                workflow,
+                relative=Path(".github/workflows/codex-review-gate.yml"),
+            )
         )
-        self.assertEqual(MODULE.CODEX_REVIEW_GATE_WORKFLOW_SHA256, expected_digest)
-        self.assertEqual(hashlib.sha256(workflow.encode()).hexdigest(), expected_digest)
-        safe_line = MODULE.CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE
-        self.assertEqual(workflow.count(safe_line), 2)
+        self.assertFalse(hasattr(MODULE, "CODEX_REVIEW_GATE_WORKFLOW_SHA256"))
+        self.assertFalse(hasattr(MODULE, "CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE"))
 
-        mutations = (
-            (MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH, workflow, False),
-            (Path(".github/workflows/other.yml"), workflow, True),
-            (
-                MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
-                workflow.replace(
-                    safe_line,
-                    "      " + safe_line.lstrip(),
-                    1,
-                ),
-                True,
-            ),
-            (
-                MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
-                workflow + "\n      - uses: untrusted/example-action@0123456789abcdef\n",
-                True,
-            ),
-            (
-                MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
-                workflow.replace(
-                    safe_line,
-                    safe_line + "\n" + safe_line,
-                    1,
-                ),
-                True,
-            ),
-            (
-                MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
-                workflow.replace("github." + "token", "secrets.GITHUB_" + "TOKEN", 1),
-                True,
-            ),
-            (
-                MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH,
-                workflow.replace(", edited]", "]", 1),
-                True,
-            ),
-        )
-        for relative, content, should_reject in mutations:
-            with self.subTest(relative=relative, should_reject=should_reject):
-                with tempfile.TemporaryDirectory() as raw:
-                    root = Path(raw)
-                    path = root / relative
-                    path.parent.mkdir(parents=True)
-                    path.write_text(content, encoding="utf-8")
-
-                    issues = "\n".join(MODULE.validate_root(root))
-                    self.assertEqual(
-                        "infrastructure text contains raw/sensitive evidence"
-                        in issues,
-                        should_reject,
-                    )
-
-    def test_review_gate_binds_default_target_branch_membership(self) -> None:
-        workflow = (SCRIPT.parents[1] / MODULE.CODEX_REVIEW_GATE_WORKFLOW_PATH).read_text(encoding="utf-8")
+    def test_review_gate_is_pr_scoped_and_has_no_status_publisher(self) -> None:
+        workflow = (SCRIPT.parents[1] / ".github/workflows/codex-review-gate.yml").read_text(encoding="utf-8")
 
         for required in (
             "types: [opened, reopened, synchronize, ready_for_review, edited]",
-            "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
-            "TARGET_BRANCH: ${{ github.event.pull_request.base.ref }}",
-            'if [[ "${TARGET_BRANCH}" != "${DEFAULT_BRANCH}" ]]; then',
-            "Compatibility status is emitted only for the repository default branch.",
-            "and (.base.ref",
-            '"\\(.number)\\t\\(.head.sha)\\t\\(.base.ref)"',
-            "read -r pull_number head_sha base_ref extra",
-            "declare -A seen_default_head_shas=()",
-            'if [[ "${base_ref}" != "${DEFAULT_BRANCH}" || -n "${seen_default_head_shas[${head_sha}]:-}" ]]; then',
-            'seen_default_head_shas["${head_sha}"]=1',
-            'for head_sha in "${validated_head_shas[@]}"; do',
+            "  pull_request:",
+            "    name: codex/review-gate",
+            "permissions: {}",
+            "Compatibility only; no reviewer or review lane.",
         ):
             self.assertIn(required, workflow)
-        self.assertNotIn('status_state="failure"', workflow)
-        self.assertNotIn('state="${status_state}"', workflow)
-        workflow_lines = workflow.splitlines()
-        safe_line = MODULE.CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE
-        self.assertNotIn("      " + safe_line.lstrip(), workflow_lines)
-        self.assertEqual(workflow_lines.count(safe_line), 2)
+        for forbidden in (
+            "pull_request_target",
+            "workflow_dispatch",
+            "statuses: write",
+            "github.token",
+            "GH_TOKEN",
+            "gh api",
+            "repos/${REPOSITORY}/statuses/",
+        ):
+            self.assertNotIn(forbidden, workflow)
 
     def test_retained_text_rejects_bare_private_ip_addresses(self) -> None:
         for report_sample, row_sample in (

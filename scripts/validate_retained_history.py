@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import datetime as dt
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -83,14 +82,6 @@ VALID_RETAINED_SUFFIXES = TEXT_ARTIFACT_SUFFIXES
 STRIPPABLE_ARTIFACT_SUFFIXES = TEXT_ARTIFACT_SUFFIXES | COMPRESSED_ARTIFACT_SUFFIXES
 ROOT_DOC_FILES = frozenset({".gitignore", "AGENTS.md", "README.md", "data/README.md", "reports/README.md"})
 WORKFLOW_SUFFIXES = frozenset({".yaml", ".yml"})
-CODEX_REVIEW_GATE_WORKFLOW_PATH = Path(".github/workflows/codex-review-gate.yml")
-CODEX_REVIEW_GATE_WORKFLOW_SHA256 = (
-    "cd5c426562b203ba452e6e16e6ca09f5"
-    "7b4b1f672207a01924a43a0df9300cbe"
-)
-CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE = "".join(
-    ("          GH_", "TOKEN", ": ${{ github.", "token", " }}")
-)
 SCHEMA_FILES = frozenset({"retained-manifest-v1.schema.json", "session-retrospective-v1.schema.json"})
 RETAINED_EXPORT_DIRS = frozenset({("retained", "daily"), ("retained", "weekly"), ("retained", "baseline")})
 RETAINED_EXPORT_FILES = frozenset({"episodes.jsonl", "turn_flags.jsonl", "trend_report.json", "retained_manifest.json"})
@@ -455,13 +446,7 @@ def contains_risky_text(value: Any, *, include_safety_markers: bool = True) -> b
 
 
 def contains_infrastructure_risk_text(value: str, *, relative: Path | None = None) -> bool:
-    approved_review_gate = (
-        relative == CODEX_REVIEW_GATE_WORKFLOW_PATH
-        and hashlib.sha256(value.encode("utf-8")).hexdigest() == CODEX_REVIEW_GATE_WORKFLOW_SHA256
-    )
     for line in value.splitlines():
-        if approved_review_gate and line == CODEX_REVIEW_GATE_SAFE_INFRASTRUCTURE_LINE:
-            continue
         normalized_line = line.strip().rstrip(",").strip("\"'")
         if normalized_line in SAFE_INFRASTRUCTURE_LINES:
             continue
