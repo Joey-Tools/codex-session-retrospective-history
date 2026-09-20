@@ -1887,6 +1887,36 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
 
                     self.assertIn("infrastructure text contains raw/sensitive evidence", "\n".join(MODULE.validate_root(root)))
 
+    def test_control_plane_files_and_github_token_expression_are_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            codeowners = root / ".github" / "CODEOWNERS"
+            workflow = root / ".github" / "workflows" / "gate.yml"
+            codeowners.parent.mkdir(parents=True)
+            workflow.parent.mkdir(parents=True)
+            codeowners.write_text("/.github/workflows/ @JoeyTeng\n", encoding="utf-8")
+            workflow.write_text(
+                "name: Gate\nwith:\n  github_" + "to" + "ken: ${{ github.token }}\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual([], MODULE.validate_root(root))
+
+    def test_workflow_github_token_literal_remains_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            workflow = root / ".github" / "workflows" / "gate.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                "name: Gate\nwith:\n  github_" + "to" + "ken: " + risky_github_classic_token() + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertIn(
+                "infrastructure text contains raw/sensitive evidence",
+                "\n".join(MODULE.validate_root(root)),
+            )
+
     def test_retained_text_rejects_bare_private_ip_addresses(self) -> None:
         for report_sample, row_sample in (
             (risky_bare_private_ip(), risky_bare_private_lan_ip()),

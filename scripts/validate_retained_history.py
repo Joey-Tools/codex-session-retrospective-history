@@ -80,7 +80,9 @@ TIMESTAMP_RE = re.compile(
 TEXT_ARTIFACT_SUFFIXES = frozenset({".json", ".jsonl", ".md", ".txt"})
 VALID_RETAINED_SUFFIXES = TEXT_ARTIFACT_SUFFIXES
 STRIPPABLE_ARTIFACT_SUFFIXES = TEXT_ARTIFACT_SUFFIXES | COMPRESSED_ARTIFACT_SUFFIXES
-ROOT_DOC_FILES = frozenset({".gitignore", "AGENTS.md", "README.md", "data/README.md", "reports/README.md"})
+ROOT_DOC_FILES = frozenset(
+    {".gitignore", ".github/CODEOWNERS", "AGENTS.md", "README.md", "data/README.md", "reports/README.md"}
+)
 WORKFLOW_SUFFIXES = frozenset({".yaml", ".yml"})
 SCHEMA_FILES = frozenset({"retained-manifest-v1.schema.json", "session-retrospective-v1.schema.json"})
 RETAINED_EXPORT_DIRS = frozenset({("retained", "daily"), ("retained", "weekly"), ("retained", "baseline")})
@@ -284,6 +286,7 @@ SAFE_INFRASTRUCTURE_LINES = frozenset(
         "shard_manifest.json",
         "shards.jsonl",
         "turn_summaries.jsonl",
+        "github_token: ${{ github.token }}",
     }
 )
 
