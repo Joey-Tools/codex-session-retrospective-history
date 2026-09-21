@@ -54,3 +54,5 @@ Before committing retained artifacts, run:
 ```bash
 python scripts/validate_retained_history.py --root .
 ```
+
+<!-- Temporary Codex review-gate v2 canary; this pull request is intentionally closed unmerged. -->
