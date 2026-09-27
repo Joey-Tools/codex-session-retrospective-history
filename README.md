@@ -54,3 +54,5 @@ Before committing retained artifacts, run:
 ```bash
 python scripts/validate_retained_history.py --root .
 ```
+
+<!-- Temporary post-cutover v2 gate canary; close this pull request unmerged after the cohort audit. -->
