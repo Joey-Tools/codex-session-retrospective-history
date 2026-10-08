@@ -287,6 +287,7 @@ SAFE_INFRASTRUCTURE_LINES = frozenset(
         "shards.jsonl",
         "turn_summaries.jsonl",
         "github_token: ${{ github.token }}",
+        "review_request_token: ${{ secrets.CODEX_REVIEW_GATE_REQUEST_TOKEN }}",
     }
 )
 
