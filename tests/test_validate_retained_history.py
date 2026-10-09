@@ -1917,6 +1917,19 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                 "\n".join(MODULE.validate_root(root)),
             )
 
+    def test_review_request_token_secret_reference_is_infrastructure_only_allowlisted(self) -> None:
+        safe_reference = (
+            "review_request_" + "token" + ": ${{ " + "secrets." + "CODEX_REVIEW_GATE_REQUEST_TOKEN }}"
+        )
+        self.assertFalse(MODULE.contains_infrastructure_risk_text(safe_reference))
+        self.assertTrue(
+            MODULE.contains_infrastructure_risk_text(
+                "review_request_" + "token" + ": ${{ " + "secrets." + "CODEX_REVIEW_GATE_REQUEST_TOKEN_ALT }}"
+            )
+        )
+        self.assertTrue(MODULE.contains_infrastructure_risk_text(safe_reference + " extra"))
+        self.assertTrue(MODULE.contains_risky_text(safe_reference))
+
     def test_retained_text_rejects_bare_private_ip_addresses(self) -> None:
         for report_sample, row_sample in (
             (risky_bare_private_ip(), risky_bare_private_lan_ip()),
