@@ -1148,6 +1148,16 @@ class ValidateRetainedHistoryTests(unittest.TestCase):
                     self.assertIn("unexpected", issues)
                     self.assertIn("retained text contains raw/sensitive evidence", issues)
 
+    def test_root_license_is_allowed_and_scanned(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "LICENSE").write_text("MIT License\n\nPermission is hereby granted.\n", encoding="utf-8")
+
+            issues = "\n".join(MODULE.validate_root(root))
+
+            self.assertNotIn("LICENSE: unexpected retained artifact location", issues)
+            self.assertNotIn("LICENSE: infrastructure text contains raw/sensitive evidence", issues)
+
     def test_unexpected_retained_text_artifacts_are_rejected_without_risky_text(self) -> None:
         for relative_path in (
             "data/source-map.txt",
